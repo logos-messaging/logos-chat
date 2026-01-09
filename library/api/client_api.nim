@@ -73,7 +73,7 @@ registerReqFFI(CreateClientRequest, ctx: ptr FFIContext[Client]):
   proc(
       configJson: cstring, chatCallbacks: ChatCallbacks
   ): Future[Result[string, string]] {.async.} =
-    ctx[].myLib[] = (await createChatClient(configJson, chatCallbacks)).valueOr:
+    ctx.myLib[] = (await createChatClient(configJson, chatCallbacks)).valueOr:
       error "CreateClientRequest failed", error = error
       return err($error)
     return ok("")
@@ -88,7 +88,7 @@ proc chat_start(
     userData: pointer
 ) {.ffi.} =
   try:
-    await ctx[].myLib[].start()
+    await ctx.myLib[].start()
     return ok("")
   except CatchableError as e:
     error "chat_start failed", error = e.msg
@@ -100,7 +100,7 @@ proc chat_stop(
     userData: pointer
 ) {.ffi.} =
   try:
-    await ctx[].myLib[].stop()
+    await ctx.myLib[].stop()
     return ok("")
   except CatchableError as e:
     error "chat_stop failed", error = e.msg
@@ -116,7 +116,7 @@ proc chat_get_id(
     userData: pointer
 ) {.ffi.} =
   ## Get the client's identifier
-  let clientId = ctx[].myLib[].getId()
+  let clientId = ctx.myLib[].getId()
   return ok(clientId)
 
 proc chat_get_default_inbox_id(
@@ -125,7 +125,7 @@ proc chat_get_default_inbox_id(
     userData: pointer
 ) {.ffi.} =
   ## Get the default inbox conversation ID
-  let inboxId = ctx[].myLib[].defaultInboxConversationId()
+  let inboxId = ctx.myLib[].defaultInboxConversationId()
   return ok(inboxId)
 
 #################################################
@@ -138,7 +138,7 @@ proc chat_list_conversations(
     userData: pointer
 ) {.ffi.} =
   ## List all conversations as JSON array
-  let convos = ctx[].myLib[].listConversations()
+  let convos = ctx.myLib[].listConversations()
   var convoList = newJArray()
   for convo in convos:
     convoList.add(%*{"id": convo.id()})
@@ -151,6 +151,6 @@ proc chat_get_conversation(
     convoId: cstring
 ) {.ffi.} =
   ## Get a specific conversation by ID
-  let convo = ctx[].myLib[].getConversation($convoId)
+  let convo = ctx.myLib[].getConversation($convoId)
   return ok($(%*{"id": convo.id()}))
 

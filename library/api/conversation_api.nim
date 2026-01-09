@@ -44,7 +44,7 @@ proc chat_new_private_conversation(
     let content = hexToSeqByte($contentHex)
     
     # Create the conversation
-    let errOpt = await ctx[].myLib[].newPrivateConversation(introBundle, content)
+    let errOpt = await ctx.myLib[].newPrivateConversation(introBundle, content)
     if errOpt.isSome():
       return err("failed to create conversation: " & $errOpt.get())
     
@@ -68,7 +68,7 @@ proc chat_send_message(
   ## convoId: Conversation ID string
   ## contentHex: Message content as hex-encoded string
   try:
-    let convo = ctx[].myLib[].getConversation($convoId)
+    let convo = ctx.myLib[].getConversation($convoId)
     let content = hexToSeqByte($contentHex)
     
     let msgId = await convo.sendMessage(content)

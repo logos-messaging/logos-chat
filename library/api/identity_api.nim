@@ -26,7 +26,7 @@ proc chat_get_identity(
 ) {.ffi.} =
   ## Get the client identity
   ## Returns JSON string: {"name": "...", "address": "...", "pubkey": "hex..."}
-  let ident = ctx[].myLib[].identity()
+  let ident = ctx.myLib[].identity()
   let identJson = %*{
     "name": ident.getName(),
     "address": ident.getAddr(),
@@ -45,7 +45,7 @@ proc chat_create_intro_bundle(
 ) {.ffi.} =
   ## Create an IntroBundle for initiating private conversations
   ## Returns JSON string: {"ident": "hex...", "ephemeral": "hex..."}
-  let bundle = ctx[].myLib[].createIntroBundle()
+  let bundle = ctx.myLib[].createIntroBundle()
   let bundleJson = %*{
     "ident": bundle.ident.toHex(),
     "ephemeral": bundle.ephemeral.toHex()
