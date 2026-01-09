@@ -7,10 +7,10 @@ import chronos
 import ffi
 import stew/byteutils
 
-import ../../src/chat
-import ../../src/chat/crypto
-import ../../src/chat/proto_types
-import ../utils
+import src/chat
+import src/chat/crypto
+import src/chat/proto_types
+import library/utils
 
 logScope:
   topics = "chat ffi identity"

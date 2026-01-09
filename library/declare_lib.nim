@@ -1,5 +1,5 @@
 import ffi
-import ../src/chat/client
+import src/chat/client
 
 declareLibrary("chat")
 

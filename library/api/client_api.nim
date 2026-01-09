@@ -6,11 +6,11 @@ import chronicles
 import chronos
 import ffi
 
-import ../../src/chat
-import ../../src/chat/proto_types
-import ../../src/chat/delivery/waku_client
-import ../../src/chat/identity
-import ../utils
+import src/chat
+import src/chat/proto_types
+import src/chat/delivery/waku_client
+import src/chat/identity
+import library/utils
 
 logScope:
   topics = "chat ffi client"

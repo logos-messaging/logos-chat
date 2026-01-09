@@ -1,34 +1,7 @@
 ## Utility functions for C-bindings
-## Provides C-string helpers and JSON event serialization
+## Provides JSON event serialization helpers
 
 import std/json
-import ffi
-
-# Re-export common FFI types
-export ffi
-
-#################################################
-# C-String Helpers
-#################################################
-
-proc toCString*(s: string): cstring =
-  ## Convert Nim string to C string (caller must manage memory)
-  result = s.cstring
-
-proc fromCString*(cs: cstring): string =
-  ## Convert C string to Nim string (makes a copy)
-  if cs.isNil:
-    result = ""
-  else:
-    result = $cs
-
-proc toBytes*(data: ptr byte, len: csize_t): seq[byte] =
-  ## Convert C byte array to Nim seq[byte]
-  if data.isNil or len == 0:
-    result = @[]
-  else:
-    result = newSeq[byte](len)
-    copyMem(addr result[0], data, len)
 
 #################################################
 # JSON Event Types

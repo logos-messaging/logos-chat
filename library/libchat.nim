@@ -9,13 +9,13 @@ import chronicles, chronos, ffi
 import stew/byteutils
 
 import
-  ../src/chat/client,
-  ../src/chat/conversations,
-  ../src/chat/identity,
-  ../src/chat/delivery/waku_client,
-  ../src/chat/proto_types,
-  ./declare_lib,
-  ./utils
+  src/chat/client,
+  src/chat/conversations,
+  src/chat/identity,
+  src/chat/delivery/waku_client,
+  src/chat/proto_types,
+  library/declare_lib,
+  library/utils
 
 logScope:
   topics = "chat ffi"

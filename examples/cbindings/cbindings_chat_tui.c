@@ -537,8 +537,8 @@ static void process_input_char(int ch) {
         }
         break;
     case KEY_BACKSPACE:
-    case 127:
-    case 8:
+    case 127: // DEL
+    case 8: // BS
         if (inp->pos > 0) {
             memmove(inp->buffer + inp->pos - 1, inp->buffer + inp->pos, inp->len - inp->pos + 1);
             inp->pos--;
