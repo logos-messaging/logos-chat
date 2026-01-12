@@ -21,7 +21,8 @@ requires "nim >= 2.2.4",
   "regex",
   "web3",
   "https://github.com/jazzz/nim-sds#exports",
-  "waku"
+  "waku",
+  "ffi"
 
 proc buildBinary(name: string, srcDir = "./", params = "", lang = "c") =
   if not dirExists "build":
@@ -33,7 +34,25 @@ proc buildBinary(name: string, srcDir = "./", params = "", lang = "c") =
 
   exec "nim " & lang & " --out:build/" & name & " --mm:refc " & extra_params & " " &
     srcDir & name & ".nim"
-    
+
+proc buildLibrary(name: string, srcDir = "library/", params = "", lang = "c") =
+  ## Build a shared library (.so on Linux, .dylib on macOS, .dll on Windows)
+  if not dirExists "build":
+    mkDir "build"
+  
+  # Determine library extension based on OS
+  let libExt = when defined(macosx): "dylib"
+               elif defined(windows): "dll"
+               else: "so"
+  
+  var extra_params = params
+  for i in 2 ..< paramCount():
+    extra_params &= " " & paramStr(i)
+  
+  exec "nim " & lang & " --app:lib --out:build/lib" & name & "." & libExt & 
+       " --mm:refc --nimMainPrefix:lib" & name & " " & extra_params & " " &
+       srcDir & "lib" & name & ".nim"
+
 proc test(name: string, params = "-d:chronicles_log_level=DEBUG", lang = "c") =
   buildBinary name, "tests/", params
   exec "build/" & name
@@ -56,3 +75,7 @@ task bot_echo, "Build the EchoBot example":
 task pingpong, "Build the Pingpong example":
   let name = "pingpong"
   buildBinary name, "examples/", "-d:chronicles_log_level='INFO' -d:chronicles_disabled_topics='waku node' "
+
+task libchat, "Build the Chat SDK shared library (C bindings)":
+  buildLibrary "chat", "library/", 
+    "-d:chronicles_log_level='INFO' -d:chronicles_enabled=on --path:src --path:vendor/nim-ffi"

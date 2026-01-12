@@ -91,3 +91,5 @@ result
 # App data
 .registry/
 .savedkeys/
+
+AGENTS.md

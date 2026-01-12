@@ -102,6 +102,28 @@ tui bot_echo pingpong: | build-waku-librln build-waku-nat nim_chat_poc.nims
 	echo -e $(BUILD_MSG) "build/$@" && \
 	$(ENV_SCRIPT) nim $@ $(NIM_PARAMS) --path:src nim_chat_poc.nims
 
+###########
+## Library ##
+###########
+
+# Determine shared library extension based on OS
+ifeq ($(shell uname -s),Darwin)
+  LIBCHAT_EXT := dylib
+else ifeq ($(shell uname -s),Linux)
+  LIBCHAT_EXT := so
+else
+  LIBCHAT_EXT := dll
+endif
+
+LIBCHAT := build/libchat.$(LIBCHAT_EXT)
+
+.PHONY: libchat
+libchat: | build-waku-librln build-waku-nat nim_chat_poc.nims
+	echo -e $(BUILD_MSG) "$(LIBCHAT)" && \
+	$(ENV_SCRIPT) nim libchat $(NIM_PARAMS) --path:src nim_chat_poc.nims && \
+	echo -e "\n\x1B[92mLibrary built successfully:\x1B[39m" && \
+	echo "  $(shell pwd)/$(LIBCHAT)"
+
 endif
 
 
