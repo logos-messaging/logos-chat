@@ -19,7 +19,7 @@ logScope:
 #################################################
 
 proc chat_new_private_conversation(
-    ctx: ptr FFIContext[Client],
+    ctx: ptr FFIContext[ChatClient],
     callback: FFICallBack,
     userData: pointer,
     introBundleJson: cstring,
@@ -58,7 +58,7 @@ proc chat_new_private_conversation(
 #################################################
 
 proc chat_send_message(
-    ctx: ptr FFIContext[Client],
+    ctx: ptr FFIContext[ChatClient],
     callback: FFICallBack,
     userData: pointer,
     convoId: cstring,

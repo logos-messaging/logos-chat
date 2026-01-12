@@ -47,7 +47,7 @@ type KeyEntry* = object
   privateKey: PrivateKey
   timestamp: int64
 
-type Client* = ref object
+type ChatClient* = ref object
   ident: Identity
   ds*: WakuClient
   keyStore: Table[string, KeyEntry]          # Keyed by HexEncoded Public Key
@@ -64,9 +64,9 @@ type Client* = ref object
 # Constructors
 #################################################
 
-proc newClient*(ds: WakuClient, ident: Identity): Client {.raises: [IOError,
+proc newClient*(ds: WakuClient, ident: Identity): ChatClient {.raises: [IOError,
     ValueError, SerializationError].} =
-  ## Creates new instance of a `Client` with a given `WakuConfig`
+  ## Creates new instance of a `ChatClient` with a given `WakuConfig`
   try:
     let rm = newReliabilityManager().valueOr:
       raise newException(ValueError, fmt"SDS InitializationError")
@@ -74,7 +74,7 @@ proc newClient*(ds: WakuClient, ident: Identity): Client {.raises: [IOError,
     let defaultInbox = initInbox(ident)
 
     var q = QueueRef(queue: newAsyncQueue[ChatPayload](10))
-    var c = Client(ident: ident,
+    var c = ChatClient(ident: ident,
                   ds: ds,
                   keyStore: initTable[string, KeyEntry](),
                   conversations: initTable[string, Conversation](),
@@ -96,17 +96,17 @@ proc newClient*(ds: WakuClient, ident: Identity): Client {.raises: [IOError,
 # Parameter Access
 #################################################
 
-proc getId*(client: Client): string =
+proc getId*(client: ChatClient): string =
   result = client.ident.getName()
 
-proc identity*(client: Client): Identity =
+proc identity*(client: ChatClient): Identity =
   result = client.ident
 
-proc defaultInboxConversationId*(self: Client): string =
+proc defaultInboxConversationId*(self: ChatClient): string =
   ## Returns the default inbox address for the client.
   result = conversationIdFor(self.ident.getPubkey())
 
-proc getConversationFromHint(self: Client,
+proc getConversationFromHint(self: ChatClient,
     conversationHint: string): Result[Option[Conversation], string] =
 
   # TODO: Implementing Hinting
@@ -116,31 +116,31 @@ proc getConversationFromHint(self: Client,
     ok(some(self.conversations[conversationHint]))
 
 
-proc listConversations*(client: Client): seq[Conversation] =
+proc listConversations*(client: ChatClient): seq[Conversation] =
   result = toSeq(client.conversations.values())
 
 #################################################
 # Callback Handling
 #################################################
 
-proc onNewMessage*(client: Client, callback: MessageCallback) =
+proc onNewMessage*(client: ChatClient, callback: MessageCallback) =
   client.newMessageCallbacks.add(callback)
 
-proc notifyNewMessage*(client: Client,  convo: Conversation, msg: ReceivedMessage) =
+proc notifyNewMessage*(client: ChatClient,  convo: Conversation, msg: ReceivedMessage) =
   for cb in client.newMessageCallbacks:
     discard cb(convo, msg)
 
-proc onNewConversation*(client: Client, callback: NewConvoCallback) =
+proc onNewConversation*(client: ChatClient, callback: NewConvoCallback) =
   client.newConvoCallbacks.add(callback)
 
-proc notifyNewConversation(client: Client, convo: Conversation) =
+proc notifyNewConversation(client: ChatClient, convo: Conversation) =
   for cb in client.newConvoCallbacks:
     discard cb(convo)
 
-proc onDeliveryAck*(client: Client, callback: DeliveryAckCallback) =
+proc onDeliveryAck*(client: ChatClient, callback: DeliveryAckCallback) =
   client.deliveryAckCallbacks.add(callback)
 
-proc notifyDeliveryAck(client: Client, convo: Conversation,
+proc notifyDeliveryAck(client: ChatClient, convo: Conversation,
     messageId: MessageId) =
   for cb in client.deliveryAckCallbacks:
     discard cb(convo, messageId)
@@ -149,7 +149,7 @@ proc notifyDeliveryAck(client: Client, convo: Conversation,
 # Functional
 #################################################
 
-proc createIntroBundle*(self: var Client): IntroBundle =
+proc createIntroBundle*(self: var ChatClient): IntroBundle =
   ## Generates an IntroBundle for the client, which includes
   ## the required information to send a message.
 
@@ -175,16 +175,16 @@ proc createIntroBundle*(self: var Client): IntroBundle =
 # Conversation Initiation
 #################################################
 
-proc addConversation*(client: Client, convo: Conversation) =
+proc addConversation*(client: ChatClient, convo: Conversation) =
   notice "Creating conversation", client = client.getId(), convoId = convo.id()
   client.conversations[convo.id()] = convo
   client.notifyNewConversation(convo)
 
-proc getConversation*(client: Client, convoId: string): Conversation =
+proc getConversation*(client: ChatClient, convoId: string): Conversation =
   notice "Get conversation", client = client.getId(), convoId = convoId
   result = client.conversations[convoId]
 
-proc newPrivateConversation*(client: Client,
+proc newPrivateConversation*(client: ChatClient,
     introBundle: IntroBundle, content: Content): Future[Option[ChatError]] {.async.} =
   ## Creates a private conversation with the given `IntroBundle`.
   ## `IntroBundles` are provided out-of-band.
@@ -202,7 +202,7 @@ proc newPrivateConversation*(client: Client,
 # Receives a incoming payload, decodes it, and processes it.
 #################################################
 
-proc parseMessage(client: Client, msg: ChatPayload) {.raises: [ValueError,
+proc parseMessage(client: ChatClient, msg: ChatPayload) {.raises: [ValueError,
     SerializationError].} =
   let envelopeRes = decode(msg.bytes, WapEnvelopeV1)
   if envelopeRes.isErr:
@@ -231,7 +231,7 @@ proc parseMessage(client: Client, msg: ChatPayload) {.raises: [ValueError,
 # Async Tasks
 #################################################
 
-proc messageQueueConsumer(client: Client) {.async.} =
+proc messageQueueConsumer(client: ChatClient) {.async.} =
   ## Main message processing loop
   info "Message listener started"
 
@@ -257,8 +257,8 @@ proc messageQueueConsumer(client: Client) {.async.} =
 # Control Functions
 #################################################
 
-proc start*(client: Client) {.async.} =
-  ## Start `Client` and listens for incoming messages.
+proc start*(client: ChatClient) {.async.} =
+  ## Start `ChatClient` and listens for incoming messages.
   client.ds.addDispatchQueue(client.inboundQueue)
   asyncSpawn client.ds.start()
 
@@ -268,7 +268,7 @@ proc start*(client: Client) {.async.} =
 
   notice "Client start complete", client = client.getId()
 
-proc stop*(client: Client) {.async.} =
+proc stop*(client: ChatClient) {.async.} =
   ## Stop the client.
   await client.ds.stop()
   client.isRunning = false

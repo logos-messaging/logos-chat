@@ -20,7 +20,7 @@ logScope:
 #################################################
 
 proc chat_get_identity(
-    ctx: ptr FFIContext[Client],
+    ctx: ptr FFIContext[ChatClient],
     callback: FFICallBack,
     userData: pointer
 ) {.ffi.} =
@@ -39,7 +39,7 @@ proc chat_get_identity(
 #################################################
 
 proc chat_create_intro_bundle(
-    ctx: ptr FFIContext[Client],
+    ctx: ptr FFIContext[ChatClient],
     callback: FFICallBack,
     userData: pointer
 ) {.ffi.} =

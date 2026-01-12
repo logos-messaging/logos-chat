@@ -34,20 +34,20 @@ proc chat_new(
 ): pointer {.dynlib, exportc, cdecl.} =
   initializeLibrary()
 
-  ## Creates a new instance of the Chat Client.
+  ## Creates a new instance of the ChatClient.
   if isNil(callback):
     echo "error: missing callback in chat_new"
     return nil
 
   ## Create the Chat thread that will keep waiting for req from the main thread.
-  var ctx = ffi.createFFIContext[Client]().valueOr:
+  var ctx = ffi.createFFIContext[ChatClient]().valueOr:
     let msg = "Error in createFFIContext: " & $error
     callback(RET_ERR, unsafeAddr msg[0], cast[csize_t](len(msg)), userData)
     return nil
 
   ctx.userData = userData
 
-  proc onNewMessage(ctx: ptr FFIContext[Client]): MessageCallback =
+  proc onNewMessage(ctx: ptr FFIContext[ChatClient]): MessageCallback =
     return proc(conversation: Conversation, msg: ReceivedMessage): Future[void] {.async.} =
       callEventCallback(ctx, "onNewMessage"):
         $newJsonMessageEvent(
@@ -57,12 +57,12 @@ proc chat_new(
           msg.timestamp
         )
 
-  proc onNewConversation(ctx: ptr FFIContext[Client]): NewConvoCallback =
+  proc onNewConversation(ctx: ptr FFIContext[ChatClient]): NewConvoCallback =
     return proc(conversation: Conversation): Future[void] {.async.} =
       callEventCallback(ctx, "onNewConversation"):
         $newJsonConversationEvent(conversation.id(), "private")
 
-  proc onDeliveryAck(ctx: ptr FFIContext[Client]): DeliveryAckCallback =
+  proc onDeliveryAck(ctx: ptr FFIContext[ChatClient]): DeliveryAckCallback =
     return proc(conversation: Conversation, msgId: MessageId): Future[void] {.async.} =
       callEventCallback(ctx, "onDeliveryAck"):
         $newJsonDeliveryAckEvent(conversation.id(), msgId)
@@ -83,7 +83,7 @@ proc chat_new(
   return ctx
 
 proc chat_destroy(
-    ctx: ptr FFIContext[Client], callback: FFICallBack, userData: pointer
+    ctx: ptr FFIContext[ChatClient], callback: FFICallBack, userData: pointer
 ): cint {.dynlib, exportc, cdecl.} =
   initializeLibrary()
   checkParams(ctx, callback, userData)

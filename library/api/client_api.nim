@@ -26,7 +26,7 @@ type ChatCallbacks* = object
 
 proc createChatClient(
     configJson: cstring, chatCallbacks: ChatCallbacks
-): Future[Result[Client, string]] {.async.} =
+): Future[Result[ChatClient, string]] {.async.} =
   try:
     let config = parseJson($configJson)
     
@@ -69,7 +69,7 @@ proc createChatClient(
   except CatchableError as e:
     return err("failed to create client: " & e.msg)
 
-registerReqFFI(CreateClientRequest, ctx: ptr FFIContext[Client]):
+registerReqFFI(CreateClientRequest, ctx: ptr FFIContext[ChatClient]):
   proc(
       configJson: cstring, chatCallbacks: ChatCallbacks
   ): Future[Result[string, string]] {.async.} =
@@ -79,11 +79,11 @@ registerReqFFI(CreateClientRequest, ctx: ptr FFIContext[Client]):
     return ok("")
 
 #################################################
-# Client Lifecycle Operations
+# ChatClient Lifecycle Operations
 #################################################
 
 proc chat_start(
-    ctx: ptr FFIContext[Client],
+    ctx: ptr FFIContext[ChatClient],
     callback: FFICallBack,
     userData: pointer
 ) {.ffi.} =
@@ -95,7 +95,7 @@ proc chat_start(
     return err("failed to start client: " & e.msg)
 
 proc chat_stop(
-    ctx: ptr FFIContext[Client],
+    ctx: ptr FFIContext[ChatClient],
     callback: FFICallBack,
     userData: pointer
 ) {.ffi.} =
@@ -107,11 +107,11 @@ proc chat_stop(
     return err("failed to stop client: " & e.msg)
 
 #################################################
-# Client Info Operations
+# ChatClient Info Operations
 #################################################
 
 proc chat_get_id(
-    ctx: ptr FFIContext[Client],
+    ctx: ptr FFIContext[ChatClient],
     callback: FFICallBack,
     userData: pointer
 ) {.ffi.} =
@@ -120,7 +120,7 @@ proc chat_get_id(
   return ok(clientId)
 
 proc chat_get_default_inbox_id(
-    ctx: ptr FFIContext[Client],
+    ctx: ptr FFIContext[ChatClient],
     callback: FFICallBack,
     userData: pointer
 ) {.ffi.} =
@@ -133,7 +133,7 @@ proc chat_get_default_inbox_id(
 #################################################
 
 proc chat_list_conversations(
-    ctx: ptr FFIContext[Client],
+    ctx: ptr FFIContext[ChatClient],
     callback: FFICallBack,
     userData: pointer
 ) {.ffi.} =
@@ -145,7 +145,7 @@ proc chat_list_conversations(
   return ok($convoList)
 
 proc chat_get_conversation(
-    ctx: ptr FFIContext[Client],
+    ctx: ptr FFIContext[ChatClient],
     callback: FFICallBack,
     userData: pointer,
     convoId: cstring
