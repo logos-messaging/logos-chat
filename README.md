@@ -1,4 +1,6 @@
 # Nim Chat POC
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Flogos-messaging%2Fnim-chat-poc.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Flogos-messaging%2Fnim-chat-poc?ref=badge_shield)
+
 
 This is the technical proof of a modular e2ee chat protocol using Waku. You can find discussion and details [here](https://github.com/waku-org/specs/pull/73)
 
@@ -143,3 +145,5 @@ sequenceDiagram
 ## License
 
 [MIT](https://choosealicense.com/licenses/mit/)
+
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Flogos-messaging%2Fnim-chat-poc.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Flogos-messaging%2Fnim-chat-poc?ref=badge_large)
