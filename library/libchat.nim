@@ -1,4 +1,4 @@
-## libchat - C bindings for the Chat SDK
+## liblogoschat - C bindings for the Chat SDK
 ## Main entry point for the shared library
 ##
 ## This library exposes the Chat SDK functionality through a C-compatible FFI interface.
@@ -89,7 +89,7 @@ proc chat_destroy(
   checkParams(ctx, callback, userData)
 
   ffi.destroyFFIContext(ctx).isOkOr:
-    let msg = "libchat error: " & $error
+    let msg = "liblogoschat error: " & $error
     callback(RET_ERR, unsafeAddr msg[0], cast[csize_t](len(msg)), userData)
     return RET_ERR
 

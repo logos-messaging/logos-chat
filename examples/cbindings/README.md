@@ -1,13 +1,13 @@
 # C Bindings Example - Chat TUI
 
-A simple terminal user interface that demonstrates how to use libchat from C.
+A simple terminal user interface that demonstrates how to use liblogoschat from C.
 
 ## Build
 
-1. First, build libchat from the root folder:
+1. First, build liblogoschat from the root folder:
 
    ```bash
-   make libchat
+   make liblogoschat
    ```
 
 2. Then build the C example:
