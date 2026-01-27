@@ -6,10 +6,11 @@
 import # Foreign
   chronicles,
   chronos,
+  libchat,
   sds,
   sequtils,
-  std/tables,
   std/sequtils,
+  std/tables,
   strformat,
   strutils,
   tables,
@@ -49,6 +50,7 @@ type KeyEntry* = object
 
 type ChatClient* = ref object
   ident: Identity
+  libchatCtx: LibChat 
   ds*: WakuClient
   keyStore: Table[string, KeyEntry]          # Keyed by HexEncoded Public Key
   conversations: Table[string, Conversation] # Keyed by conversation ID
@@ -75,6 +77,8 @@ proc newClient*(ds: WakuClient, ident: Identity): ChatClient {.raises: [IOError,
 
     var q = QueueRef(queue: newAsyncQueue[ChatPayload](10))
     var c = ChatClient(ident: ident,
+    var c = ChatClient(
+                  libchatCtx: newConversationsContext(),
                   ds: ds,
                   keyStore: initTable[string, KeyEntry](),
                   conversations: initTable[string, Conversation](),
@@ -88,6 +92,9 @@ proc newClient*(ds: WakuClient, ident: Identity): ChatClient {.raises: [IOError,
 
     notice "Client started", client = c.ident.getName(),
         defaultInbox = defaultInbox, inTopic= topic_inbox(c.ident.get_addr())
+
+    # Set LibChatBufferSize
+    c.libchatCtx.setBufferSize(256);
     result = c
   except Exception as e:
     error "newCLient", err = e.msg
