@@ -1,5 +1,5 @@
 /**
- * Simple Terminal UI for libchat.c
+ * Simple Terminal UI for liblogoschat.c
  * Commands:
  *   /join <intro_bundle_json>  - Join a conversation
  *   /bundle                    - Show your intro bundle
@@ -17,7 +17,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "libchat.h"
+#include "liblogoschat.h"
 
 // Constants
 static const int LOG_PANEL_HEIGHT = 6;

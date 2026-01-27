@@ -1,6 +1,6 @@
 // Generated manually
-#ifndef __libchat__
-#define __libchat__
+#ifndef __liblogoschat__
+#define __liblogoschat__
 
 #include <stddef.h>
 #include <stdint.h>
@@ -104,4 +104,4 @@ int chat_create_intro_bundle(void *ctx, FFICallBack callback, void *userData);
 }
 #endif
 
-#endif /* __libchat__ */
+#endif /* __liblogoschat__ */

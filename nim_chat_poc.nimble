@@ -76,6 +76,6 @@ task pingpong, "Build the Pingpong example":
   let name = "pingpong"
   buildBinary name, "examples/", "-d:chronicles_log_level='INFO' -d:chronicles_disabled_topics='waku node' "
 
-task libchat, "Build the Chat SDK shared library (C bindings)":
+task liblogoschat, "Build the Chat SDK shared library (C bindings)":
   buildLibrary "chat", "library/", 
     "-d:chronicles_log_level='INFO' -d:chronicles_enabled=on --path:src --path:vendor/nim-ffi"
