@@ -49,8 +49,8 @@ type KeyEntry* = object
   timestamp: int64
 
 type ChatClient* = ref object
-  ident: Identity
   libchatCtx: LibChat 
+  ident: Identity
   ds*: WakuClient
   keyStore: Table[string, KeyEntry]          # Keyed by HexEncoded Public Key
   conversations: Table[string, Conversation] # Keyed by conversation ID
@@ -79,6 +79,7 @@ proc newClient*(ds: WakuClient, ident: Identity): ChatClient {.raises: [IOError,
     var c = ChatClient(ident: ident,
     var c = ChatClient(
                   libchatCtx: newConversationsContext(),
+                  ident: ident,
                   ds: ds,
                   keyStore: initTable[string, KeyEntry](),
                   conversations: initTable[string, Conversation](),
