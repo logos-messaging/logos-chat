@@ -1,6 +1,10 @@
 
-import crypto
+import crypto/ecdh
 import results
+import strformat
+import utils
+
+export PublicKey, PrivateKey, loadPrivateKeyFromBytes, loadPublicKeyFromBytes 
 
 
 type

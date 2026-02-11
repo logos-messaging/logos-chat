@@ -7,24 +7,14 @@ import # Foreign
   chronicles,
   chronos,
   libchat,
-  sds,
-  sequtils,
-  std/sequtils,
-  std/tables,
+  std/options,
   strformat,
-  strutils,
-  tables,
   types
 
 import #local
-  conversations,
-  conversations/convo_impl,
-  crypto,
   delivery/waku_client,
   errors,
   identity,
-  inbox,
-  proto_types,
   types,
   utils
 
