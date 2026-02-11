@@ -76,6 +76,7 @@ type ChatClient* = ref object
 
 proc newClient*(ds: WakuClient, ident: Identity): ChatClient {.raises: [IOError, ValueError].} =
   ## Creates new instance of a `ChatClient` with a given `WakuConfig`
+  ## TODO: (P1) Currently the passed in Identity is not used. Libchat Generates one for every invocation.
   try:
 
     var q = QueueRef(queue: newAsyncQueue[ChatPayload](10))
