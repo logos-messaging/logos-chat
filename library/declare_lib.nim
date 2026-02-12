@@ -1,7 +1,7 @@
 import ffi
 import src/chat/client
 
-declareLibrary("chat")
+declareLibrary("logoschat")
 
 proc set_event_callback(
     ctx: ptr FFIContext[ChatClient],

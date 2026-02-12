@@ -34,7 +34,7 @@ endif
 .PHONY: all update clean
 
 # default target, because it's the first one that doesn't start with '.'
-all: | bot_echo pingpong
+all: | bot_echo pingpong liblogoschat
 
 test_file := $(word 2,$(MAKECMDGOALS))
 define test_name
