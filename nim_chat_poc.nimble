@@ -39,17 +39,17 @@ proc buildLibrary(name: string, srcDir = "library/", params = "", lang = "c") =
   ## Build a shared library (.so on Linux, .dylib on macOS, .dll on Windows)
   if not dirExists "build":
     mkDir "build"
-  
+
   # Determine library extension based on OS
   let libExt = when defined(macosx): "dylib"
                elif defined(windows): "dll"
                else: "so"
-  
+
   var extra_params = params
   for i in 2 ..< paramCount():
     extra_params &= " " & paramStr(i)
-  
-  exec "nim " & lang & " --app:lib --out:build/lib" & name & "." & libExt & 
+
+  exec "nim " & lang & " --app:lib --out:build/lib" & name & "." & libExt &
        " --mm:refc --nimMainPrefix:lib" & name & " " & extra_params & " " &
        srcDir & "lib" & name & ".nim"
 
@@ -59,6 +59,7 @@ proc test(name: string, params = "-d:chronicles_log_level=DEBUG", lang = "c") =
 
 task tests, "Build & run tests":
   test "all_tests", "-d:chronicles_log_level=ERROR -d:chronosStrictException"
+  test "smoke_test", "-d:chronicles_log_level=ERROR"
 
 task waku_example, "Build Waku based simple example":
   let name = "waku_example"
@@ -77,5 +78,5 @@ task pingpong, "Build the Pingpong example":
   buildBinary name, "examples/", "-d:chronicles_log_level='INFO' -d:chronicles_disabled_topics='waku node' "
 
 task liblogoschat, "Build the Chat SDK shared library (C bindings)":
-  buildLibrary "logoschat", "library/", 
+  buildLibrary "logoschat", "library/",
     "-d:chronicles_log_level='INFO' -d:chronicles_enabled=on --path:src --path:vendor/nim-ffi"
