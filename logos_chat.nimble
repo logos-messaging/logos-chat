@@ -1,8 +1,8 @@
 # Package
 
 version = "0.1.0"
-author = "jazzz"
-description = "An example of the chat sdk in Nim"
+author = "Logos.co"
+description = "LogosChat is a decentralized permissionless messaging protocol."
 license = "MIT"
 srcDir = "src"
 bin = @["logos_chat"]
