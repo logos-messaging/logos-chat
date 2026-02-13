@@ -5,7 +5,7 @@ author = "jazzz"
 description = "An example of the chat sdk in Nim"
 license = "MIT"
 srcDir = "src"
-bin = @["nim_chat_poc"]
+bin = @["logos_chat"]
 
 # Dependencies
 
@@ -76,7 +76,7 @@ task bot_echo, "Build the EchoBot example":
 
 task pingpong, "Build the Pingpong example":
   let name = "pingpong"
-  buildBinary name, "examples/", "-d:chronicles_log_level='INFO' -d:chronicles_disabled_topics='waku node' "
+  buildBinary name, "./", "-d:chronicles_log_level='INFO' -d:chronicles_disabled_topics='waku node' "
 
 task liblogoschat, "Build the Chat SDK shared library (C bindings)":
   buildLibrary "logoschat", "library/",
