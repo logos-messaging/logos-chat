@@ -192,7 +192,7 @@ proc parseMessage(client: ChatClient, msg: ChatPayload) {.raises: [ValueError].}
 
   try:
     let opt_content = client.libchatCtx.handlePayload(msg.bytes).valueOr:
-      error "handlePayload" ,client=client.getId()
+      error "handlePayload" , error=error, client=client.getId() 
       return 
 
     if opt_content.isSome():
