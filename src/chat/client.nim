@@ -44,7 +44,7 @@ type Conversation* = object
 
 
 proc id*(self: Conversation): string =
-  return "TODO"
+  return self.convoId
 
 
 type

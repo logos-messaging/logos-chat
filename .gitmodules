@@ -48,4 +48,4 @@
 	branch = master
 [submodule "vendor/libchat"]
 	path = vendor/libchat
-	url = git@github.com:logos-messaging/libchat.git
+	url = https://github.com/logos-messaging/libchat.git
