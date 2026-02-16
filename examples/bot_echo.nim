@@ -24,7 +24,7 @@ proc main() {.async.} =
   await chatClient.start()
   
   info "EchoBot started"
-  info "Invite", link=chatClient.createIntroBundle().toLink()
+  info "Invite", link=chatClient.createIntroBundle()
 
 when isMainModule:
   waitFor main()
