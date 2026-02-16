@@ -46,3 +46,6 @@
 	url = https://github.com/logos-messaging/nim-ffi.git
 	ignore = untracked
 	branch = master
+[submodule "vendor/libchat"]
+	path = vendor/libchat
+	url = https://github.com/logos-messaging/libchat.git

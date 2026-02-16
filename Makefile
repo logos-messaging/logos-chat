@@ -50,6 +50,7 @@ update: | update-common
 
 clean:
 	rm -rf build
+	cd vendor/libchat && cargo clean
 
 # must be included after the default target
 -include $(BUILD_SYSTEM_DIR)/makefiles/targets.mk
@@ -86,9 +87,15 @@ build-waku-nat:
 	@echo "Start building waku nat-libs"
 	$(MAKE) -C vendor/nwaku nat-libs
 	@echo "Completed building nat-libs"
-	
+
+.PHONY: build-libchat
+build-libchat:
+	@echo "Start building libchat"
+	cd vendor/libchat && cargo build --release
+	@echo "Completed building libchat"
+
 .PHONY: tests
-tests: | build-waku-librln build-waku-nat nim_chat_poc.nims
+tests: | build-waku-librln build-waku-nat build-libchat nim_chat_poc.nims
 	echo -e $(BUILD_MSG) "build/$@" && \
 		$(ENV_SCRIPT) nim tests $(NIM_PARAMS) nim_chat_poc.nims
 
@@ -98,7 +105,7 @@ tests: | build-waku-librln build-waku-nat nim_chat_poc.nims
 ##########
 
 # Ensure there is a nimble task with a name that matches the target
-tui bot_echo pingpong: | build-waku-librln build-waku-nat nim_chat_poc.nims
+tui bot_echo pingpong: | build-waku-librln build-waku-nat build-libchat nim_chat_poc.nims
 	echo -e $(BUILD_MSG) "build/$@" && \
 	$(ENV_SCRIPT) nim $@ $(NIM_PARAMS) --path:src nim_chat_poc.nims
 
@@ -118,7 +125,7 @@ endif
 LIBLOGOSCHAT := build/liblogoschat.$(LIBLOGOSCHAT_EXT)
 
 .PHONY: liblogoschat
-liblogoschat: | build-waku-librln build-waku-nat nim_chat_poc.nims
+liblogoschat: | build-waku-librln build-waku-nat build-libchat nim_chat_poc.nims
 	echo -e $(BUILD_MSG) "$(LIBLOGOSCHAT)" && \
 	$(ENV_SCRIPT) nim liblogoschat $(NIM_PARAMS) --path:src nim_chat_poc.nims && \
 	echo -e "\n\x1B[92mLibrary built successfully:\x1B[39m" && \

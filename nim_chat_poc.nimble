@@ -21,6 +21,7 @@ requires "nim >= 2.2.4",
   "regex",
   "web3",
   "https://github.com/jazzz/nim-sds#exports",
+  "libchat",
   "waku",
   "ffi"
 
