@@ -5,9 +5,9 @@
 ```mermaid
 flowchart TD
 
-    NIM("<a href="https://github.com/logos-messaging/nim-chat-poc"><b>nim-chat-poc</b><br>c-bingings, process control, networking</a>")
+    NIM("<a href="https://github.com/logos-messaging/logos-chat"><b>Logos-Chat</b><br>c-bingings, process control, networking</a>")
     LIB("<a href="https://github.com/logos-messaging/libchat"><b>libchat</b><br>encryption, encoding</a>")
-    PROTO("<a href="https://github.com/logos-messaging/chat_proto"><b>chat_proto</b><br>protobufs, language specific types</a>")
+    PROTO("<a href="https://github.com/logos-messaging/chat-proto"><b>chat-proto</b><br>protobufs, language specific types</a>")
     LMN("<a href="https://github.com/logos-messaging/logos-messaging-nim"><b>logos-messaging-nim</b><br>p2p networking</a>")
 
 
@@ -22,13 +22,13 @@ style LMN fill:#fff
 
 ## Repositories
 
-### nim-chat-poc
+### logos-chat
 Root of the Logos chat SDK, written in Nim.
 
 Handles async operations and bridges network operations with the cryptographic backend.
 
 **Responsibilities:**
-- C bindings to libchat
+- C bindings to Libchat
 - Async execution (Chronos)
 - Network integration
 
@@ -42,12 +42,12 @@ Operates as a pipeline: accepts either encrypted payloads or plaintext content, 
 - Encoding/decoding
 
 
-### logos-messaging-nim
+### logos-message-delivery
 P2P networking layer using logos-messaging protocol.
 
 Provides decentralized message transport. This is an external dependency.
 
-### chat_proto
+### chat-proto
 Protobuf definitions.
 
 Defines the protobufs used in the logos-chat protocol and provides generated types for various languages.
