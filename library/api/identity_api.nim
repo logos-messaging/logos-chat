@@ -8,8 +8,6 @@ import ffi
 import stew/byteutils
 
 import src/chat
-import src/chat/crypto
-import src/chat/proto_types
 import library/utils
 
 logScope:
@@ -25,12 +23,9 @@ proc chat_get_identity(
     userData: pointer
 ) {.ffi.} =
   ## Get the client identity
-  ## Returns JSON string: {"name": "...", "address": "...", "pubkey": "hex..."}
-  let ident = ctx.myLib[].identity()
+  ## Returns JSON string: {"name": "..."}
   let identJson = %*{
-    "name": ident.getName(),
-    "address": ident.getAddr(),
-    "pubkey": ident.getPubkey().toHex()
+    "name": ctx.myLib[].getId()
   }
   return ok($identJson)
 
@@ -44,11 +39,7 @@ proc chat_create_intro_bundle(
     userData: pointer
 ) {.ffi.} =
   ## Create an IntroBundle for initiating private conversations
-  ## Returns JSON string: {"ident": "hex...", "ephemeral": "hex..."}
+  ## Returns the intro bundle as an ASCII string (format: logos_chatintro_<version>_<base64url payload>)
   let bundle = ctx.myLib[].createIntroBundle()
-  let bundleJson = %*{
-    "ident": bundle.ident.toHex(),
-    "ephemeral": bundle.ephemeral.toHex()
-  }
-  return ok($bundleJson)
+  return ok(string.fromBytes(bundle))
 

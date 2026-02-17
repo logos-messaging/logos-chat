@@ -139,7 +139,7 @@ proc notifyDeliveryAck(client: ChatClient, convo: Conversation,
 # Functional
 #################################################
 
-proc createIntroBundle*(self: var ChatClient): seq[byte] =
+proc createIntroBundle*(self: ChatClient): seq[byte] =
   ## Generates an IntroBundle for the client, which includes
   ## the required information to send a message.
   result = self.libchatCtx.createIntroductionBundle().valueOr:
@@ -198,6 +198,10 @@ proc parseMessage(client: ChatClient, msg: ChatPayload) {.raises: [ValueError].}
     if opt_content.isSome():
       let content = opt_content.get()
       let convo = client.getConversation(content.conversationId)
+
+      if content.isNewConvo:
+        client.notifyNewConversation(convo)
+
       # TODO: (P1) Add sender information from LibChat.
       let msg = ReceivedMessage(timestamp:getCurrentTimestamp(),content: content.data  )
       client.notifyNewMessage(convo, msg)

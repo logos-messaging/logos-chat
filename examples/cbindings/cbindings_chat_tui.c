@@ -30,9 +30,7 @@ static const size_t MAX_INPUT_LEN = 2048;
 // Application state structures
 typedef struct {
     char current_convo[128];
-    char inbox_id[128];
     char my_name[64];
-    char my_address[128];
     void *ctx;
 } ChatState;
 
@@ -442,23 +440,13 @@ static void bundle_callback(int ret, const char *msg, size_t len, void *userData
 static void identity_callback(int ret, const char *msg, size_t len, void *userData) {
     (void)userData; (void)len;
     if (ret == RET_OK) {
-        const char *keys[] = {"name", "address"};
-        char *values[] = {g_app.chat.my_name, g_app.chat.my_address};
-        size_t sizes[] = {sizeof(g_app.chat.my_name), sizeof(g_app.chat.my_address)};
-        json_extract(msg, keys, values, sizes, 2);
-        
-        char buf[256];
-        snprintf(buf, sizeof(buf), "Identity: %s (%.24s...)", g_app.chat.my_name, g_app.chat.my_address);
-        add_log(buf);
-    }
-}
+        const char *keys[] = {"name"};
+        char *values[] = {g_app.chat.my_name};
+        size_t sizes[] = {sizeof(g_app.chat.my_name)};
+        json_extract(msg, keys, values, sizes, 1);
 
-static void inbox_callback(int ret, const char *msg, size_t len, void *userData) {
-    (void)userData;
-    if (ret == RET_OK && len > 0) {
-        snprintf(g_app.chat.inbox_id, sizeof(g_app.chat.inbox_id), "%.*s", (int)len, msg);
         char buf[256];
-        snprintf(buf, sizeof(buf), "Inbox: %.24s...", g_app.chat.inbox_id);
+        snprintf(buf, sizeof(buf), "Identity: %s", g_app.chat.my_name);
         add_log(buf);
     }
 }
@@ -713,7 +701,6 @@ int main(int argc, char *argv[]) {
     add_log("Starting client...");
     chat_start(g_app.chat.ctx, general_callback, NULL);
     chat_get_identity(g_app.chat.ctx, identity_callback, NULL);
-    chat_get_default_inbox_id(g_app.chat.ctx, inbox_callback, NULL);
 
     add_message("Welcome to Chat TUI!");
     add_message("Type /help for commands, /quit to exit");
