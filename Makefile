@@ -95,7 +95,7 @@ build-libchat:
 	@echo "Completed building libchat"
 
 .PHONY: tests
-tests: | build-waku-librln build-waku-nat build-libchat nim_chat_poc.nims
+tests: | build-waku-librln build-waku-nat build-libchat logos_chat.nims
 	echo -e $(BUILD_MSG) "build/$@" && \
 		$(ENV_SCRIPT) nim tests $(NIM_PARAMS) logos_chat.nims
 
@@ -105,7 +105,7 @@ tests: | build-waku-librln build-waku-nat build-libchat nim_chat_poc.nims
 ##########
 
 # Ensure there is a nimble task with a name that matches the target
-tui bot_echo pingpong: | build-waku-librln build-waku-nat build-libchat nim_chat_poc.nims
+tui bot_echo pingpong: | build-waku-librln build-waku-nat build-libchat logos_chat.nims
 	echo -e $(BUILD_MSG) "build/$@" && \
 	$(ENV_SCRIPT) nim $@ $(NIM_PARAMS) --path:src logos_chat.nims
 
@@ -125,7 +125,7 @@ endif
 LIBLOGOSCHAT := build/liblogoschat.$(LIBLOGOSCHAT_EXT)
 
 .PHONY: liblogoschat
-liblogoschat: | build-waku-librln build-waku-nat build-libchat nim_chat_poc.nims
+liblogoschat: | build-waku-librln build-waku-nat build-libchat logos_chat.nims
 	echo -e $(BUILD_MSG) "$(LIBLOGOSCHAT)" && \
 	$(ENV_SCRIPT) nim liblogoschat $(NIM_PARAMS) --path:src logos_chat.nims && \
 	echo -e "\n\x1B[92mLibrary built successfully:\x1B[39m" && \
