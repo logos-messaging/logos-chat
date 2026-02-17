@@ -1,4 +1,4 @@
-# Nim Chat POC
+# Logos Chat
 
 This is the technical proof of a modular e2ee chat protocol using Waku. You can find discussion and details [here](https://github.com/waku-org/specs/pull/73)
 

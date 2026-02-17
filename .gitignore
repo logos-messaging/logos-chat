@@ -1,6 +1,6 @@
 /waku_vibe_template
 /waku_vibe_template.dSYM
-/nim_chat_poc
+/logos_chat
 *.dSYM
 nimble.develop
 nimble.paths
@@ -21,7 +21,7 @@ nimble.paths
 /tags
 
 # a symlink that can't be added to the repo because of Windows
-/nim_chat_poc.nims
+/logos_chat.nims
 
 # Ignore dynamic, static libs and libtool archive files
 *.so

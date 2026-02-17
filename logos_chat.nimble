@@ -1,11 +1,11 @@
 # Package
 
 version = "0.1.0"
-author = "jazzz"
-description = "An example of the chat sdk in Nim"
+author = "Logos.co"
+description = "LogosChat is a decentralized permissionless messaging protocol."
 license = "MIT"
 srcDir = "src"
-bin = @["nim_chat_poc"]
+bin = @["logos_chat"]
 
 # Dependencies
 
@@ -76,8 +76,8 @@ task bot_echo, "Build the EchoBot example":
 
 task pingpong, "Build the Pingpong example":
   let name = "pingpong"
-  buildBinary name, "examples/", "-d:chronicles_log_level='INFO' -d:chronicles_disabled_topics='waku node' "
+  buildBinary name, "./", "-d:chronicles_log_level='INFO' -d:chronicles_disabled_topics='waku node' "
 
-task liblogoschat, "Build the Chat SDK shared library (C bindings)":
-  buildLibrary "logoschat", "library/",
+task liblogoschat, "Build the Logos-Chat shared library (C bindings)":
+  buildLibrary "logoschat", "library/", 
     "-d:chronicles_log_level='INFO' -d:chronicles_enabled=on --path:src --path:vendor/nim-ffi"
