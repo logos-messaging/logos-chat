@@ -199,7 +199,7 @@ proc parseMessage(client: ChatClient, msg: ChatPayload) {.raises: [ValueError].}
       let content = opt_content.get()
       let convo = client.getConversation(content.conversationId)
       # TODO: (P1) Add sender information from LibChat.
-      let msg = ReceivedMessage(sender: nil,timestamp:getCurrentTimestamp(),content: content.data  )
+      let msg = ReceivedMessage(timestamp:getCurrentTimestamp(),content: content.data  )
       client.notifyNewMessage(convo, msg)
     else:
       debug "Parsed message generated no content", client=client.getId()
