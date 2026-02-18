@@ -15,12 +15,10 @@ requires "nim >= 2.2.4",
   "blake2",
   "chronicles",
   "libp2p",
-  "nimchacha20poly1305", # TODO: remove
   "confutils",
   "eth",
   "regex",
   "web3",
-  "https://github.com/jazzz/nim-sds#exports",
   "libchat",
   "waku",
   "ffi"
@@ -79,5 +77,5 @@ task pingpong, "Build the Pingpong example":
   buildBinary name, "examples/", "-d:chronicles_log_level='INFO' -d:chronicles_disabled_topics='waku node' "
 
 task liblogoschat, "Build the Logos-Chat shared library (C bindings)":
-  buildLibrary "logoschat", "library/", 
+  buildLibrary "logoschat", "library/",
     "-d:chronicles_log_level='INFO' -d:chronicles_enabled=on --path:src --path:vendor/nim-ffi"
