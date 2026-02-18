@@ -14,7 +14,6 @@ import # Foreign
 import #local
   delivery/waku_client,
   errors,
-  identity,
   types,
   utils
 
@@ -52,12 +51,6 @@ type
   NewConvoCallback* = proc(conversation: Conversation): Future[void] {.async.}
   DeliveryAckCallback* = proc(conversation: Conversation,
       msgId: MessageId): Future[void] {.async.}
-
-
-type KeyEntry* = object
-  keyType: string
-  privateKey: PrivateKey
-  timestamp: int64
 
 type ChatClient* = ref object
   libchatCtx: LibChat 
