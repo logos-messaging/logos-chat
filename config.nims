@@ -5,3 +5,6 @@ for dir in walkDir(thisDir() / "vendor"):
   if dir.kind == pcDir:
     switch("path", dir.path)
     switch("path", dir.path / "src")
+
+switch("path", thisDir() / "vendor/libchat/nim-bindings")
+switch("path", thisDir() / "vendor/libchat/nim-bindings/src")

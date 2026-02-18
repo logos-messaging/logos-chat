@@ -20,7 +20,6 @@ import
     waku_filter_v2/client,
   ]
 
-import ../proto_types
 
 logScope:
   topics = "chat waku"
@@ -72,9 +71,9 @@ proc DefaultConfig*(): WakuConfig =
       shardId: @[shardId], pubsubTopic: &"/waku/2/rs/{clusterId}/{shardId}",
           staticPeers: @[])
 
-proc sendPayload*(client: WakuClient, contentTopic: string,
-    env: WapEnvelopeV1) {.async.} =
-  let bytes = encode(env)
+
+proc sendBytes*(client: WakuClient, contentTopic: string,
+    bytes: seq[byte]) {.async.} =
 
   let msg = WakuMessage(contentTopic: contentTopic, payload: bytes)
   let res = await client.node.publish(some(PubsubTopic(client.cfg.pubsubTopic)), msg)

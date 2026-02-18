@@ -41,15 +41,16 @@ define test_name
 $(shell echo '$(MAKECMDGOALS)' | cut -d' ' -f3-)
 endef
 
-nim_chat_poc.nims:
-	ln -s nim_chat_poc.nimble $@
+logos_chat.nims:
+	ln -s logos_chat.nimble $@
 
 update: | update-common
-	rm -rf nim_chat_poc.nims && \
-		$(MAKE) nim_chat_poc.nims $(HANDLE_OUTPUT)
+	rm -rf logos_chat.nims && \
+		$(MAKE) logos_chat.nims $(HANDLE_OUTPUT)
 
 clean:
 	rm -rf build
+	cd vendor/libchat && cargo clean
 
 # must be included after the default target
 -include $(BUILD_SYSTEM_DIR)/makefiles/targets.mk
@@ -86,11 +87,17 @@ build-waku-nat:
 	@echo "Start building waku nat-libs"
 	$(MAKE) -C vendor/nwaku nat-libs
 	@echo "Completed building nat-libs"
-	
+
+.PHONY: build-libchat
+build-libchat:
+	@echo "Start building libchat"
+	cd vendor/libchat && cargo build --release
+	@echo "Completed building libchat"
+
 .PHONY: tests
-tests: | build-waku-librln build-waku-nat nim_chat_poc.nims
+tests: | build-waku-librln build-waku-nat build-libchat logos_chat.nims
 	echo -e $(BUILD_MSG) "build/$@" && \
-		$(ENV_SCRIPT) nim tests $(NIM_PARAMS) nim_chat_poc.nims
+		$(ENV_SCRIPT) nim tests $(NIM_PARAMS) logos_chat.nims
 
 
 ##########
@@ -98,9 +105,9 @@ tests: | build-waku-librln build-waku-nat nim_chat_poc.nims
 ##########
 
 # Ensure there is a nimble task with a name that matches the target
-tui bot_echo pingpong: | build-waku-librln build-waku-nat nim_chat_poc.nims
+tui bot_echo pingpong: | build-waku-librln build-waku-nat build-libchat logos_chat.nims
 	echo -e $(BUILD_MSG) "build/$@" && \
-	$(ENV_SCRIPT) nim $@ $(NIM_PARAMS) --path:src nim_chat_poc.nims
+	$(ENV_SCRIPT) nim $@ $(NIM_PARAMS) --path:src logos_chat.nims
 
 ###########
 ## Library ##
@@ -118,9 +125,9 @@ endif
 LIBLOGOSCHAT := build/liblogoschat.$(LIBLOGOSCHAT_EXT)
 
 .PHONY: liblogoschat
-liblogoschat: | build-waku-librln build-waku-nat nim_chat_poc.nims
+liblogoschat: | build-waku-librln build-waku-nat build-libchat logos_chat.nims
 	echo -e $(BUILD_MSG) "$(LIBLOGOSCHAT)" && \
-	$(ENV_SCRIPT) nim liblogoschat $(NIM_PARAMS) --path:src nim_chat_poc.nims && \
+	$(ENV_SCRIPT) nim liblogoschat $(NIM_PARAMS) --path:src logos_chat.nims && \
 	echo -e "\n\x1B[92mLibrary built successfully:\x1B[39m" && \
 	echo "  $(shell pwd)/$(LIBLOGOSCHAT)"
 

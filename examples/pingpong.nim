@@ -5,8 +5,6 @@ import strformat
 import chat
 import content_types
 
-# TEsting
-import ../src/chat/crypto
 
 
 proc getContent(content: ContentFrame): string =
@@ -35,39 +33,38 @@ proc main() {.async.} =
   var saro = newClient(waku_saro, Identity(name: "saro", privateKey: sKey))
   var raya = newClient(waku_raya, Identity(name: "raya", privateKey: rKey))
 
-  var ri = 0
-  # Wire Callbacks
-  saro.onNewMessage(proc(convo: Conversation, msg: ReceivedMessage) {.async.} =
+  # Wire Saro Callbacks
+  saro.onNewMessage(proc(convo: Conversation, msg: ReceivedMessage) {.async, closure.} =
     let contentFrame = msg.content.fromBytes()
-    echo "    Saro  <------        :: " & getContent(contentFrame)
-    await sleepAsync(5000.milliseconds)
+    notice "    Saro  <------  ", content = getContent(contentFrame)
+    await sleepAsync(1000.milliseconds)
     discard await convo.sendMessage(initTextFrame("Ping").toContentFrame().toBytes())
-  
-    )
+  )
 
   saro.onDeliveryAck(proc(convo: Conversation, msgId: string) {.async.} =
-    echo "    Saro -- Read Receipt for " & msgId
+    notice "    Saro -- Read Receipt for ", msgId= msgId
   )
 
 
+  # Wire Raya Callbacks
+  var i = 0
+  raya.onNewConversation(proc(convo: Conversation) {.async.} =
+    notice "           ------>  Raya :: New Conversation: ", id = convo.id()
+    discard await convo.sendMessage(initTextFrame("Hello").toContentFrame().toBytes())
+  )
 
 
   raya.onNewMessage(proc(convo: Conversation,msg: ReceivedMessage) {.async.} =
     let contentFrame = msg.content.fromBytes()
-    echo fmt"           ------>  Raya :: from:{msg.sender} " & getContent(contentFrame)
+    notice "           ------>  Raya :: from: ", content=  getContent(contentFrame)
     await sleepAsync(500.milliseconds)
-    discard  await convo.sendMessage(initTextFrame("Pong" & $ri).toContentFrame().toBytes())
+    discard  await convo.sendMessage(initTextFrame("Pong" & $i).toContentFrame().toBytes())
     await sleepAsync(800.milliseconds)
-    discard  await convo.sendMessage(initTextFrame("Pong" & $ri).toContentFrame().toBytes())
-    await sleepAsync(500.milliseconds)
-    discard  await convo.sendMessage(initTextFrame("Pong" & $ri).toContentFrame().toBytes())
-    inc ri
+    discard  await convo.sendMessage(initTextFrame("Pang" & $i).toContentFrame().toBytes())
+    inc i
   )
 
-  raya.onNewConversation(proc(convo: Conversation) {.async.} =
-    echo "           ------>  Raya :: New Conversation: " & convo.id()
-    discard await convo.sendMessage(initTextFrame("Hello").toContentFrame().toBytes())
-  )
+ 
   raya.onDeliveryAck(proc(convo: Conversation, msgId: string) {.async.} =
     echo "    raya -- Read Receipt for " & msgId
   )

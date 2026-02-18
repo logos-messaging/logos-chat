@@ -1,6 +1,10 @@
 
-import crypto
+import crypto/ecdh
 import results
+import strformat
+import utils
+
+export PublicKey, PrivateKey, loadPrivateKeyFromBytes, loadPublicKeyFromBytes 
 
 
 type
@@ -28,6 +32,13 @@ proc getPubkey*(self: Identity): PublicKey =
 proc getAddr*(self: Identity): string =
   result = get_addr(self.getPubKey())
 
-
 proc getName*(self: Identity): string =
   result = self.name
+
+proc toHex(key: PublicKey): string =
+  bytesToHex(key.bytes())
+
+proc `$`*(key: PublicKey): string =
+  let byteStr = toHex(key)
+  fmt"{byteStr[0..3]}..{byteStr[^4 .. ^1]}"
+

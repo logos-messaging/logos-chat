@@ -1,14 +1,13 @@
 ## Conversation API - FFI bindings for conversation operations
 ## Uses the {.ffi.} pragma for async request handling
 
-import std/[json, options]
+import std/options
 import chronicles
 import chronos
 import ffi
 import stew/byteutils
 
 import src/chat
-import src/chat/proto_types
 import library/utils
 
 logScope:
@@ -22,32 +21,24 @@ proc chat_new_private_conversation(
     ctx: ptr FFIContext[ChatClient],
     callback: FFICallBack,
     userData: pointer,
-    introBundleJson: cstring,
+    introBundleStr: cstring,
     contentHex: cstring
 ) {.ffi.} =
   ## Create a new private conversation with the given IntroBundle
-  ## introBundleJson: JSON string with {"ident": "hex...", "ephemeral": "hex..."}
+  ## introBundleStr: Intro bundle ASCII string as returned by chat_create_intro_bundle
   ## contentHex: Initial message content as hex-encoded string
   try:
-    let bundleJson = parseJson($introBundleJson)
-    
-    # Parse IntroBundle from JSON
-    let identBytes = hexToSeqByte(bundleJson["ident"].getStr())
-    let ephemeralBytes = hexToSeqByte(bundleJson["ephemeral"].getStr())
-    
-    let introBundle = IntroBundle(
-      ident: identBytes,
-      ephemeral: ephemeralBytes
-    )
-    
+    # Convert bundle string to seq[byte]
+    let bundle = toBytes($introBundleStr)
+
     # Convert hex content to bytes
     let content = hexToSeqByte($contentHex)
-    
+
     # Create the conversation
-    let errOpt = await ctx.myLib[].newPrivateConversation(introBundle, content)
+    let errOpt = await ctx.myLib[].newPrivateConversation(bundle, content)
     if errOpt.isSome():
       return err("failed to create conversation: " & $errOpt.get())
-    
+
     return ok("")
   except CatchableError as e:
     error "chat_new_private_conversation failed", error = e.msg

@@ -1,7 +1,7 @@
-## liblogoschat - C bindings for the Chat SDK
+## liblogoschat - C bindings for Logos-Chat
 ## Main entry point for the shared library
 ##
-## This library exposes the Chat SDK functionality through a C-compatible FFI interface.
+## This library exposes the chat functionality through a C-compatible FFI interface.
 ## It uses nim-ffi for thread-safe async request handling.
 
 import std/[json, options]
@@ -10,10 +10,8 @@ import stew/byteutils
 
 import
   src/chat/client,
-  src/chat/conversations,
   src/chat/identity,
   src/chat/delivery/waku_client,
-  src/chat/proto_types,
   library/declare_lib,
   library/utils
 
