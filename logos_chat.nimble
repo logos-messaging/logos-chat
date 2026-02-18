@@ -76,7 +76,7 @@ task bot_echo, "Build the EchoBot example":
 
 task pingpong, "Build the Pingpong example":
   let name = "pingpong"
-  buildBinary name, "./", "-d:chronicles_log_level='INFO' -d:chronicles_disabled_topics='waku node' "
+  buildBinary name, "examples/", "-d:chronicles_log_level='INFO' -d:chronicles_disabled_topics='waku node' "
 
 task liblogoschat, "Build the Logos-Chat shared library (C bindings)":
   buildLibrary "logoschat", "library/", 
