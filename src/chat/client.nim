@@ -73,7 +73,7 @@ type ChatClient* = ref object
 # Constructors
 #################################################
 
-proc newClient*(ds: WakuClient, ephemeral: bool = true, installation_name: string = "default"): Result[ChatClient, string] =
+proc newClient*(ds: WakuClient, ephemeral: bool = true, installation_name: string = "default"): Result[ChatClient, ErrorType] =
   ## Creates new instance of a `ChatClient` with a given `WakuConfig`.
   ## A new installation is created if no saved installation with `installation_name` is found
 
