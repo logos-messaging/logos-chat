@@ -6,11 +6,6 @@
 	url = https://github.com/waku-org/nwaku.git
 	ignore = untracked
 	branch = master
-[submodule "vendor/nim-sds"]
-	path = vendor/nim-sds
-	url = https://github.com/jazzz/nim-sds.git
-	ignore = untracked
-	branch = master
 [submodule "vendor/nim-protobuf-serialization"]
 	path = vendor/nim-protobuf-serialization
 	url = https://github.com/status-im/nim-protobuf-serialization.git
@@ -26,23 +21,10 @@
 	url = https://github.com/narimiran/blake2.git
 	ignore = untracked
 	branch = master
-[submodule "vendor/illwill"]
-	path = vendor/illwill
-	url = https://github.com/johnnovak/illwill.git
-	ignore = untracked
-	branch = master
-[submodule "vendor/nim_chacha20_poly1305"]
-	path = vendor/nim_chacha20_poly1305
-	url = https://github.com/lantos-lgtm/nim_chacha20_poly1305.git
-	ignore = untracked
-	branch = master
-[submodule "vendor/constantine"]
-	path = vendor/constantine
-	url = https://github.com/mratsim/constantine.git
-	ignore = untracked
-	branch = master
+[submodule "vendor/libchat"]
+	path = vendor/libchat
+	url = https://github.com/logos-messaging/libchat.git
 [submodule "vendor/nim-ffi"]
 	path = vendor/nim-ffi
 	url = https://github.com/logos-messaging/nim-ffi.git
-	ignore = untracked
 	branch = master

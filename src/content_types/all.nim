@@ -6,8 +6,6 @@ import protobuf_serialization/proto_parser
 import results
 import strformat
 
-import ../chat/proto_types
-
 
 export protobuf_serialization
 

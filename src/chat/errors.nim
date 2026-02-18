@@ -9,6 +9,7 @@ type
     errTypeError
     errWrapped
     errTopic
+    errLibChat
 
 proc `$`*(x: ChatError): string =
   fmt"ChatError(code={$x.code}, context: {x.context})"
