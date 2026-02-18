@@ -58,9 +58,6 @@ void set_event_callback(void *ctx, FFICallBack callback, void *userData);
 // Get the client's identifier
 int chat_get_id(void *ctx, FFICallBack callback, void *userData);
 
-// Get the default inbox conversation ID
-int chat_get_default_inbox_id(void *ctx, FFICallBack callback, void *userData);
-
 //////////////////////////////////////////////////////////////////////////////
 // Conversation Operations
 //////////////////////////////////////////////////////////////////////////////
@@ -75,10 +72,10 @@ int chat_get_conversation(void *ctx, FFICallBack callback, void *userData,
                           const char *convoId);
 
 // Create a new private conversation with the given IntroBundle
-// introBundleJson: JSON string with {"ident": "hex...", "ephemeral": "hex..."}
+// introBundleStr: Intro bundle ASCII string as returned by chat_create_intro_bundle
 // contentHex: Initial message content as hex-encoded string
 int chat_new_private_conversation(void *ctx, FFICallBack callback,
-                                  void *userData, const char *introBundleJson,
+                                  void *userData, const char *introBundleStr,
                                   const char *contentHex);
 
 // Send a message to a conversation
@@ -93,11 +90,11 @@ int chat_send_message(void *ctx, FFICallBack callback, void *userData,
 //////////////////////////////////////////////////////////////////////////////
 
 // Get the client identity
-// Returns JSON: {"name": "...", "address": "...", "pubkey": "hex..."}
+// Returns JSON: {"name": "..."}
 int chat_get_identity(void *ctx, FFICallBack callback, void *userData);
 
 // Create an IntroBundle for initiating private conversations
-// Returns JSON: {"ident": "hex...", "ephemeral": "hex..."}
+// Returns the intro bundle as an ASCII string (format: logos_chatintro_<version>_<base64url payload>)
 int chat_create_intro_bundle(void *ctx, FFICallBack callback, void *userData);
 
 #ifdef __cplusplus
