@@ -7,7 +7,6 @@ import chronos
 import ffi
 
 import src/chat
-import src/chat/proto_types
 import src/chat/delivery/waku_client
 import src/chat/identity
 import library/utils
@@ -118,15 +117,6 @@ proc chat_get_id(
   ## Get the client's identifier
   let clientId = ctx.myLib[].getId()
   return ok(clientId)
-
-proc chat_get_default_inbox_id(
-    ctx: ptr FFIContext[ChatClient],
-    callback: FFICallBack,
-    userData: pointer
-) {.ffi.} =
-  ## Get the default inbox conversation ID
-  let inboxId = ctx.myLib[].defaultInboxConversationId()
-  return ok(inboxId)
 
 #################################################
 # Conversation List Operations

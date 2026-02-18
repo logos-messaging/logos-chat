@@ -2,7 +2,7 @@
 
 CC = gcc
 CFLAGS = -Wall -Wextra -I../../library -pthread
-LDFLAGS = -L../../build -lchat -lncurses -Wl,-rpath,../../build
+LDFLAGS = -L../../build -llogoschat -lncurses -Wl,-rpath,../../build
 
 BUILD_DIR = ../../build
 TARGET = $(BUILD_DIR)/cbindings_chat_tui
