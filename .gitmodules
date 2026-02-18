@@ -24,3 +24,7 @@
 [submodule "vendor/libchat"]
 	path = vendor/libchat
 	url = https://github.com/logos-messaging/libchat.git
+[submodule "vendor/nim-ffi"]
+	path = vendor/nim-ffi
+	url = https://github.com/logos-messaging/nim-ffi.git
+	branch = master
