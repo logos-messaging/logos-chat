@@ -8,7 +8,6 @@ import ffi
 
 import src/chat
 import src/chat/delivery/waku_client
-import src/chat/identity
 import library/utils
 
 logScope:
@@ -49,14 +48,11 @@ proc createChatClient(
       for peer in config["staticPeers"]:
         wakuCfg.staticPeers.add(peer.getStr())
     
-    # Create identity
-    let identity = createIdentity(name)
-    
     # Create Waku client
     let wakuClient = initWakuClient(wakuCfg)
     
     # Create Chat client
-    let client = newClient(wakuClient, identity)
+    let client = ?newClient(wakuClient, installation_name = name)
     
     # Register event handlers
     client.onNewMessage(chatCallbacks.onNewMessage)

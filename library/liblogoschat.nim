@@ -10,7 +10,6 @@ import stew/byteutils
 
 import
   src/chat/client,
-  src/chat/identity,
   src/chat/delivery/waku_client,
   library/declare_lib,
   library/utils
