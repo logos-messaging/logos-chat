@@ -77,7 +77,7 @@ proc newClient*(ds: WakuClient, ephemeral: bool = true, installation_name: strin
 
     var q = QueueRef(queue: newAsyncQueue[ChatPayload](10))
     var c = ChatClient(
-                  libchatCtx: newConversationsContext(),
+                  libchatCtx: newConversationsContext(installation_name),
                   ds: ds,
                   inboundQueue: q,
                   isRunning: false,
@@ -97,7 +97,7 @@ proc newClient*(ds: WakuClient, ephemeral: bool = true, installation_name: strin
 #################################################
 
 proc getId*(client: ChatClient): string =
-  result = "PLACEHOLDER_CLIENT_ID" # TODO: (!) get from Libchat.
+  result = client.libchatCtx.getInstallationName()
 
 
 proc listConversations*(client: ChatClient): seq[Conversation] =
