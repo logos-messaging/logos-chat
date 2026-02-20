@@ -51,9 +51,3 @@ make run_bob
 --help             Show help
 ```
 
-## Waku Configuration
-
-- **Cluster ID**: 42
-- **Shard ID**: 2
-- **PubSub Topic**: `/waku/2/rs/42/2`
-- **Port**: Random between 50000-50200 (or specify with --port)
