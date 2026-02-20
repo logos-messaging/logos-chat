@@ -1,4 +1,4 @@
-# Logos Chat Nim
+# Logos Chat
 
 [![Tests](https://github.com/logos-messaging/logos-chat/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/logos-messaging/logos-chat/actions/workflows/ci.yml)
 ![ProjectStatus]( https://img.shields.io/badge/Project_Status-Preview-orange)
