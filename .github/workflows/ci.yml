@@ -3,7 +3,7 @@ name: ci
 on:
   push:
     branches:
-      - main 
+      - main
     paths-ignore:
       - "**README.md"
       - ".gitignore"
@@ -11,13 +11,30 @@ on:
   pull_request:
     branches:
       - main
-    paths-ignore:
-      - "**README.md"
-      - ".gitignore"
-      - "LICENSE"
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      src: ${{ steps.filter.outputs.src }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for non-doc changes
+        id: filter
+        run: |
+          BASE=${{ github.event.pull_request.base.sha }}
+          HEAD=${{ github.sha }}
+          CHANGED=$(git diff --name-only "$BASE" "$HEAD" 2>/dev/null || git diff --name-only HEAD~1 HEAD)
+          NON_DOC=$(echo "$CHANGED" | grep -vE '^(README\.md|\.gitignore|LICENSE)$' || true)
+          if [ -n "$NON_DOC" ]; then
+            echo "src=true" >> $GITHUB_OUTPUT
+          else
+            echo "src=false" >> $GITHUB_OUTPUT
+          fi
+
   build:
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
     strategy:
       matrix:
         os: [ubuntu-latest, macOS-latest]
@@ -39,7 +56,8 @@ jobs:
       - run: make all
 
   test:
-    needs: build
+    needs: [changes, build]
+    if: needs.changes.outputs.src == 'true'
     strategy:
       matrix:
         os: [ubuntu-latest, macOS-latest]
@@ -58,7 +76,8 @@ jobs:
       - run: make tests
 
   test-windows:
-    needs: build
+    needs: [changes, build]
+    if: needs.changes.outputs.src == 'true'
     runs-on: windows-latest
     defaults:
       run:
@@ -111,3 +130,19 @@ jobs:
           cd vendor/nwaku/vendor/nim-nat-traversal/vendor/libnatpmp-upstream
           make CC="gcc -fPIC -D_WIN32_WINNT=0x0600 -DNATPMP_STATICLIB" libnatpmp.a V=1
       - run: make tests
+
+  # Required status check — always reports a result so docs-only PRs aren't blocked.
+  # Set "ci / required" as the required check in branch protection settings.
+  required:
+    needs: [build, test, test-windows]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all jobs passed or were skipped
+        run: |
+          results="${{ join(needs.*.result, ' ') }}"
+          if echo "$results" | grep -q 'failure\|cancelled'; then
+            echo "One or more jobs failed: $results"
+            exit 1
+          fi
+          echo "All jobs passed or were skipped."
