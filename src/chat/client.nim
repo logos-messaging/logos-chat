@@ -81,7 +81,7 @@ proc newClient*(ds: WakuClient, ident: Identity): ChatClient {.raises: [IOError,
 
     var q = QueueRef(queue: newAsyncQueue[ChatPayload](10))
     var c = ChatClient(
-                  libchatCtx: newConversationsContext(),
+                  libchatCtx: newConversationsContext(ident.getName()),
                   ds: ds,
                   id: ident.getName(),
                   inboundQueue: q,

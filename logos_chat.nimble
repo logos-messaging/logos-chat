@@ -77,5 +77,17 @@ task pingpong, "Build the Pingpong example":
   buildBinary name, "examples/", "-d:chronicles_log_level='INFO' -d:chronicles_disabled_topics='waku node' "
 
 task liblogoschat, "Build the Logos-Chat shared library (C bindings)":
+  # Dynamically link liblibchat (Rust) on both platforms.
+  # Clients must distribute liblibchat.so/.dylib alongside liblogoschat.so/.dylib.
+  # Cannot static link because of duplicate symbols: both liblibchat.a and librln embed Rust's std
+  var linkFlags = ""
+  when defined(linux):
+    staticLinkFlags = " -d:CONVERSATIONS_LIB:liblibchat.so" &
+      " --passL:-Wl,-rpath,'$$ORIGIN'"
+  elif defined(macosx):
+    linkFlags = " -d:CONVERSATIONS_LIB:@rpath/liblibchat.dylib" &
+      " --passL:-Wl,-rpath,@loader_path"
+
   buildLibrary "logoschat", "library/",
-    "-d:chronicles_log_level='INFO' -d:chronicles_enabled=on --path:src --path:vendor/nim-ffi"
+    "-d:chronicles_log_level='INFO' -d:chronicles_enabled=on --path:src --path:vendor/nim-ffi" &
+    linkFlags

@@ -130,6 +130,15 @@ liblogoschat: | build-waku-librln build-waku-nat build-libchat logos_chat.nims
 	$(ENV_SCRIPT) nim liblogoschat $(NIM_PARAMS) --path:src logos_chat.nims && \
 	echo -e "\n\x1B[92mLibrary built successfully:\x1B[39m" && \
 	echo "  $(shell pwd)/$(LIBLOGOSCHAT)"
+ifeq ($(shell uname -s),Darwin)
+	@cp vendor/libchat/target/release/liblibchat.dylib build/
+	@# Fix install names so the dylibs are relocatable (no absolute paths)
+	@install_name_tool -id @rpath/liblibchat.dylib build/liblibchat.dylib
+	@echo "  $(shell pwd)/build/liblibchat.dylib"
+else ifeq ($(shell uname -s),Linux)
+	@cp vendor/libchat/target/release/liblibchat.so build/
+	@echo "  $(shell pwd)/build/liblibchat.so"
+endif
 
 endif
 
