@@ -55,6 +55,13 @@ clean:
 # must be included after the default target
 -include $(BUILD_SYSTEM_DIR)/makefiles/targets.mk
 
+### Create nimble links (used when building with Nix)
+.PHONY: nimbus-build-system-nimble-dir
+nimbus-build-system-nimble-dir:
+	NIMBLE_DIR="$(CURDIR)/$(NIMBLE_DIR)" \
+	PWD_CMD="$(PWD)" \
+	$(CURDIR)/vendor/nwaku/scripts/generate_nimble_links.sh
+
 ## Possible values: prod; debug
 TARGET ?= prod
 
@@ -130,6 +137,12 @@ liblogoschat: | build-waku-librln build-waku-nat build-libchat logos_chat.nims
 	$(ENV_SCRIPT) nim liblogoschat $(NIM_PARAMS) --path:src logos_chat.nims && \
 	echo -e "\n\x1B[92mLibrary built successfully:\x1B[39m" && \
 	echo "  $(shell pwd)/$(LIBLOGOSCHAT)"
+
+### Nix-only: dependencies are pre-built Nix derivations, not built here
+.PHONY: liblogoschat-nix
+liblogoschat-nix: | logos_chat.nims
+	echo -e $(BUILD_MSG) "$(LIBLOGOSCHAT)" && \
+	$(ENV_SCRIPT) nim liblogoschat $(NIM_PARAMS) --path:src logos_chat.nims
 
 endif
 
