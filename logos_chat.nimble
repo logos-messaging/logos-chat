@@ -82,7 +82,7 @@ task liblogoschat, "Build the Logos-Chat shared library (C bindings)":
   # Cannot static link because of duplicate symbols: both liblibchat.a and librln embed Rust's std
   var linkFlags = ""
   when defined(linux):
-    staticLinkFlags = " -d:CONVERSATIONS_LIB:liblibchat.so" &
+    linkFlags = " -d:CONVERSATIONS_LIB:liblibchat.so" &
       " --passL:-Wl,-rpath,'$$ORIGIN'"
   elif defined(macosx):
     linkFlags = " -d:CONVERSATIONS_LIB:@rpath/liblibchat.dylib" &
