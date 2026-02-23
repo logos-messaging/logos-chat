@@ -50,3 +50,21 @@ jobs:
           key: ${{ runner.os }}-nbs-${{ steps.nbs.outputs.hash }}
       - run: make update
       - run: make tests
+
+  nix-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - run: nix build ".?submodules=1#" --print-build-logs
+      - name: Verify outputs
+        run: |
+          test -f result/lib/liblogoschat.so
+          test -f result/include/liblogoschat.h
+
