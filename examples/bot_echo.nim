@@ -8,8 +8,7 @@ import content_types
 
 proc main() {.async.} =
   let waku = initWakuClient(DefaultConfig())
-  let ident = createIdentity("EchoBot")
-  var chatClient = newClient(waku, ident)
+  var chatClient = newClient(waku).get()
 
   chatClient.onNewMessage(proc(convo: Conversation, msg: ReceivedMessage) {.async.} =
     info "New Message: ", convoId = convo.id(), msg= msg
