@@ -28,6 +28,7 @@ ifneq (,$(findstring MINGW,$(detected_OS)))
   detected_OS := Windows
 endif
 
+
 ##########
 ## Main ##
 ##########
@@ -73,38 +74,32 @@ NIM_PARAMS := $(NIM_PARAMS) -d:git_version=\"$(GIT_VERSION)\"
 ##################
 ## Dependencies ##
 ##################
-.PHONY: build-waku-librln
 
-LIBRLN_VERSION := v0.7.0
+CARGO_TARGET_DIR ?= rust-bundle/target
+RUST_BUNDLE_LIB := $(CARGO_TARGET_DIR)/release/liblogoschat_rust_bundle.a
 
-ifeq ($(detected_OS),Windows)
-LIBRLN_FILE := rln.lib
-else
-LIBRLN_FILE := librln_$(LIBRLN_VERSION).a
-endif
-
-
-build-waku-librln:
-	@echo "Start building waku librln"
+# libchat and rln each embed Rust std when built as staticlibs; linking both
+# causes duplicate-symbol errors. rust-bundle/ links them as rlibs so std
+# is emitted once. [1]
+# [1] https://doc.rust-lang.org/reference/linkage.html#mixed-rust-and-foreign-codebases
+.PHONY: build-rust-bundle
+build-rust-bundle:
+	@echo "Building Rust bundle (libchat + rln)"
 	$(MAKE) -C vendor/nwaku librln
-	$(eval NIM_PARAMS += --passL:./vendor/nwaku/${LIBRLN_FILE} --passL:-lm)
-	@echo "Completed building librln"
+	CARGO_TARGET_DIR=$(CARGO_TARGET_DIR) cargo build --release --manifest-path rust-bundle/Cargo.toml
+	@echo "Bundle library: $(RUST_BUNDLE_LIB)"
 
 build-waku-nat:
 	@echo "Start building waku nat-libs"
 	$(MAKE) -C vendor/nwaku nat-libs
 	@echo "Completed building nat-libs"
 
-.PHONY: build-libchat
-build-libchat:
-	@echo "Start building libchat"
-	cd vendor/libchat && cargo build --release
-	@echo "Completed building libchat"
-
 .PHONY: tests
-tests: | build-waku-librln build-waku-nat build-libchat logos_chat.nims
+tests: | build-rust-bundle build-waku-nat logos_chat.nims
 	echo -e $(BUILD_MSG) "build/$@" && \
-		$(ENV_SCRIPT) nim tests $(NIM_PARAMS) logos_chat.nims
+		$(ENV_SCRIPT) nim tests $(NIM_PARAMS) \
+		--passL:$(RUST_BUNDLE_LIB) --passL:-lm \
+		logos_chat.nims
 
 
 ##########
@@ -112,9 +107,11 @@ tests: | build-waku-librln build-waku-nat build-libchat logos_chat.nims
 ##########
 
 # Ensure there is a nimble task with a name that matches the target
-tui bot_echo pingpong: | build-waku-librln build-waku-nat build-libchat logos_chat.nims
+tui bot_echo pingpong: | build-rust-bundle build-waku-nat logos_chat.nims
 	echo -e $(BUILD_MSG) "build/$@" && \
-	$(ENV_SCRIPT) nim $@ $(NIM_PARAMS) --path:src logos_chat.nims
+	$(ENV_SCRIPT) nim $@ $(NIM_PARAMS) \
+		--passL:$(RUST_BUNDLE_LIB) --passL:-lm \
+		--path:src logos_chat.nims
 
 ###########
 ## Library ##
@@ -132,9 +129,11 @@ endif
 LIBLOGOSCHAT := build/liblogoschat.$(LIBLOGOSCHAT_EXT)
 
 .PHONY: liblogoschat
-liblogoschat: | build-waku-librln build-waku-nat build-libchat logos_chat.nims
+liblogoschat: | build-rust-bundle build-waku-nat logos_chat.nims
 	echo -e $(BUILD_MSG) "$(LIBLOGOSCHAT)" && \
-	$(ENV_SCRIPT) nim liblogoschat $(NIM_PARAMS) --path:src logos_chat.nims && \
+	$(ENV_SCRIPT) nim liblogoschat $(NIM_PARAMS) \
+		--passL:$(RUST_BUNDLE_LIB) --passL:-lm \
+		--path:src logos_chat.nims && \
 	echo -e "\n\x1B[92mLibrary built successfully:\x1B[39m" && \
 	echo "  $(shell pwd)/$(LIBLOGOSCHAT)"
 

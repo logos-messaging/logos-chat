@@ -10,8 +10,7 @@ in pkgs.mkShell {
   ];
 
   shellHook = ''
-    export CONVERSATIONS_LIB="${libchatDrv}/lib/liblibchat.${libExt}"
-    echo "logos-chat dev shell. CONVERSATIONS_LIB=$CONVERSATIONS_LIB"
+    echo "logos-chat dev shell."
     echo "Build: make liblogoschat"
     echo "Nix build: nix build '.?submodules=1#'"
   '';

@@ -25,11 +25,11 @@
           overlays = [ rust-overlay.overlays.default ];
         };
         libchatDrv = pkgs.callPackage ./nix/libchat.nix {};
-        librln     = pkgs.callPackage ./nix/librln.nix {};
+        rustBundleDrv  = pkgs.callPackage ./nix/rust_bundle.nix { src = self; };
       in {
         packages.default = pkgs.callPackage ./nix/default.nix {
           src = self;
-          inherit libchatDrv librln;
+          inherit rustBundleDrv;
         };
         devShells.default = pkgs.callPackage ./nix/shell.nix {
           inherit libchatDrv;

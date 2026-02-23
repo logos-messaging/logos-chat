@@ -1,0 +1,12 @@
+[package]
+name = "rust-bundle"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "logoschat_rust_bundle"
+crate-type = ["staticlib"]
+
+[dependencies]
+libchat = { path = "../vendor/libchat/conversations" }
+rln = { path = "../vendor/nwaku/vendor/zerokit/rln", features = ["arkzkey"] }

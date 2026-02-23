@@ -1,4 +1,4 @@
-{ lib, stdenv, rust-bin, makeRustPlatform, perl, pkg-config, cmake }:
+{ rust-bin, makeRustPlatform, perl, pkg-config, cmake }:
 
 let
   rustToolchain = rust-bin.fromRustupToolchainFile ../vendor/libchat/rust_toolchain.toml;
