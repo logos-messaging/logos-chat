@@ -672,7 +672,7 @@ int main(int argc, char *argv[]) {
     char config[2048];
     if (peer) {
         snprintf(config, sizeof(config),
-                 "{\"name\":\"%s\",\"port\":%d,\"clusterId\":%d,\"shardId\":%d,\"staticPeer\":\"%s\"}",
+                 "{\"name\":\"%s\",\"port\":%d,\"clusterId\":%d,\"shardId\":%d,\"staticPeers\":[\"%s\"]}",
                  name, port, cluster_id, shard_id, peer);
     } else {
         snprintf(config, sizeof(config),

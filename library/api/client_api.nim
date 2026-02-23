@@ -43,6 +43,9 @@ proc createChatClient(
     if config.hasKey("shardId"):
       wakuCfg.shardId = @[config["shardId"].getInt().uint16]
     
+    if config.hasKey("clusterId") or config.hasKey("shardId"):
+      wakuCfg.pubsubTopic = "/waku/2/rs/" & $wakuCfg.clusterId & "/" & $wakuCfg.shardId[0]
+
     if config.hasKey("staticPeers"):
       wakuCfg.staticPeers = @[]
       for peer in config["staticPeers"]:
