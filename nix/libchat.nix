@@ -8,7 +8,7 @@ let
     rustc = rustToolchain;
   };
 in rPlatform.buildRustPackage {
-  pname = "liblogos-chat";
+  pname = "libchat";
   version = "0.1.0";
   src = ../vendor/libchat;
 
@@ -29,13 +29,13 @@ in rPlatform.buildRustPackage {
   installPhase = ''
     runHook preInstall
     mkdir -p $out/lib
-    cp target/*/release/liblogos_chat.so   $out/lib/ 2>/dev/null || true
-    cp target/*/release/liblogos_chat.dylib $out/lib/ 2>/dev/null || true
-    cp target/*/release/liblogos_chat.a    $out/lib/ 2>/dev/null || true
+    cp target/*/release/liblibchat.so   $out/lib/ 2>/dev/null || true
+    cp target/*/release/liblibchat.dylib $out/lib/ 2>/dev/null || true
+    cp target/*/release/liblibchat.a    $out/lib/ 2>/dev/null || true
     # fallback: non-cross build path
-    cp target/release/liblogos_chat.so   $out/lib/ 2>/dev/null || true
-    cp target/release/liblogos_chat.dylib $out/lib/ 2>/dev/null || true
-    cp target/release/liblogos_chat.a    $out/lib/ 2>/dev/null || true
+    cp target/release/liblibchat.so   $out/lib/ 2>/dev/null || true
+    cp target/release/liblibchat.dylib $out/lib/ 2>/dev/null || true
+    cp target/release/liblibchat.a    $out/lib/ 2>/dev/null || true
     runHook postInstall
   '';
 }
