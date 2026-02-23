@@ -1,12 +1,10 @@
 import chat/[
   client,
   delivery/waku_client,
-  identity,
   types
 ]
 
-export client, identity, waku_client
-export identity.`$`
+export client, waku_client
 
 #export specific frames need by applications
 export MessageId
