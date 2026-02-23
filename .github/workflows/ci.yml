@@ -9,8 +9,8 @@ on:
       - main
 
 jobs:
-  build:
-    name: Build
+  build-and-test:
+    name: Build and Test
     strategy:
       matrix:
         os: [ubuntu-latest, macOS-latest]
@@ -19,39 +19,42 @@ jobs:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
+      - id: hashes
+        name: Compute cache hashes
+        run: |
+          echo "nbs=$(git rev-parse HEAD:vendor/nimbus-build-system)" >> $GITHUB_OUTPUT
+          echo "libchat=$(git rev-parse HEAD:vendor/libchat)" >> $GITHUB_OUTPUT
       # Cache the Nim compiler built by nimbus-build-system (NBS).
       # Building Nim from source is the slowest part of `make update`.
       # Keyed on the NBS submodule commit — auto-invalidates when NBS is bumped.
-      - id: nbs
-        run: echo "hash=$(git rev-parse HEAD:vendor/nimbus-build-system)" >> $GITHUB_OUTPUT
-      - uses: actions/cache@v4
+      - name: Cache/restore NBS
+        uses: actions/cache@v4
         with:
           path: vendor/nimbus-build-system/vendor/Nim
-          key: ${{ runner.os }}-nbs-${{ steps.nbs.outputs.hash }}
-      - run: make update
-      - run: make all
-
-  test:
-    name: Test
-    needs: build
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macOS-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v6
+          key: ${{ runner.os }}-nbs-${{ steps.hashes.outputs.nbs }}
+      - name: Cache/restore Cargo registry
+        uses: actions/cache@v4
         with:
-          submodules: recursive
-      - id: nbs
-        run: echo "hash=$(git rev-parse HEAD:vendor/nimbus-build-system)" >> $GITHUB_OUTPUT
-      - uses: actions/cache@v4
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-deps-${{ hashFiles('vendor/libchat/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-deps-
+      - name: Cache/restore libchat
+        uses: actions/cache@v4
         with:
-          path: vendor/nimbus-build-system/vendor/Nim
-          key: ${{ runner.os }}-nbs-${{ steps.nbs.outputs.hash }}
-      - run: make update
-      - run: make tests
+          path: vendor/libchat/target
+          key: ${{ runner.os }}-libchat-${{ steps.hashes.outputs.libchat }}
+      - name: Update dependencies
+        run: make update
+      - name: Build
+        run: make all
+      - name: Test
+        run: make tests
 
   nix-build:
+    name: Nix Build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -62,9 +65,9 @@ jobs:
           nix_path: nixpkgs=channel:nixos-unstable
           extra_nix_config: |
             experimental-features = nix-command flakes
-      - run: nix build ".?submodules=1#" --print-build-logs
+      - name: Build
+        run: nix build ".?submodules=1#" --print-build-logs
       - name: Verify outputs
         run: |
           test -f result/lib/liblogoschat.so
           test -f result/include/liblogoschat.h
-
