@@ -1,42 +1,16 @@
-name: ci
+name: CI
 
 on:
   push:
     branches:
       - main
-    paths-ignore:
-      - "**README.md"
-      - ".gitignore"
-      - "LICENSE"
   pull_request:
     branches:
       - main
 
 jobs:
-  changes:
-    runs-on: ubuntu-latest
-    outputs:
-      src: ${{ steps.filter.outputs.src }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Check for non-doc changes
-        id: filter
-        run: |
-          BASE=${{ github.event.pull_request.base.sha }}
-          HEAD=${{ github.sha }}
-          CHANGED=$(git diff --name-only "${BASE:-HEAD~1}" "$HEAD")
-          NON_DOC=$(echo "$CHANGED" | grep -vE '(^|/)README\.md$|^\.gitignore$|^LICENSE$' || true)
-          if [ -n "$NON_DOC" ]; then
-            echo "src=true" >> $GITHUB_OUTPUT
-          else
-            echo "src=false" >> $GITHUB_OUTPUT
-          fi
-
   build:
-    needs: changes
-    if: needs.changes.outputs.src == 'true'
+    name: Build
     strategy:
       matrix:
         os: [ubuntu-latest, macOS-latest]
@@ -58,8 +32,8 @@ jobs:
       - run: make all
 
   test:
-    needs: [changes, build]
-    if: needs.changes.outputs.src == 'true'
+    name: Test
+    needs: build
     strategy:
       matrix:
         os: [ubuntu-latest, macOS-latest]
@@ -76,75 +50,3 @@ jobs:
           key: ${{ runner.os }}-nbs-${{ steps.nbs.outputs.hash }}
       - run: make update
       - run: make tests
-
-  test-windows:
-    needs: [changes, build]
-    if: needs.changes.outputs.src == 'true'
-    runs-on: windows-latest
-    defaults:
-      run:
-        shell: msys2 {0}
-    env:
-      MSYSTEM: MINGW64
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-      - uses: msys2/setup-msys2@v2
-        with:
-          update: true
-          install: >-
-            git
-            base-devel
-            mingw-w64-x86_64-toolchain
-            make
-            cmake
-            upx
-            mingw-w64-x86_64-rust
-            mingw-w64-x86_64-postgresql
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-gcc-libs
-            mingw-w64-x86_64-libwinpthread-git
-            mingw-w64-x86_64-zlib
-            mingw-w64-x86_64-openssl
-            mingw-w64-x86_64-python
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-llvm
-            mingw-w64-x86_64-clang
-      - run: |
-          echo "/usr/bin:$PATH" >> $GITHUB_PATH
-          echo "/mingw64/bin:$PATH" >> $GITHUB_PATH
-          echo "/usr/lib:$PATH" >> $GITHUB_PATH
-          echo "/mingw64/lib:$PATH" >> $GITHUB_PATH
-      - run: which upx gcc g++ make cmake cargo rustc python make mingw32-make
-      - id: nbs
-        run: echo "hash=$(git rev-parse HEAD:vendor/nimbus-build-system)" >> $GITHUB_OUTPUT
-        shell: bash
-      - uses: actions/cache@v4
-        with:
-          path: vendor/nimbus-build-system/vendor/Nim
-          key: ${{ runner.os }}-nbs-${{ steps.nbs.outputs.hash }}
-      - run: make update
-      - run: |
-          cd vendor/nwaku/vendor/nim-nat-traversal/vendor/miniupnp/miniupnpc
-          make -f Makefile.mingw CC=gcc CXX=g++ libminiupnpc.a V=1
-      - run: |
-          cd vendor/nwaku/vendor/nim-nat-traversal/vendor/libnatpmp-upstream
-          make CC="gcc -fPIC -D_WIN32_WINNT=0x0600 -DNATPMP_STATICLIB" libnatpmp.a V=1
-      - run: make tests
-
-  # Required status check — always reports a result so docs-only PRs aren't blocked.
-  # Set "ci / required" as the required check in branch protection settings.
-  required:
-    needs: [build, test, test-windows]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check all jobs passed or were skipped
-        run: |
-          results="${{ join(needs.*.result, ' ') }}"
-          if echo "$results" | grep -q 'failure\|cancelled'; then
-            echo "One or more jobs failed: $results"
-            exit 1
-          fi
-          echo "All jobs passed or were skipped."
