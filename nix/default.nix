@@ -15,7 +15,7 @@ assert lib.assertMsg ((src.submodules or false) == true)
 let
   revision = lib.substring 0 8 (src.rev or "dirty");
   libExt = if stdenv.isDarwin then "dylib" else "so";
-  libchatPath = "${libchatDrv}/lib/liblogos_chat.${libExt}";
+  libchatPath = "${libchatDrv}/lib/liblibchat.${libExt}";
 in stdenv.mkDerivation {
   pname = "liblogoschat";
   version = "0.1.0";
