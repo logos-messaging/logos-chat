@@ -26,12 +26,9 @@ proc main() {.async.} =
   var waku_saro = initWakuClient(DefaultConfig())
   var waku_raya = initWakuClient(DefaultConfig())
 
-  let sKey = loadPrivateKeyFromBytes(@[45u8, 216, 160, 24, 19, 207, 193, 214, 98, 92, 153, 145, 222, 247, 101, 99, 96, 131, 149, 185, 33, 187, 229, 251, 100, 158, 20, 131, 111, 97, 181, 210]).get()
-  let rKey = loadPrivateKeyFromBytes(@[43u8, 12, 160, 51, 212, 90, 199, 160, 154, 164, 129, 229, 147, 69, 151, 17, 239, 51, 190, 33, 86, 164, 50, 105, 39, 250, 182, 116, 138, 132, 114, 234]).get()
-
   # Create Clients
-  var saro = newClient(waku_saro, Identity(name: "saro", privateKey: sKey))
-  var raya = newClient(waku_raya, Identity(name: "raya", privateKey: rKey))
+  var saro = newClient(waku_saro).get()
+  var raya = newClient(waku_raya).get()
 
   # Wire Saro Callbacks
   saro.onNewMessage(proc(convo: Conversation, msg: ReceivedMessage) {.async, closure.} =

@@ -14,7 +14,6 @@ import # Foreign
 import #local
   delivery/waku_client,
   errors,
-  identity,
   types,
   utils
 
@@ -53,16 +52,9 @@ type
   DeliveryAckCallback* = proc(conversation: Conversation,
       msgId: MessageId): Future[void] {.async.}
 
-
-type KeyEntry* = object
-  keyType: string
-  privateKey: PrivateKey
-  timestamp: int64
-
 type ChatClient* = ref object
   libchatCtx: LibChat 
   ds*: WakuClient
-  id: string
   inboundQueue: QueueRef
   isRunning: bool
 
@@ -74,34 +66,38 @@ type ChatClient* = ref object
 # Constructors
 #################################################
 
-proc newClient*(ds: WakuClient, ident: Identity): ChatClient {.raises: [IOError, ValueError].} =
-  ## Creates new instance of a `ChatClient` with a given `WakuConfig`
-  ## TODO: (P1) Currently the passed in Identity is not used. Libchat Generates one for every invocation.
+proc newClient*(ds: WakuClient, ephemeral: bool = true, installation_name: string = "default"): Result[ChatClient, ErrorType] =
+  ## Creates new instance of a `ChatClient` with a given `WakuConfig`.
+  ## A new installation is created if no saved installation with `installation_name` is found
+
+  if not ephemeral:
+    return err("persistence is not currently supported")
+
   try:
 
     var q = QueueRef(queue: newAsyncQueue[ChatPayload](10))
     var c = ChatClient(
-                  libchatCtx: newConversationsContext(),
+                  libchatCtx: newConversationsContext(installation_name),
                   ds: ds,
-                  id: ident.getName(),
                   inboundQueue: q,
                   isRunning: false,
                   newMessageCallbacks: @[],
                   newConvoCallbacks: @[])
 
 
-    notice "Client started", client = c.id
+    notice "Client started"
 
-    result = c
+    result = ok(c)
   except Exception as e:
     error "newCLient", err = e.msg
+    result = err(e.msg)
 
 #################################################
 # Parameter Access
 #################################################
 
 proc getId*(client: ChatClient): string =
-  result = client.id
+  result = client.libchatCtx.getInstallationName()
 
 
 proc listConversations*(client: ChatClient): seq[Conversation] =

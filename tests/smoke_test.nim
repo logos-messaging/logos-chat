@@ -1,13 +1,13 @@
 # Smoke test: validates that the binary links all dependencies at runtime.
 # No networking, no start(), no message exchange — just instantiation.
+import results
 
 import ../src/chat
 
 proc main() =
   try:
     let waku = initWakuClient(DefaultConfig())
-    let ident = createIdentity("SmokeTest")
-    var client = newClient(waku, ident)
+    var client = newClient(waku).get()
     if client.isNil:
       raise newException(CatchableError, "newClient returned nil")
     let id = client.getId()
