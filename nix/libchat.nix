@@ -1,5 +1,4 @@
-{ lib, stdenv, rust-bin, makeRustPlatform, perl, pkg-config, cmake,
-  darwin ? null }:
+{ lib, stdenv, rust-bin, makeRustPlatform, perl, pkg-config, cmake }:
 
 let
   rustToolchain = rust-bin.fromRustupToolchainFile ../vendor/libchat/rust_toolchain.toml;
@@ -20,10 +19,6 @@ in rPlatform.buildRustPackage {
   };
 
   nativeBuildInputs = [ perl pkg-config cmake ];
-  buildInputs = lib.optionals stdenv.isDarwin (with darwin.apple_sdk.frameworks; [
-    Security
-    SystemConfiguration
-  ]);
   doCheck = false;
 
   installPhase = ''
