@@ -1,5 +1,5 @@
 { lib, stdenv, nim, which, pkg-config, writeScriptBin,
-  openssl, miniupnpc, libnatpmp, darwin ? null,
+  openssl, miniupnpc, libnatpmp,
   src,         # logos-chat source (self from flake, with submodules=1)
   libchatDrv,  # result of libchat.nix
   librln }:    # result of librln.nix
@@ -43,12 +43,7 @@ in stdenv.mkDerivation {
   # which doesn't exist. Point XDG_CACHE_HOME at /tmp so Nim writes its cache there.
   XDG_CACHE_HOME = "/tmp";
 
-  buildInputs = [ openssl miniupnpc libnatpmp ]
-    ++ lib.optionals stdenv.isDarwin (with darwin.apple_sdk.frameworks; [
-      Security
-      CoreFoundation
-      SystemConfiguration
-    ]);
+  buildInputs = [ openssl miniupnpc libnatpmp ];
 
   configurePhase = ''
     runHook preConfigure

@@ -12,7 +12,7 @@ let
     "x86_64-linux"   = "sha256-FVXW7HHbmxxp6vy7Ji5iy0Y483P9JJXUnkyE84j3gZk=";
     "aarch64-linux"  = "sha256-E5dir4E/UT0XiaKJxnEXRz9pIGRwWHr5fHkRPYN6T80=";
     "x86_64-darwin"  = "sha256-FyuXn7hlecZMDhghE6CknVWNN9JMOADzVUVIUxknO78=";
-    "aarch64-darwin" = "sha256-8buoDdGtPDtrVQh7oIpmd9OYqTkS5byGgjo7zhNLn84=";
+    "aarch64-darwin" = "sha256-q8O4NXA+czpq6faFi4E44pl4rGe3DUHflIvBwWZ/ngI=";
   };
   triplet = triplets.${stdenv.hostPlatform.system};
   tarball = fetchurl {
