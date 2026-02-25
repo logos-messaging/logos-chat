@@ -72,5 +72,10 @@ jobs:
         run: nix build ".?submodules=1#" --print-build-logs
       - name: Verify outputs
         run: |
-          test -f result/lib/liblogoschat.so
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            ext=dylib
+          else
+            ext=so
+          fi
+          test -f result/lib/liblogoschat.$ext
           test -f result/include/liblogoschat.h
