@@ -631,7 +631,7 @@ static void cleanup(void) {
 
 int main(int argc, char *argv[]) {
     const char *name = "user";
-    int port = 0, cluster_id = 42, shard_id = 2;
+    int port = 0, cluster_id = 2, shard_id = 1;
     const char *peer = NULL;
 
     for (int i = 1; i < argc; i++) {
@@ -644,8 +644,8 @@ int main(int argc, char *argv[]) {
             printf("Usage: %s [options]\n", argv[0]);
             printf("  --name=<name>      Your display name\n");
             printf("  --port=<port>      Listen port (0 for random)\n");
-            printf("  --cluster=<id>     Cluster ID (default: 42)\n");
-            printf("  --shard=<id>       Shard ID (default: 2)\n");
+            printf("  --cluster=<id>     Cluster ID (default: 2)\n");
+            printf("  --shard=<id>       Shard ID (default: 1)\n");
             printf("  --peer=<addr>      Static peer multiaddr\n");
             return 0;
         }
