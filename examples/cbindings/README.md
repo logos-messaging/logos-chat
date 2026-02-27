@@ -45,8 +45,8 @@ make run_bob
 ```text
 --name=<name>      Identity name (default: user)
 --port=<port>      Waku port (default: random 50000-50200)
---cluster=<id>     Waku cluster ID (default: 42)
---shard=<id>       Waku shard ID (default: 2)
+--cluster=<id>     Waku cluster ID (default: 2)
+--shard=<id>       Waku shard ID (default: 1)
 --peer=<addr>      Static peer multiaddr to connect to
 --help             Show help
 ```
