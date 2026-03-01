@@ -1,8 +1,7 @@
 { lib, stdenv, nim, which, pkg-config, writeScriptBin,
   openssl, miniupnpc, libnatpmp,
   src,         # logos-chat source (self from flake, with submodules=1)
-  libchatDrv,  # result of libchat.nix
-  librln }:    # result of librln.nix
+  rustBundleDrv }:  # result of rust_bundle.nix
 
 # NOTE: this build requires git submodules to be present in src.
 # When fetching from GitHub use '?submodules=1#', e.g.:
@@ -14,21 +13,18 @@ assert lib.assertMsg ((src.submodules or false) == true)
 
 let
   revision = lib.substring 0 8 (src.rev or "dirty");
-  libExt = if stdenv.isDarwin then "dylib" else "so";
-  libchatPath = "${libchatDrv}/lib/liblibchat.${libExt}";
 in stdenv.mkDerivation {
   pname = "liblogoschat";
   version = "0.1.0";
   inherit src;
 
   NIMFLAGS = lib.concatStringsSep " " [
-    "--passL:vendor/nwaku/librln_v0.7.0.a"
+    "--passL:${rustBundleDrv}/lib/liblogoschat_rust_bundle.a"
     "--passL:-lm"
     "-d:miniupnpcUseSystemLibs"
     "-d:libnatpmpUseSystemLibs"
     "--passL:-lminiupnpc"
     "--passL:-lnatpmp"
-    "-d:CONVERSATIONS_LIB:${libchatPath}"
     "-d:git_version=${revision}"
   ];
 
@@ -62,8 +58,6 @@ in stdenv.mkDerivation {
   '';
 
   preBuild = ''
-    # Place pre-built librln where the Nim linker expects it
-    cp ${librln}/lib/librln_v0.7.0.a vendor/nwaku/librln_v0.7.0.a
     mkdir -p build
   '';
 
