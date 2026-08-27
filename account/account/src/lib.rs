@@ -26,6 +26,5 @@ pub trait AccountProvider {
 pub trait AccountPublisher {
     type Error: Display + Debug;
 
-    fn publish(&mut self, addr: &AccountAddr, log: &SignedAccountLog)
-    -> Result<(), Self::Error>;
+    fn publish(&mut self, addr: &AccountAddr, log: &SignedAccountLog) -> Result<(), Self::Error>;
 }
