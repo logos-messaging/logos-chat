@@ -3,6 +3,8 @@
 resolver = "3"
 
 members = [
+    "account/account",
+    "account/account-log",
     "bin/chat-cli",
     "core/account",
     "core/conversations",
