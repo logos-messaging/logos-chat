@@ -1,0 +1,10 @@
+[package]
+name = "account"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = ""
+
+[dependencies]
+account-log = { path = "../account-log" }
+thiserror = "2"

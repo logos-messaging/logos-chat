@@ -3,6 +3,24 @@
 version = 4
 
 [[package]]
+name = "account"
+version = "0.1.0"
+dependencies = [
+ "account-log",
+ "thiserror",
+]
+
+[[package]]
+name = "account-log"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "hex",
+ "rand_core 0.6.4",
+ "thiserror",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
