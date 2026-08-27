@@ -63,10 +63,11 @@ impl TryFrom<&[u8]> for AccountAddr {
     type Error = AccountAddrError;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        let bytes: [u8; 32] = value.try_into().map_err(|_| AccountAddrError::InvalidAddress)?;
-        let pubkey =
-            Ed25519VerifyingKey::from_canonical_bytes(&bytes)
-                .map_err(|_| AccountAddrError::InvalidAddress)?;
+        let bytes: [u8; 32] = value
+            .try_into()
+            .map_err(|_| AccountAddrError::InvalidAddress)?;
+        let pubkey = Ed25519VerifyingKey::from_canonical_bytes(&bytes)
+            .map_err(|_| AccountAddrError::InvalidAddress)?;
         Ok(Self { pubkey })
     }
 }
