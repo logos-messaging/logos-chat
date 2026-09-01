@@ -18,7 +18,7 @@ const DOMAIN_STEM: &[u8] = b"logos:accounts:";
 /// Largest payload that may be published or accepted.
 pub const MAX_PAYLOAD_BYTES: usize = 128 * 1024;
 
-/// Size of a  Ed25519 S=ignature
+/// Size of an Ed25519 Signature
 const SIGNATURE_LEN: usize = 64;
 
 // Entry opcodes. The high nibble is reserved for per-entry flags and must be
