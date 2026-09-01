@@ -5,7 +5,7 @@ use crate::error::AccountLogError;
 
 /// An Editable AccountLog used for publishing new entries.
 ///
-/// An AccountDraftLog is always valid, and cannot be put into an invalid state.
+/// An AccountLogDraft is always valid, and cannot be put into an invalid state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountLogDraft(AccountLog);
 
