@@ -2,7 +2,7 @@ use crate::account_log::{AccountLog, LogFreshness, SignedAccountLog, compare_log
 use crate::addr::AccountAddr;
 use crate::error::AccountLogError;
 
-/// The result of atempting to update an AccountRecord with a candiate SignedAccountLog
+/// The result of attempting to update an AccountRecord with a candidate SignedAccountLog
 ///
 /// `record` is always the one to keep, so a caller that ignores `outcome` is
 /// still correct — it only loses the diagnosis.
