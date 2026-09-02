@@ -3353,6 +3353,7 @@ dependencies = [
  "rand 0.9.4",
  "rand_core 0.6.4",
  "serde",
+ "serde_json",
  "shared-traits",
  "tempfile",
  "thiserror",
