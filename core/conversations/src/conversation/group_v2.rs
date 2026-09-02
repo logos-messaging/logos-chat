@@ -5,6 +5,7 @@
 use crate::conversation::mls_extensions::{
     ConvoMetaInfo, GROUP_METADATA_EXTENSION_TYPE, capabilities_with_group_metadata,
 };
+use crate::kv::ScopedKvStore;
 use crate::types::{AddressedEncryptedPayload, ConvoMetadata};
 use crate::{Content, WakeupService};
 use alloy::signers::local::PrivateKeySigner;
@@ -21,9 +22,12 @@ use de_mls::{
 };
 use hashgraph_like_consensus::signing::EthereumConsensusSigner;
 use openmls::extensions::{Extension, Extensions, UnknownExtension};
-use openmls::group::MlsGroupCreateConfig;
-use openmls::prelude::tls_codec::Deserialize as _;
-use openmls::prelude::{KeyPackageIn, OpenMlsProvider as _, ProtocolVersion};
+use openmls::group::{GroupId, MlsGroupCreateConfig};
+use openmls::prelude::tls_codec::{Deserialize as _, DeserializeBytes as _};
+use openmls::prelude::{
+    KeyPackageIn, MlsGroupJoinConfig, MlsMessageBodyIn, MlsMessageIn, ProcessedWelcome,
+    ProtocolVersion,
+};
 use prost::Message;
 use shared_traits::{IdentId, IdentIdRef};
 use std::collections::{HashMap, HashSet};
@@ -32,7 +36,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::{info, instrument};
 
 use crate::IdentityProvider;
-use crate::conversation::{ConversationIdRef, ExternalServices, MessageId, ServiceContext};
+use crate::conversation::{
+    ConversationId, ConversationIdRef, ExternalServices, MessageId, ServiceContext,
+};
+use crate::mls::{KeyPackages, MlsAdapter, MlsProvider};
 use crate::{
     ConvoOutcome, DeliveryService, RegistrationService,
     conversation::{ChatError, Convo, GroupConvo, Identified},
@@ -154,7 +161,7 @@ fn fetch_key_packages<S: ExternalServices>(
                 .map_err(ChatError::generic)?
                 .ok_or_else(|| ChatError::generic("No key package"))?;
             let validated = KeyPackageIn::tls_deserialize(&mut key_package.as_slice())?
-                .validate(service_ctx.mls_provider.crypto(), ProtocolVersion::Mls10)?;
+                .validate(&service_ctx.crypto, ProtocolVersion::Mls10)?;
             // SECURITY: a valid KeyPackage proves only that it is well-formed and
             // self-signed, not that it belongs to the signer we requested — a
             // compromised registry could hand back an attacker's package under a
@@ -183,20 +190,27 @@ fn fetch_key_packages<S: ExternalServices>(
 }
 
 impl GroupV2Convo {
+    /// A fresh conversation id. de-mls seeds the MLS group id from it, so it exists before the
+    /// group does and the scope holding that group can be bound first.
+    pub fn mint_id() -> ConversationId {
+        rand_string(5)
+    }
+
     pub fn new<S: ExternalServices>(
         service_ctx: &mut ServiceContext<S>,
+        kv: ScopedKvStore<'_>,
+        convo_id: ConversationId,
         name: &str,
         desc: &str,
         participants: &[IdentIdRef],
     ) -> Result<Self, ChatError> {
-        let convo_id = rand_string(5);
         let group_config = group_config(name, desc);
         let invites = fetch_key_packages(service_ctx, participants)?;
         let initial_members: Vec<&[u8]> =
             invites.iter().map(|m| m.key_package.as_slice()).collect();
         let conversation = Conversation::create(
             &convo_id,
-            &service_ctx.mls_provider,
+            &MlsProvider::new(&service_ctx.crypto, MlsAdapter::for_convo(kv)),
             service_ctx.mls_identity.get_credential(),
             &group_config,
             &service_ctx.mls_identity,
@@ -234,10 +248,12 @@ impl GroupV2Convo {
     #[instrument(name = "groupv2.new_from_welcome", skip_all, fields(user_id = %service_ctx.mls_identity.display_name()))]
     pub fn new_from_welcome<S: ExternalServices>(
         service_ctx: &mut ServiceContext<S>,
+        kv: ScopedKvStore<'_>,
+        key_packages: KeyPackages<'_>,
         welcome: &MemberWelcome,
     ) -> Result<Self, ChatError> {
         let Some(conv) = Conversation::join(
-            &service_ctx.mls_provider,
+            &MlsProvider::new(&service_ctx.crypto, MlsAdapter::new(kv, key_packages)),
             &service_ctx.mls_identity,
             &welcome.welcome_bytes,
             &welcome.conversation_sync_bytes,
@@ -268,6 +284,47 @@ impl GroupV2Convo {
         Ok(convo)
     }
 
+    /// The conversation id the welcome's group will carry, read before de-mls stages it: de-mls
+    /// seeds the MLS group id from the conversation id, and processing a welcome touches key
+    /// packages only, so the scope holding the group can be bound before it is written.
+    pub fn welcome_convo_id<S: ExternalServices>(
+        service_ctx: &ServiceContext<S>,
+        key_packages: KeyPackages<'_>,
+        welcome_bytes: &[u8],
+    ) -> Result<ConversationId, ChatError> {
+        let (msg_in, _rest) = MlsMessageIn::tls_deserialize_bytes(welcome_bytes)?;
+        let MlsMessageBodyIn::Welcome(welcome) = msg_in.extract() else {
+            return Err(ChatError::ProtocolExpectation(
+                "something else",
+                "Welcome".into(),
+            ));
+        };
+
+        let processed = ProcessedWelcome::new_from_welcome(
+            &MlsProvider::new(
+                &service_ctx.crypto,
+                MlsAdapter::for_key_packages(key_packages),
+            ),
+            &MlsGroupJoinConfig::builder()
+                .use_ratchet_tree_extension(true)
+                .build(),
+            welcome,
+        )
+        .map_err(ChatError::generic)?;
+
+        Self::convo_id_from_group_id(processed.unverified_group_info().group_id())
+    }
+
+    /// The conversation id an MLS group id spells: de-mls seeds the group id from the
+    /// conversation id at create and reads it back at join, so libchat reads the same bytes early
+    /// enough to bind the scope the group lands in. A group id no conversation id could have
+    /// seeded is rejected rather than decoded lossily, which would let two group ids name one
+    /// conversation and with it one scope.
+    fn convo_id_from_group_id(group_id: &GroupId) -> Result<ConversationId, ChatError> {
+        String::from_utf8(group_id.as_slice().to_vec())
+            .map_err(|_| ChatError::Protocol("MLS group id is not a conversation id".into()))
+    }
+
     fn delivery_address_from_id(convo_id: &str) -> String {
         let hash = Blake2b::<U6>::new()
             .chain_update("delivery_addr|")
@@ -286,10 +343,6 @@ impl GroupV2Convo {
             .subscribe(&Self::delivery_address_from_id(&self.convo_id))
             .map_err(ChatError::generic)?;
         Ok(())
-    }
-
-    pub fn id(&self) -> ConversationIdRef<'_> {
-        &self.convo_id
     }
 
     /// Rebuild the member directory from the group's current members. Used to
@@ -318,6 +371,7 @@ where
     fn send_content(
         &mut self,
         service_ctx: &mut super::ServiceContext<S>,
+        kv: ScopedKvStore<'_>,
         content: &[u8],
     ) -> Result<MessageId, ChatError> {
         let reliable = service_ctx.causal.on_send(
@@ -327,7 +381,7 @@ where
         );
 
         self.conversation.send_message(
-            &service_ctx.mls_provider,
+            &MlsProvider::new(&service_ctx.crypto, MlsAdapter::for_convo(kv)),
             &service_ctx.mls_identity,
             reliable.encode_to_vec(),
         )?;
@@ -339,6 +393,7 @@ where
     fn handle_frame(
         &mut self,
         service_ctx: &mut super::ServiceContext<S>,
+        kv: ScopedKvStore<'_>,
         encoded_payload: EncryptedPayload,
     ) -> Result<ConvoOutcome, ChatError> {
         let bytes = match encoded_payload.encryption {
@@ -353,23 +408,30 @@ where
             _ => return Ok(ConvoOutcome::empty(self.convo_id.clone())),
         };
 
+        let provider = MlsProvider::new(&service_ctx.crypto, MlsAdapter::for_convo(kv));
         self.conversation.process_inbound(
-            &service_ctx.mls_provider,
+            &provider,
             &service_ctx.mls_identity,
             &frame.sender_app_id,
             &inner,
         )?;
-        self.conversation
-            .poll(&service_ctx.mls_provider, &service_ctx.mls_identity);
+        self.conversation.poll(&provider, &service_ctx.mls_identity);
         let events = self.after_op(service_ctx)?; // route + publish + re-arm, returns events
         self.outcome_from_events(service_ctx, &events)
     }
 
     #[instrument(name = "groupv2.wakeup", skip_all, fields(user_id = %ctx.mls_identity.display_name()))]
-    fn wakeup(&mut self, ctx: &mut ServiceContext<S>) -> Result<ConvoOutcome, ChatError> {
+    fn wakeup(
+        &mut self,
+        ctx: &mut ServiceContext<S>,
+        kv: ScopedKvStore<'_>,
+    ) -> Result<ConvoOutcome, ChatError> {
         info!(convo = %self.convo_id, "Wakeup");
 
-        let poll_outcome = self.conversation.poll(&ctx.mls_provider, &ctx.mls_identity);
+        let poll_outcome = self.conversation.poll(
+            &MlsProvider::new(&ctx.crypto, MlsAdapter::for_convo(kv)),
+            &ctx.mls_identity,
+        );
         if poll_outcome.leave_requested {
             // Commit ejected us (or join expired). Real handling - drops
             // this convo from its map;
@@ -397,6 +459,7 @@ where
     fn add_member(
         &mut self,
         service_ctx: &mut ServiceContext<S>,
+        kv: ScopedKvStore<'_>,
         members: &[IdentIdRef],
     ) -> Result<(), ChatError> {
         // Fetch every signer's key package + joiner credential up front (deduped),
@@ -410,6 +473,7 @@ where
             .map(|m| m.signature_key.clone())
             .collect();
 
+        let provider = MlsProvider::new(&service_ctx.crypto, MlsAdapter::for_convo(kv));
         let mut result = Ok(());
         for FetchedMember {
             signature_key,
@@ -422,11 +486,10 @@ where
             }
             self.pending_invites
                 .insert(signature_key.clone(), credential);
-            match self.conversation.add_member(
-                &service_ctx.mls_provider,
-                &service_ctx.mls_identity,
-                &key_package,
-            ) {
+            match self
+                .conversation
+                .add_member(&provider, &service_ctx.mls_identity, &key_package)
+            {
                 Ok(()) => {}
                 // Already seated — it raced the check above. Nothing to invite,
                 // and no reason to drop the rest of the batch.
@@ -605,4 +668,26 @@ pub enum GroupV2Payload {
     DeMlsWrapper(Bytes),
     #[prost(message, tag = "3")]
     MlsCommitMessage(Bytes),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_group_id_that_spells_no_conversation_id_is_rejected() {
+        assert_eq!(
+            GroupV2Convo::convo_id_from_group_id(&GroupId::from_slice(b"a1b2c")).unwrap(),
+            "a1b2c"
+        );
+
+        // Two group ids no conversation id could have seeded. Each is turned away, so neither
+        // reaches the scope the other would share with it.
+        for forged in [[0xffu8].as_slice(), [0xfe].as_slice()] {
+            assert!(
+                GroupV2Convo::convo_id_from_group_id(&GroupId::from_slice(forged)).is_err(),
+                "{forged:?}"
+            );
+        }
+    }
 }

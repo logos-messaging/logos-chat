@@ -1,7 +1,7 @@
 mod identity;
-mod mls_provider;
 
-use crate::storage::ConversationStore;
+use crate::Protocol;
+use crate::kv::KvTransaction;
 use chat_proto::logoschat::envelope::EnvelopeV1;
 use de_mls::protos::de_mls::messages::v1::MemberWelcome;
 use openmls::prelude::tls_codec::Serialize;
@@ -11,21 +11,17 @@ use tracing::info;
 use tracing::instrument;
 
 pub use identity::MlsIdentityProvider;
-pub(crate) use mls_provider::MlsEphemeralPqProvider;
 
 use crate::ChatError;
-use crate::DeliveryService;
-use crate::Protocol;
-use crate::RegistrationService;
-use crate::conversation::GroupConvo;
+use crate::conversation::ConvoTypeOwned;
+use crate::conversation::DirectV1Convo;
 use crate::conversation::GroupV1Convo;
 use crate::conversation::GroupV2Convo;
-use crate::conversation::Identified as _;
 use crate::conversation::mls_extensions::GROUP_METADATA_EXTENSION_TYPE;
-use crate::outcomes::ConversationClass;
+use crate::mls::{KeyPackages, MlsAdapter, MlsProvider};
 use crate::service_context::{ExternalServices, ServiceContext};
 use crate::utils::{blake2b_hex, hash_size};
-use crate::{AddressedEnvelope, IdentId, IdentIdRef, IdentityProvider};
+use crate::{AddressedEnvelope, DeliveryService, IdentId, IdentIdRef, IdentityProvider};
 
 pub(crate) const CIPHER_SUITE: Ciphersuite =
     Ciphersuite::MLS_256_XWING_CHACHA20POLY1305_SHA256_Ed25519;
@@ -39,15 +35,31 @@ fn conversation_id_for(ident_id: IdentIdRef) -> String {
     blake2b_hex::<hash_size::ConvoId>(&["InboxV2|", "conversation_id|", ident_id.as_str()])
 }
 
-/// An Extension trait which extends OpenMlsProvider to add required functionality
-/// All MLS based Conversation should use this trait for defining requirements.
-pub trait MlsProvider: OpenMlsProvider {
-    fn invite_user<DS: DeliveryService>(
-        &self,
-        ds: &mut DS,
-        ident_id: IdentIdRef,
-        welcome: &MlsMessageOut,
-    ) -> Result<(), ChatError>;
+/// Deliver a GroupV1 welcome to `ident_id` over its InboxV2 1-1 channel.
+pub fn invite_user<DS: DeliveryService>(
+    ds: &mut DS,
+    ident_id: IdentIdRef,
+    welcome: &MlsMessageOut,
+) -> Result<(), ChatError> {
+    let invite = GroupV1HeavyInvite {
+        welcome_bytes: welcome.to_bytes()?,
+    };
+
+    let frame = InboxV2Frame {
+        payload: Some(InviteType::GroupV1(invite)),
+    };
+
+    let envelope = EnvelopeV1 {
+        conversation_hint: conversation_id_for(ident_id),
+        salt: 0,
+        payload: frame.encode_to_vec().into(),
+    };
+
+    ds.publish(AddressedEnvelope {
+        delivery_address: delivery_address_for(ident_id),
+        data: envelope.encode_to_vec(),
+    })
+    .map_err(ChatError::generic)
 }
 
 /// Deliver a de-mls welcome to `signer_id` over its InboxV2 1-1 channel.
@@ -72,9 +84,12 @@ pub fn invite_user_v2<DS: DeliveryService>(
     .map_err(ChatError::generic)
 }
 
-/// A convo built from an InboxV2 invite, paired with the display class its
-/// invite type implies.
-type ClassifiedConvo<S> = (Box<dyn GroupConvo<S>>, ConversationClass);
+/// A conversation an invite admitted this installation to.
+pub(crate) struct Joined<S: ExternalServices> {
+    pub(crate) convo: ConvoTypeOwned<S>,
+    /// The protocol whose scope holds its state.
+    pub(crate) protocol: Protocol,
+}
 
 /// A PQ focused Conversation initializer.
 /// InboxV2 is signer-scoped: it receives invites under this installation's
@@ -94,23 +109,20 @@ impl InboxV2 {
         &self.ident_id
     }
 
-    /// Submit MlsKeypackage to registration service
+    /// This installation's MLS KeyPackage, minted inside the transaction and returned serialized:
+    /// the private init and encryption keys it commits to are only stored when that transaction
+    /// lands, so the package may not be announced before it does.
     pub fn register<S: ExternalServices>(
         &mut self,
         cx: &mut ServiceContext<S>,
-    ) -> Result<(), ChatError> {
-        let keypackage_bytes = Self::create_keypackage(cx)?.tls_serialize_detached()?;
-
+        tx: &KvTransaction<'_>,
+    ) -> Result<Vec<u8>, ChatError> {
         // TODO: publishes a single key package per installation. The intended
         // design is a pool of one-time key packages (the registry pops one per
         // fetch, the client replenishes) with the last-resort key package as the
         // exhaustion fallback rather than the primary; that needs pop/claim
         // semantics in the registry service. Tracked in #169.
-        cx.registry
-            .register(&cx.mls_identity, keypackage_bytes)
-            .map_err(ChatError::generic)?;
-
-        Ok(())
+        Ok(self.create_keypackage(cx, tx)?.tls_serialize_detached()?)
     }
 
     pub fn delivery_address(&self) -> String {
@@ -121,15 +133,15 @@ impl InboxV2 {
         conversation_id_for(&self.ident_id)
     }
 
-    /// The convo built from an invite, paired with the display class its invite
-    /// type implies: `InviteType::GroupV1` carries the pairwise DirectV1 welcome,
-    /// so it is `Dm`; `InviteType::GroupV2` is a real group.
+    /// The conversation an invite admits this installation to: `InviteType::GroupV1` carries the
+    /// pairwise DirectV1 welcome, `InviteType::GroupV2` a real group.
     #[instrument(name = "inboxV2.handle_frame", skip_all, fields(user_id = %service_ctx.mls_identity.display_name()))]
     pub fn handle_frame<S: ExternalServices>(
         &self,
         service_ctx: &mut ServiceContext<S>,
+        tx: &KvTransaction<'_>,
         payload_bytes: &[u8],
-    ) -> Result<Option<ClassifiedConvo<S>>, ChatError> {
+    ) -> Result<Option<Joined<S>>, ChatError> {
         // On a broadcast transport the inbox address also receives traffic
         // that isn't an invite (or that prost decodes into an empty frame).
         // Treat anything we can't interpret as "not for us" and skip it,
@@ -143,35 +155,45 @@ impl InboxV2 {
 
         match payload {
             InviteType::GroupV1(inv) => {
-                let convo = self.handle_heavy_invite(service_ctx, inv)?;
-                Ok(Some((Box::new(convo), ConversationClass::Dm)))
+                let convo = self.handle_heavy_invite(service_ctx, tx, inv)?;
+                Ok(Some(Joined {
+                    convo: ConvoTypeOwned::Direct(Box::new(convo)),
+                    protocol: Protocol::DirectV1,
+                }))
             }
             InviteType::GroupV2(welcome_bytes) => {
                 info!("Process WelcomeMessage");
                 let mw =
                     MemberWelcome::decode(welcome_bytes.as_slice()).map_err(ChatError::generic)?;
-                let convo = GroupV2Convo::new_from_welcome(service_ctx, &mw)?;
-                Ok(Some((Box::new(convo), ConversationClass::Group)))
+                let key_packages = self.key_packages(tx);
+                let convo_id =
+                    GroupV2Convo::welcome_convo_id(service_ctx, key_packages, &mw.welcome_bytes)?;
+                let convo = GroupV2Convo::new_from_welcome(
+                    service_ctx,
+                    tx.scope(Protocol::GroupV2, &convo_id),
+                    key_packages,
+                    &mw,
+                )?;
+                Ok(Some(Joined {
+                    convo: ConvoTypeOwned::Group(Box::new(convo)),
+                    protocol: Protocol::GroupV2,
+                }))
             }
         }
     }
 
-    fn persist_convo<S: ExternalServices>(
-        &self,
-        convo: &GroupV1Convo,
-        cx: &mut ServiceContext<S>,
-    ) -> Result<(), ChatError> {
-        cx.store
-            .save_conversation(&Protocol::GroupV1.record(convo.id()))?;
-        // TODO: (P1) Persist state
-        Ok(())
+    /// The key packages this installation minted, in the scope InboxV2 binds for its signer: a
+    /// welcome for a conversation of any protocol consumes one, so they belong to no conversation.
+    fn key_packages<'a>(&'a self, tx: &'a KvTransaction<'_>) -> KeyPackages<'a> {
+        KeyPackages::new(tx.scope(Protocol::InboxV2, self.ident_id.as_str()))
     }
 
     fn handle_heavy_invite<S: ExternalServices>(
         &self,
         cx: &mut ServiceContext<S>,
+        tx: &KvTransaction<'_>,
         invite: GroupV1HeavyInvite,
-    ) -> Result<GroupV1Convo, ChatError> {
+    ) -> Result<DirectV1Convo, ChatError> {
         let (msg_in, _rest) = MlsMessageIn::tls_deserialize_bytes(invite.welcome_bytes.as_slice())?;
 
         let MlsMessageBodyIn::Welcome(welcome) = msg_in.extract() else {
@@ -181,14 +203,19 @@ impl InboxV2 {
             ));
         };
 
-        let convo = GroupV1Convo::new_from_welcome(cx, welcome)?;
-        self.persist_convo(&convo, cx)?;
+        // `GroupV1HeavyInvite` carries no shape discriminator, so every welcome on it is taken as
+        // pairwise: a multi-party GroupV1 group joined here lands in DirectV1's namespace.
+        let processed = GroupV1Convo::process_welcome(cx, self.key_packages(tx), welcome)?;
+        let convo_id = GroupV1Convo::convo_id_for(processed.unverified_group_info().group_id());
+        let kv = tx.scope(Protocol::DirectV1, &convo_id);
 
-        Ok(convo)
+        DirectV1Convo::new_from_welcome(cx, kv, processed)
     }
 
     fn create_keypackage<S: ExternalServices>(
+        &self,
         cx: &ServiceContext<S>,
+        tx: &KvTransaction<'_>,
     ) -> Result<KeyPackage, ChatError> {
         // Last-resort key package. openmls consumes (deletes) a normal key
         // package's init key on the first welcome that uses it; since each
@@ -210,11 +237,14 @@ impl InboxV2 {
             .leaf_node_capabilities(capabilities)
             .build(
                 CIPHER_SUITE,
-                &cx.mls_provider,
+                &MlsProvider::new(
+                    &cx.crypto,
+                    MlsAdapter::for_key_packages(self.key_packages(tx)),
+                ),
                 &cx.mls_identity,
                 cx.mls_identity.get_credential(),
             )
-            .expect("Failed to build KeyPackage");
+            .map_err(ChatError::generic)?;
 
         Ok(a.key_package().clone())
     }

@@ -1,3 +1,4 @@
+use crate::kv::ScopedKvStore;
 /// GroupV1 is a conversationType which provides effecient handling of multiple participants
 /// Properties:
 ///     - Harvest Now Decrypt Later (HNDL) protection provided by XWING
@@ -7,13 +8,16 @@ use chat_proto::logoschat::encryption::{EncryptedPayload, Plaintext, encrypted_p
 use chat_proto::logoschat::reliability::ReliablePayload;
 use openmls::prelude::tls_codec::Deserialize;
 use openmls::prelude::*;
+use openmls_traits::crypto::OpenMlsCrypto;
+use openmls_traits::random::OpenMlsRand;
 use prost::Message as _;
 use shared_traits::IdentIdRef;
 use std::collections::VecDeque;
 use tracing::debug;
 
-use crate::conversation::{ConversationIdRef, MessageId};
-use crate::inbox_v2::MlsProvider;
+use crate::conversation::{ConversationId, ConversationIdRef, MessageId};
+use crate::inbox_v2::invite_user;
+use crate::mls::{KeyPackages, MlsAdapter, MlsProvider};
 use crate::service_context::{ExternalServices, ServiceContext};
 
 use crate::types::ConvoMetadata;
@@ -45,17 +49,39 @@ impl std::fmt::Debug for GroupV1Convo {
 }
 
 impl GroupV1Convo {
+    /// A fresh conversation id, the hex of a random MLS group id, minted before the group so the
+    /// scope holding it can be bound first.
+    pub fn mint_id(rand: &impl OpenMlsRand) -> ConversationId {
+        Self::convo_id_for(&GroupId::random(rand))
+    }
+
+    /// The conversation id an MLS group id spells.
+    pub fn convo_id_for(group_id: &GroupId) -> ConversationId {
+        hex::encode(group_id.as_slice())
+    }
+
+    /// The MLS group id a conversation id carries.
+    fn group_id_for(convo_id: &str) -> Result<GroupId, ChatError> {
+        let bytes = hex::decode(convo_id).map_err(ChatError::generic)?;
+        Ok(GroupId::from_slice(&bytes))
+    }
+
     // Create a new conversation with the creator as the only participant.
-    pub fn new<S: ExternalServices>(cx: &mut ServiceContext<S>) -> Result<Self, ChatError> {
+    pub fn new<S: ExternalServices>(
+        cx: &mut ServiceContext<S>,
+        kv: ScopedKvStore<'_>,
+        convo_id: ConversationId,
+    ) -> Result<Self, ChatError> {
         let config = Self::mls_create_config();
-        let mls_group = MlsGroup::new(
-            &cx.mls_provider,
+        let group_id = Self::group_id_for(&convo_id)?;
+        let mls_group = MlsGroup::new_with_group_id(
+            &MlsProvider::new(&cx.crypto, MlsAdapter::for_convo(kv)),
             &cx.mls_identity,
             &config,
+            group_id,
             cx.mls_identity.get_credential(),
         )
-        .unwrap();
-        let convo_id = hex::encode(mls_group.group_id().as_slice());
+        .map_err(ChatError::generic)?;
         Self::subscribe(&mut cx.ds, &convo_id)?;
 
         Ok(Self {
@@ -65,20 +91,35 @@ impl GroupV1Convo {
         })
     }
 
+    /// Decrypts a welcome far enough to name the group it admits us to. Only key packages are
+    /// read, so the group's own scope is not needed yet and can be bound from the id this returns.
+    pub fn process_welcome<S: ExternalServices>(
+        cx: &ServiceContext<S>,
+        key_packages: KeyPackages<'_>,
+        welcome: Welcome,
+    ) -> Result<ProcessedWelcome, ChatError> {
+        ProcessedWelcome::new_from_welcome(
+            &MlsProvider::new(&cx.crypto, MlsAdapter::for_key_packages(key_packages)),
+            &Self::mls_join_config(),
+            welcome,
+        )
+        .map_err(ChatError::generic)
+    }
+
     // Constructs a new conversation upon receiving a MlsWelcome message.
     pub fn new_from_welcome<S: ExternalServices>(
         cx: &mut ServiceContext<S>,
-        welcome: Welcome,
+        kv: ScopedKvStore<'_>,
+        processed: ProcessedWelcome,
     ) -> Result<Self, ChatError> {
-        let mls_group =
-            StagedWelcome::build_from_welcome(&cx.mls_provider, &Self::mls_join_config(), welcome)
-                .unwrap()
-                .build()
-                .unwrap()
-                .into_group(&cx.mls_provider)
-                .unwrap();
+        let provider = MlsProvider::new(&cx.crypto, MlsAdapter::for_convo(kv));
+        let mls_group = processed
+            .into_staged_welcome(&provider, None)
+            .map_err(ChatError::generic)?
+            .into_group(&provider)
+            .map_err(ChatError::generic)?;
 
-        let convo_id = hex::encode(mls_group.group_id().as_slice());
+        let convo_id = Self::convo_id_for(mls_group.group_id());
         Self::subscribe(&mut cx.ds, &convo_id)?;
 
         Ok(Self {
@@ -90,10 +131,11 @@ impl GroupV1Convo {
 
     pub fn load<S: ExternalServices>(
         cx: &mut ServiceContext<S>,
-        convo_id: String,
-        group_id: GroupId,
+        kv: ScopedKvStore<'_>,
+        convo_id: ConversationId,
     ) -> Result<Self, ChatError> {
-        let mls_group = MlsGroup::load(cx.mls_provider.storage(), &group_id)
+        let group_id = Self::group_id_for(&convo_id)?;
+        let mls_group = MlsGroup::load(&MlsAdapter::for_convo(kv), &group_id)
             .map_err(ChatError::generic)?
             .ok_or_else(|| ChatError::NoConvo("mls group not found".into()))?;
 
@@ -143,7 +185,7 @@ impl GroupV1Convo {
     fn key_package_for_signer(
         &self,
         signer: IdentIdRef,
-        provider: &impl MlsProvider,
+        crypto: &impl OpenMlsCrypto,
         registry: &impl KeyPackageProvider,
     ) -> Result<KeyPackage, ChatError> {
         let retrieved = registry
@@ -156,7 +198,7 @@ impl GroupV1Convo {
         };
 
         let key_package_in = KeyPackageIn::tls_deserialize(&mut keypkg_bytes.as_slice())?;
-        let keypkg = key_package_in.validate(provider.crypto(), ProtocolVersion::Mls10)?; //TODO: P3 - Hardcoded Protocol Version
+        let keypkg = key_package_in.validate(crypto, ProtocolVersion::Mls10)?; //TODO: P3 - Hardcoded Protocol Version
         // SECURITY: validate() only proves the package is well-formed and self-signed
         // — NOT that it belongs to the signer we asked the registry for. Bind the
         // fetched leaf's signature_key to the requested id (a signer id is
@@ -177,6 +219,7 @@ impl GroupV1Convo {
         &mut self,
         content: &[u8],
         cx: &mut ServiceContext<S>,
+        kv: ScopedKvStore<'_>,
     ) -> Result<MessageId, ChatError> {
         let sender_id = cx.mls_identity.id().as_str();
         let reliable = cx.causal.on_send(&self.convo_id, sender_id, content);
@@ -184,8 +227,12 @@ impl GroupV1Convo {
 
         let mls_message_out = self
             .mls_group
-            .create_message(&cx.mls_provider, &cx.mls_identity, &wire)
-            .unwrap();
+            .create_message(
+                &MlsProvider::new(&cx.crypto, MlsAdapter::for_convo(kv)),
+                &cx.mls_identity,
+                &wire,
+            )
+            .map_err(ChatError::generic)?;
 
         let msg_bytes = mls_message_out.to_bytes().unwrap();
         self.send_payload(cx, msg_bytes)?;
@@ -233,14 +280,16 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
     fn send_content(
         &mut self,
         cx: &mut ServiceContext<S>,
+        kv: ScopedKvStore<'_>,
         content: &[u8],
     ) -> Result<MessageId, ChatError> {
-        self.send_message(content, cx)
+        self.send_message(content, cx, kv)
     }
 
     fn handle_frame(
         &mut self,
         cx: &mut ServiceContext<S>,
+        kv: ScopedKvStore<'_>,
         encoded_payload: EncryptedPayload,
     ) -> Result<ConvoOutcome, ChatError> {
         let bytes = match encoded_payload.encryption {
@@ -272,9 +321,10 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
             return Ok(ConvoOutcome::empty(self.id().to_string()));
         }
 
+        let provider = MlsProvider::new(&cx.crypto, MlsAdapter::for_convo(kv));
         let processed = self
             .mls_group
-            .process_message(&cx.mls_provider, protocol_message)
+            .process_message(&provider, protocol_message)
             .map_err(ChatError::generic)?;
 
         let cred_bytes = processed.credential().serialized_content().to_vec();
@@ -290,7 +340,7 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
             }
             ProcessedMessageContent::StagedCommitMessage(commit) => {
                 self.mls_group
-                    .merge_staged_commit(&cx.mls_provider, *commit)
+                    .merge_staged_commit(&provider, *commit)
                     .map_err(ChatError::generic)?;
                 None
             }
@@ -306,7 +356,11 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
         })
     }
 
-    fn wakeup(&mut self, _: &mut ServiceContext<S>) -> Result<ConvoOutcome, ChatError> {
+    fn wakeup(
+        &mut self,
+        _: &mut ServiceContext<S>,
+        _: ScopedKvStore<'_>,
+    ) -> Result<ConvoOutcome, ChatError> {
         Ok(ConvoOutcome::empty(self.id().to_string()))
     }
 
@@ -327,6 +381,7 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
     fn add_member(
         &mut self,
         cx: &mut ServiceContext<S>,
+        kv: ScopedKvStore<'_>,
         members: &[IdentIdRef],
     ) -> Result<(), ChatError> {
         if members.len() > 50 {
@@ -341,26 +396,22 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
         // account's directory bundle lists.
         let mut keypkgs = Vec::with_capacity(members.len());
         for ident in members {
-            keypkgs.push(self.key_package_for_signer(ident, &cx.mls_provider, &cx.registry)?);
+            keypkgs.push(self.key_package_for_signer(ident, &cx.crypto, &cx.registry)?);
         }
 
+        let provider = MlsProvider::new(&cx.crypto, MlsAdapter::for_convo(kv));
         let (commit, welcome, _group_info) = self
             .mls_group
-            .add_members(
-                &cx.mls_provider,
-                &cx.mls_identity,
-                keypkgs.iter().as_slice(),
-            )
-            .unwrap();
+            .add_members(&provider, &cx.mls_identity, keypkgs.iter().as_slice())
+            .map_err(ChatError::generic)?;
 
         self.mls_group
-            .merge_pending_commit(&cx.mls_provider)
-            .unwrap();
+            .merge_pending_commit(&provider)
+            .map_err(ChatError::generic)?;
 
         // TODO: (P3) Evaluate privacy/performance implications of an aggregated Welcome for multiple users
         for signer_id in members {
-            cx.mls_provider
-                .invite_user(&mut cx.ds, signer_id, &welcome)?;
+            invite_user(&mut cx.ds, signer_id, &welcome)?;
         }
 
         self.send_payload(cx, commit.to_bytes()?)

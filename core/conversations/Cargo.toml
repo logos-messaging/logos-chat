@@ -26,7 +26,6 @@ hashgraph-like-consensus = "0.6.0"
 hex = "0.4.3"
 openmls = { version = "0.8.1", features = ["libcrux-provider"] }
 openmls_libcrux_crypto = "0.3.1"
-openmls_memory_storage = "0.5.0"
 openmls_traits = "0.5.0"
 prost = "0.14.1"
 rand = "0.9"
