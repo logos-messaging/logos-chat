@@ -176,7 +176,7 @@ impl<const N: usize> TestHarness<N> {
 
             addresses.insert(i, ident.id().clone());
             let mut core_client =
-                ClientType::new_with_name(ident, ds.clone(), rs.clone(), wp, MemStore::new())
+                ClientType::new_from_store(ident, ds.clone(), rs.clone(), wp, MemStore::new())
                     .unwrap();
             core_client.set_group_v2_clock(GroupV2Clock::Mock(ws.clock()));
             core_client.set_group_v2_config(fast_group_v2_config());
