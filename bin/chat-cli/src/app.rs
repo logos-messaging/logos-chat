@@ -85,7 +85,7 @@ where
     pub state: AppState,
     /// Whether the active chat can accept outbound content this session. Mirrors
     /// [`ChatClient::can_send`] for the active chat; `false` for a chat
-    /// restored from a previous session that the MLS client can't reload yet.
+    /// restored under a signer its members do not know, or one we left.
     is_active: bool,
     /// Ephemeral command output — not persisted, cleared on chat switch.
     command_output: Vec<DisplayMessage>,
@@ -117,8 +117,8 @@ where
             format!("Welcome, {user_name}! Type /help for commands.")
         } else {
             format!(
-                "Welcome back, {user_name}! {chat_count} chat(s) loaded — read-only from a previous \
-                 session; start a new /dm or /new to chat. Type /help."
+                "Welcome back, {user_name}! {chat_count} chat(s) loaded; those marked read-only \
+                 cannot be sent to this session, so /dm or /new starts one that can. Type /help."
             )
         };
 
@@ -133,8 +133,8 @@ where
             user_name: user_name.to_string(),
             state_path,
         };
-        // Restored chats can't be reloaded into the MLS client yet, so open on the
-        // roster (with read-only flags) rather than a dead active chat.
+        // Open on the roster, whose flags show which restored chats this session
+        // can send to, rather than on one that may be read-only.
         app.state.active_chat = None;
         app.show_chats_list();
         Ok(app)
@@ -185,8 +185,8 @@ where
         self.is_active
     }
 
-    /// Render the chat list; chats restored from a previous session that the MLS
-    /// client can't reload are flagged read-only.
+    /// Render the chat list; chats this session cannot send to are flagged
+    /// read-only.
     fn show_chats_list(&mut self) {
         self.command_output.clear();
         let sessions: Vec<_> = self.state.chats.values().cloned().collect();

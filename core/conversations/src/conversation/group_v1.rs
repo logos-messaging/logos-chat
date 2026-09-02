@@ -12,7 +12,7 @@ use openmls_traits::crypto::OpenMlsCrypto;
 use openmls_traits::random::OpenMlsRand;
 use prost::Message as _;
 use shared_traits::IdentIdRef;
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use tracing::debug;
 
 use crate::conversation::{ConversationId, ConversationIdRef, MessageId};
@@ -21,7 +21,6 @@ use crate::mls::{KeyPackages, MlsAdapter, MlsProvider};
 use crate::service_context::{ExternalServices, ServiceContext};
 
 use crate::types::ConvoMetadata;
-use crate::utils::{blake2b_hex, hash_size};
 use crate::{
     DeliveryService, IdentityProvider,
     conversation::{ChatError, Convo, GroupConvo, Identified},
@@ -30,13 +29,11 @@ use crate::{
     types::AddressedEncryptedPayload,
 };
 
-const OUTBOUND_HASH_CACHE_SIZE: usize = 25;
-
 pub struct GroupV1Convo {
     mls_group: MlsGroup,
     convo_id: String,
-    // Cache outbound message Id's to filter out re-entrant messages
-    outbound_msgs: VecDeque<String>,
+    // Whether the group's own leaf names a signer other than this installation's.
+    foreign_signer: bool,
 }
 
 impl std::fmt::Debug for GroupV1Convo {
@@ -87,7 +84,7 @@ impl GroupV1Convo {
         Ok(Self {
             mls_group,
             convo_id,
-            outbound_msgs: VecDeque::new(),
+            foreign_signer: false,
         })
     }
 
@@ -125,7 +122,7 @@ impl GroupV1Convo {
         Ok(Self {
             mls_group,
             convo_id,
-            outbound_msgs: VecDeque::new(),
+            foreign_signer: false,
         })
     }
 
@@ -139,13 +136,28 @@ impl GroupV1Convo {
             .map_err(ChatError::generic)?
             .ok_or_else(|| ChatError::NoConvo("mls group not found".into()))?;
 
+        // A group rebuilt under a signer its own leaf does not name still reads, but every member
+        // would reject what it signs. A member removed from the group has no leaf at all.
+        let foreign_signer = mls_group.own_leaf_node().is_some_and(|leaf| {
+            leaf.signature_key().as_slice() != cx.mls_identity.public_key().as_ref()
+        });
+
         Self::subscribe(&mut cx.ds, &convo_id)?;
 
         Ok(GroupV1Convo {
             mls_group,
             convo_id,
-            outbound_msgs: VecDeque::new(),
+            foreign_signer,
         })
+    }
+
+    /// Refuses to sign under a signer the group's own leaf does not name.
+    fn check_signer(&self) -> Result<(), ChatError> {
+        if self.foreign_signer {
+            Err(ChatError::ForeignSigner(self.convo_id.clone()))
+        } else {
+            Ok(())
+        }
     }
 
     // Configure the delivery service to listen for the required delivery addresses.
@@ -245,13 +257,6 @@ impl GroupV1Convo {
         cx: &mut ServiceContext<S>,
         msg_bytes: Vec<u8>,
     ) -> Result<(), ChatError> {
-        // Hash and Cache to detect inbound messages
-        let msg_hash = blake2b_hex::<hash_size::MessageId>(&[&msg_bytes]);
-        self.outbound_msgs.push_back(msg_hash);
-        if self.outbound_msgs.len() > OUTBOUND_HASH_CACHE_SIZE {
-            let _ = self.outbound_msgs.remove(0);
-        }
-
         // Wrap in Payload frames
         let aep = AddressedEncryptedPayload {
             delivery_address: self.delivery_address(),
@@ -283,6 +288,7 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
         kv: ScopedKvStore<'_>,
         content: &[u8],
     ) -> Result<MessageId, ChatError> {
+        self.check_signer()?;
         self.send_message(content, cx, kv)
     }
 
@@ -306,13 +312,6 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
             return Ok(ConvoOutcome::empty(self.id().to_string()));
         }
 
-        // Bail early if we sent this message
-        let msg_hash = blake2b_hex::<hash_size::MessageId>(&[bytes.as_ref()]);
-        if self.outbound_msgs.contains(&msg_hash) {
-            debug!("Dropping message, sent from self");
-            return Ok(ConvoOutcome::empty(self.convo_id.to_string()));
-        }
-
         let mls_message: MlsMessageIn =
             MlsMessageIn::tls_deserialize_exact_bytes(&bytes).map_err(ChatError::generic)?;
 
@@ -326,10 +325,16 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
         }
 
         let provider = MlsProvider::new(&cx.crypto, MlsAdapter::Convo(kv));
-        let processed = self
-            .mls_group
-            .process_message(&provider, protocol_message)
-            .map_err(ChatError::generic)?;
+        let processed = match self.mls_group.process_message(&provider, protocol_message) {
+            Ok(processed) => processed,
+            // A transport can hand a member its own frame back. MLS names one before any ratchet
+            // moves, which holds for a rebuilt group too, though it has no memory of what it sent.
+            Err(ProcessMessageError::ValidationError(ValidationError::CannotDecryptOwnMessage)) => {
+                debug!("Dropping message, sent from self");
+                return Ok(ConvoOutcome::empty(self.convo_id.to_string()));
+            }
+            Err(err) => return Err(ChatError::generic(err)),
+        };
 
         let cred_bytes = processed.credential().serialized_content().to_vec();
 
@@ -379,7 +384,7 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
     fn can_send(&self) -> bool {
         // OpenMLS marks a group inactive once our own leaf is removed by a
         // commit, so an inactive group is one we can no longer send to.
-        self.mls_group.is_active()
+        self.mls_group.is_active() && !self.foreign_signer
     }
 }
 
@@ -394,6 +399,7 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
         kv: ScopedKvStore<'_>,
         members: &[IdentIdRef],
     ) -> Result<(), ChatError> {
+        self.check_signer()?;
         if members.len() > 50 {
             // This is a temporary limit that originates from the De-MLS epoch time.
             return Err(ChatError::Protocol(
@@ -435,6 +441,7 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
         kv: ScopedKvStore<'_>,
         members: &[IdentIdRef],
     ) -> Result<(), ChatError> {
+        self.check_signer()?;
         // A signer id is the hex of the member's MLS signature key; MLS names a
         // member to remove by the leaf it occupies.
         let wanted: HashSet<&str> = members.iter().map(|m| m.as_str()).collect();

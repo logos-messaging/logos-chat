@@ -52,20 +52,10 @@ where
     CS: KvStore + ConversationStore + 'static,
 {
     /// Opens or creates a `Core` over the given store.
-    pub fn new_from_store(
-        ident: IP,
-        delivery: DS,
-        registration: RS,
-        wakeup_service: WS,
-        store: CS,
-    ) -> Result<Self, ChatError> {
-        Self::assemble(ident, delivery, registration, wakeup_service, store)
-    }
-
-    /// Creates a new in-memory `Core` (for testing).
     ///
-    /// Uses in-memory SQLite database. Each call creates a new isolated database.
-    pub fn new_with_name(
+    /// Conversations are rebuilt from the store before this installation's key package is
+    /// published.
+    pub fn new_from_store(
         ident: IP,
         delivery: DS,
         registration: RS,
@@ -74,6 +64,7 @@ where
     ) -> Result<Self, ChatError> {
         let mut core = Self::assemble(ident, delivery, registration, wakeup_service, store)?;
 
+        core.hydrate()?;
         core.register_keypackage()?;
         Ok(core)
     }
@@ -90,7 +81,7 @@ where
     }
 
     /// Builds the inbox/account/MLS/causal state, subscribes both inbound
-    /// addresses, and assembles the service bundle — shared by both constructors.
+    /// addresses, and assembles the service bundle.
     fn assemble(
         ident: IP,
         mut delivery: DS,
@@ -129,6 +120,25 @@ where
             pq_inbox,
             cached_convos: HashMap::new(),
         })
+    }
+
+    /// Rebuilds the conversations the store lists, which also restores the delivery subscription
+    /// each one holds. A record whose kind has no load path stays in the store and reports
+    /// `UnsupportedConvoType` the next time it is addressed. Every other failure is returned: a
+    /// listed record has state behind it, so a rebuild that fails says the store cannot be read.
+    fn hydrate(&mut self) -> Result<(), ChatError> {
+        let records = self.store.load_conversations()?;
+        let tx = KvTransaction::begin(&self.store)?;
+        for record in records {
+            match Self::build_convo(&mut self.services, &tx, record.kind, &record.local_convo_id) {
+                Ok(scoped) => {
+                    self.cached_convos.insert(record.local_convo_id, scoped);
+                }
+                Err(ChatError::UnsupportedConvoType(_)) => continue,
+                Err(err) => return Err(err),
+            }
+        }
+        Ok(())
     }
 }
 
@@ -188,6 +198,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
             members,
         );
         let convo = Self::commit(&mut self.services, tx, created)?;
+        self.record(ConversationKind::DirectV1, &convo_id)?;
         self.register_convo(
             ConversationKind::DirectV1,
             ConvoTypeOwned::Direct(Box::new(convo)),
@@ -246,6 +257,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
             participants,
         );
         let convo = Self::commit(&mut self.services, tx, created)?;
+        self.record(ConversationKind::GroupV2, &convo_id)?;
         self.register_convo(
             ConversationKind::GroupV2,
             ConvoTypeOwned::Group(Box::new(convo)),
@@ -378,9 +390,9 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
     /// this session and the local identity is still a member with send rights.
     ///
     /// Distinct from "the conversation exists" — a known conversation
-    /// ([`Self::list_all_conversations`]) may not be sendable, e.g. one restored
-    /// from a previous session that has not been reloaded, or one we were
-    /// removed from.
+    /// ([`Self::list_all_conversations`]) may not be sendable, e.g. one rebuilt
+    /// under a signer its own leaf does not name, one whose kind cannot be
+    /// rebuilt yet, or one we were removed from.
     pub fn can_send(&self, convo_id: &str) -> bool {
         self.cached_convos
             .get(convo_id)
@@ -601,8 +613,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         }
     }
 
-    /// Rebuilds a conversation from storage — the one site that branches on
-    /// `ConversationKind`.
+    /// Rebuilds a conversation from storage so an operation can run against it.
     fn load_convo(
         cx: &mut ServiceContext<S>,
         store: &S::CS,
@@ -610,26 +621,32 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         convo_id: &str,
     ) -> Result<ScopedConvo<S>, ChatError> {
         let kind = Self::stored_kind(store, convo_id)?;
-        match kind {
-            ConversationKind::GroupV1 => Ok(ScopedConvo {
-                kind,
-                convo: ConvoTypeOwned::Group(Box::new(Self::load_mls_convo(cx, tx, convo_id)?)),
-            }),
-            other => Err(ChatError::UnsupportedConvoType(other.as_str().into())),
-        }
+        Self::build_convo(cx, tx, kind, convo_id)
     }
 
-    /// Rebuilds a group conversation from storage so an operation can run against it.
-    fn load_mls_convo(
+    /// Rebuilds a conversation from its record, the one site that turns the kind a record
+    /// names into its conversation type.
+    fn build_convo(
         cx: &mut ServiceContext<S>,
         tx: &KvTransaction<'_>,
+        kind: ConversationKind,
         convo_id: &str,
-    ) -> Result<GroupV1Convo, ChatError> {
-        GroupV1Convo::load(
-            cx,
-            tx.scope(ConversationKind::GroupV1, convo_id),
-            convo_id.to_string(),
-        )
+    ) -> Result<ScopedConvo<S>, ChatError> {
+        let kv = tx.scope(kind, convo_id);
+        let convo = match kind {
+            ConversationKind::GroupV1 => {
+                ConvoTypeOwned::Group(Box::new(GroupV1Convo::load(cx, kv, convo_id.to_string())?))
+            }
+            ConversationKind::DirectV1 => {
+                ConvoTypeOwned::Direct(Box::new(DirectV1Convo::load(cx, kv, convo_id.to_string())?))
+            }
+            // GroupV2 state is durable, but de-mls offers no way to resume a conversation from
+            // it yet (#135).
+            ConversationKind::GroupV2 => {
+                return Err(ChatError::UnsupportedConvoType(kind.as_str().into()));
+            }
+        };
+        Ok(ScopedConvo { kind, convo })
     }
 
     pub fn convo_metadata(&self, convo_id: ConversationIdRef) -> Result<ConvoMetadata, ChatError> {

@@ -176,3 +176,11 @@ mod tests {
         }
     }
 }
+
+/// A wakeup service that never fires, for a core whose test drives no timers.
+#[derive(Debug)]
+pub struct NoopWakeupService;
+
+impl WakeupService for NoopWakeupService {
+    fn wakeup_in(&mut self, _: Duration, _: ConversationId) {}
+}

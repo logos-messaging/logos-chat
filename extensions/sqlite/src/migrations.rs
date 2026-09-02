@@ -36,6 +36,10 @@ pub fn get_migrations() -> Vec<(&'static str, &'static str)> {
             include_str!("migrations/006_drop_remote_convo_id.sql"),
         ),
         ("007_kv", include_str!("migrations/007_kv.sql")),
+        (
+            "008_drop_conversations_without_state",
+            include_str!("migrations/008_drop_conversations_without_state.sql"),
+        ),
     ]
 }
 
@@ -73,4 +77,62 @@ pub fn apply_migrations(conn: &mut Connection) -> Result<(), StorageError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::params;
+
+    use super::*;
+
+    const SWEEP: &str = "008_drop_conversations_without_state";
+
+    /// A migrated database with the sweep not yet applied, the state an upgrade meets.
+    fn before_the_sweep() -> Connection {
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply_migrations(&mut conn).unwrap();
+        conn.execute("DELETE FROM _migrations WHERE name = ?1", [SWEEP])
+            .unwrap();
+        conn
+    }
+
+    fn record(conn: &Connection, local_convo_id: &str, convo_type: &str) {
+        conn.execute(
+            "INSERT INTO conversations (local_convo_id, convo_type) VALUES (?1, ?2)",
+            params![local_convo_id, convo_type],
+        )
+        .unwrap();
+    }
+
+    fn state(conn: &Connection, ns: &str, instance: &str) {
+        conn.execute(
+            "INSERT INTO kv (ns, instance, key, value) VALUES (?1, ?2, ?3, ?4)",
+            params![ns, instance, b"tree".as_slice(), b"state".as_slice()],
+        )
+        .unwrap();
+    }
+
+    fn listed(conn: &Connection) -> Vec<String> {
+        let mut stmt = conn
+            .prepare("SELECT local_convo_id FROM conversations ORDER BY local_convo_id")
+            .unwrap();
+        stmt.query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_record_with_nothing_in_its_scope_is_dropped() {
+        let mut conn = before_the_sweep();
+        record(&conn, "empty", "group_v1");
+        record(&conn, "misfiled", "group_v1");
+        state(&conn, "direct_v1", "misfiled");
+        record(&conn, "resumable", "direct_v1");
+        state(&conn, "direct_v1", "resumable");
+
+        apply_migrations(&mut conn).unwrap();
+
+        assert_eq!(listed(&conn), ["resumable"]);
+    }
 }
