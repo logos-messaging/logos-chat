@@ -45,8 +45,9 @@ impl ConversationStore for MemStore {
         Ok(a)
     }
 
-    fn remove_conversation(&mut self, _local_convo_id: &str) -> Result<(), StorageError> {
-        todo!()
+    fn remove_conversation(&mut self, local_convo_id: &str) -> Result<(), StorageError> {
+        self.convos.remove(local_convo_id);
+        Ok(())
     }
 
     fn load_conversations(&self) -> Result<Vec<ConversationMeta>, StorageError> {
