@@ -113,6 +113,10 @@ impl<I, T, R, S> ChatClientBuilder<I, T, R, S> {
 
 type Built<T, R, S> = Result<(ChatClient<T, R, S>, Receiver<Event>), ClientError>;
 
+// The ident defaults only where the store does. A store the caller brings may
+// already hold the delegate its conversations sign with, and minting over it
+// strands them; DelegateSigner::load_or_mint is that decision.
+
 // All four explicitly provided.
 impl<T, R, S> ChatClientBuilder<DelegateSigner, T, R, S>
 where
@@ -181,24 +185,6 @@ where
     }
 }
 
-// T and S; I and R default.
-impl<T, S> ChatClientBuilder<Unset, T, Unset, S>
-where
-    T: Transport + Send + 'static,
-    S: KvStore + ConversationStore + Send + 'static,
-{
-    pub fn build(self) -> Built<T, EphemeralRegistry, S> {
-        ChatClient::new(
-            DelegateSigner::random(),
-            self.account,
-            self.transport,
-            EphemeralRegistry::new(),
-            self.storage,
-            self.group_v2,
-        )
-    }
-}
-
 // I, T, and R; S defaults.
 impl<T, R> ChatClientBuilder<DelegateSigner, T, R, Unset>
 where
@@ -212,25 +198,6 @@ where
             self.transport,
             self.registration,
             SqliteStore::in_memory(),
-            self.group_v2,
-        )
-    }
-}
-
-// T, R, and S; I defaults.
-impl<T, R, S> ChatClientBuilder<Unset, T, R, S>
-where
-    T: Transport + Send + 'static,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
-    S: KvStore + ConversationStore + Send + 'static,
-{
-    pub fn build(self) -> Built<T, R, S> {
-        ChatClient::new(
-            DelegateSigner::random(),
-            self.account,
-            self.transport,
-            self.registration,
-            self.storage,
             self.group_v2,
         )
     }

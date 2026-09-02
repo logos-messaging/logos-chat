@@ -1,9 +1,21 @@
 use crypto::{Ed25519SigningKey, Ed25519VerifyingKey};
-use libchat::{IdentId, IdentityProvider, trunc};
+use libchat::{
+    ChatError, IdentId, IdentityProvider, KvStore, KvTransaction, Namespace, StorageError, trunc,
+};
+use logos_account::{AccountDirectory, TestLogosAccount};
+use zeroize::Zeroizing;
 
 use crate::ClientError;
 
 type AccountAddr = String;
+
+/// The delegate's scope: a store holds one delegate, the installation's, so the instance is fixed.
+const DELEGATE: Namespace = Namespace::new("delegate");
+const INSTALLATION: &str = "installation";
+
+/// The 32-byte seed the signer rebuilds from, and the address of the account it acts for.
+const SEED: &[u8] = b"seed";
+const ACCOUNT: &[u8] = b"account";
 
 /// A local signing identity that holds an Ed25519 keypair — the per-device
 /// (installation) signer. It knows nothing about accounts: the client composes
@@ -22,6 +34,88 @@ impl DelegateSigner {
             signing_key,
             verifying_key,
         }
+    }
+
+    fn from_seed(seed: &[u8; 32]) -> Self {
+        let signing_key = Ed25519SigningKey::from_seed(seed);
+        let verifying_key = signing_key.verifying_key();
+        Self {
+            signing_key,
+            verifying_key,
+        }
+    }
+
+    /// The signer the store holds, with the address of the account it acts for.
+    ///
+    /// `None` is a store no delegate has been saved into: mint one and
+    /// [`save`](Self::save) it.
+    pub fn load<S: KvStore>(store: &S) -> Result<Option<(Self, String)>, ClientError> {
+        let tx = KvTransaction::begin(store).map_err(ChatError::from)?;
+        let kv = tx.scope(DELEGATE, INSTALLATION);
+        let Some(seed) = kv.get(SEED).map_err(ChatError::from)?.map(Zeroizing::new) else {
+            return Ok(None);
+        };
+        let seed: Zeroizing<[u8; 32]> =
+            Zeroizing::new(seed.as_slice().try_into().map_err(|_| {
+                ChatError::from(StorageError::InvalidData(format!(
+                    "delegate seed: expected 32 bytes, got {}",
+                    seed.len()
+                )))
+            })?);
+        let account = kv
+            .get(ACCOUNT)
+            .map_err(ChatError::from)?
+            .ok_or_else(|| StorageError::NotFound("delegate account".into()))
+            .and_then(|bytes| {
+                String::from_utf8(bytes)
+                    .map_err(|_| StorageError::InvalidData("delegate account".into()))
+            })
+            .map_err(ChatError::from)?;
+        Ok(Some((Self::from_seed(&seed), account)))
+    }
+
+    /// Records this signer as the delegate acting for `account`, replacing
+    /// whatever the store held before it.
+    pub fn save<S: KvStore>(&self, store: &S, account: &str) -> Result<(), ClientError> {
+        let tx = KvTransaction::begin(store).map_err(ChatError::from)?;
+        let kv = tx.scope(DELEGATE, INSTALLATION);
+        let seed = Zeroizing::new(self.signing_key.DANGER_to_seed());
+        kv.put(SEED, seed.as_slice()).map_err(ChatError::from)?;
+        kv.put(ACCOUNT, account.as_bytes())
+            .map_err(ChatError::from)?;
+        tx.commit().map_err(ChatError::from)?;
+        Ok(())
+    }
+
+    /// The signer `store` holds, or a fresh one endorsed in `directory` by a
+    /// fresh account and saved, with the address of the account it acts for.
+    ///
+    /// A store that already holds a delegate is left untouched and nothing is
+    /// published, which is what lets the conversations that store holds keep
+    /// signing with the key their MLS leaves name.
+    ///
+    /// The account is a dev stand-in whose key is dropped once it has signed
+    /// the endorsing bundle, so no later call can add a device to it; a
+    /// caller-supplied, custody-holding account replaces it once the platform
+    /// provides one. That drop makes the order asymmetric: a saved delegate the
+    /// directory never listed could not be reached by anyone, while an
+    /// unsaved one costs one more mint, so endorsing comes before saving.
+    pub fn load_or_mint<S, D>(store: &S, directory: &mut D) -> Result<(Self, String), ClientError>
+    where
+        S: KvStore,
+        D: AccountDirectory,
+    {
+        if let Some(stored) = Self::load(store)? {
+            return Ok(stored);
+        }
+        let account = TestLogosAccount::new();
+        let delegate = Self::random();
+        let address = account.address();
+        account
+            .add_delegate_signer(directory, delegate.public_key())
+            .map_err(|e| ClientError::BundlePublish(e.to_string()))?;
+        delegate.save(store, &address)?;
+        Ok((delegate, address))
     }
 
     pub fn public_key(&self) -> &Ed25519VerifyingKey {

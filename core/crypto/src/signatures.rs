@@ -42,6 +42,12 @@ impl Ed25519SigningKey {
         Self(ed25519_dalek::SigningKey::from_bytes(seed))
     }
 
+    /// The seed [`Self::from_seed`] rebuilds this key from.
+    #[allow(non_snake_case)] // All caps makes this standout more in reviews.
+    pub fn DANGER_to_seed(&self) -> [u8; 32] {
+        self.0.to_bytes()
+    }
+
     pub fn sign(&self, msg: &[u8]) -> Ed25519Signature {
         self.0.sign(msg).to_bytes().into()
     }
@@ -90,5 +96,20 @@ impl From<ed25519_dalek::VerifyingKey> for Ed25519VerifyingKey {
 impl AsRef<[u8]> for Ed25519VerifyingKey {
     fn as_ref(&self) -> &[u8] {
         self.0.as_bytes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The seed a key hands out rebuilds that same key.
+    #[test]
+    fn seed_round_trip() {
+        let key = Ed25519SigningKey::generate();
+        assert_eq!(
+            Ed25519SigningKey::from_seed(&key.DANGER_to_seed()).verifying_key(),
+            key.verifying_key()
+        );
     }
 }

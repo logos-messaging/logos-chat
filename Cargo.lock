@@ -3678,7 +3678,7 @@ dependencies = [
  "components",
  "crossbeam-channel",
  "embedded-logos-delivery",
- "logos-account",
+ "libchat",
  "logos-generic-chat",
 ]
 
@@ -3710,6 +3710,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]

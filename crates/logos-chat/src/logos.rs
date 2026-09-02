@@ -18,7 +18,7 @@
 use components::{ContactRegistry, RegistryPublishMode};
 use crossbeam_channel::Receiver;
 use embedded_logos_delivery::{EmbeddedLogosDelivery, P2pConfig};
-use logos_account::TestLogosAccount;
+use libchat::ChatError;
 
 use logos_generic_chat::{
     ChatClient, ChatClientBuilder, ClientError, DelegateSigner, Event, GroupV2Config, SqliteStore,
@@ -117,6 +117,19 @@ pub fn open(config: LogosConfig) -> Result<(LogosChatClient, Receiver<Event>), C
 /// Open a client on the Logos stack per `config` with the injected transport,
 /// persisting to the encrypted database.
 ///
+/// The first open on a database mints the delegate and the account it acts
+/// for and publishes the endorsing bundle; every later open on that database
+/// signs as the same delegate for the same address, which is what lets a
+/// stored conversation resume.
+///
+/// The account key that signs that endorsement is dropped once it has, so the
+/// bundle reaches exactly one registry, the one `config` names on that first
+/// open. A database opened afterwards against a different registry finds no
+/// bundle there and can publish none, so the client runs under an address no
+/// peer can resolve and only a fresh database recovers. An account holding its
+/// own key is what removes the limitation, and holding one is platform
+/// territory rather than this crate's.
+///
 /// The registry publishes per `config`'s
 /// [`registry publish mode`](LogosConfig::set_registry_publish_mode): over
 /// HTTP (the default), or over a clone of `transport` — sharing the client's
@@ -132,28 +145,22 @@ pub fn open_with_transport<T: Transport + Clone>(
     ),
     ClientError,
 > {
-    // A fresh account endorsing a fresh delegate each open: the account
-    // key is dropped after publishing the bundle, so devices cannot be
-    // added later. A caller-supplied, custody-holding account replaces
-    // this once the platform provides one.
-    let account = TestLogosAccount::new();
-    let delegate = DelegateSigner::random();
+    let storage = SqliteStore::new(StorageConfig::Encrypted {
+        path: config.db_path,
+        key: config.db_key,
+    })
+    .map_err(ChatError::from)?;
     let mut registry = ContactRegistry::new(
         transport.clone(),
         config.registry_url,
         config.registry_publish_mode,
     );
-    account
-        .add_delegate_signer(&mut registry, delegate.public_key())
-        .map_err(|e| ClientError::BundlePublish(e.to_string()))?;
-    let mut builder = ChatClientBuilder::new(account.address())
+    let (delegate, address) = DelegateSigner::load_or_mint(&storage, &mut registry)?;
+    let mut builder = ChatClientBuilder::new(address)
         .ident(delegate)
         .transport(transport)
         .registration(registry)
-        .storage_config(StorageConfig::Encrypted {
-            path: config.db_path,
-            key: config.db_key,
-        });
+        .storage(storage);
     if let Some(group_v2) = config.group_v2_config {
         builder = builder.group_v2_config(group_v2);
     }
@@ -161,7 +168,8 @@ pub fn open_with_transport<T: Transport + Clone>(
 }
 
 /// The Logos client: a [`ChatClient`] wired to the Logos service stack — a
-/// [`DelegateSigner`] identity acting for a fresh dev account, the keypackage +
+/// [`DelegateSigner`] identity acting for a dev account minted on the
+/// database's first open, the keypackage +
 /// account registry ([`ContactRegistry`], which is both the keypackage store
 /// and the account → device directory; it queries over HTTP and submits over
 /// HTTP or the delivery network per [`LogosConfig::set_registry_publish_mode`]),
