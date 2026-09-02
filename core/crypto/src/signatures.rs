@@ -37,6 +37,11 @@ impl Ed25519SigningKey {
         Self(ed25519_dalek::SigningKey::generate(&mut OsRng))
     }
 
+    /// Rebuilds the key from the 32-byte seed an Ed25519 private key is.
+    pub fn from_seed(seed: &[u8; 32]) -> Self {
+        Self(ed25519_dalek::SigningKey::from_bytes(seed))
+    }
+
     pub fn sign(&self, msg: &[u8]) -> Ed25519Signature {
         self.0.sign(msg).to_bytes().into()
     }
