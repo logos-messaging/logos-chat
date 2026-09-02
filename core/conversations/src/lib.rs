@@ -4,6 +4,7 @@ mod core;
 mod errors;
 mod inbox_v2;
 mod kv;
+mod mls;
 mod outcomes;
 mod proto;
 mod protocol;
