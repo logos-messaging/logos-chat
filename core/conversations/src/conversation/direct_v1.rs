@@ -39,6 +39,17 @@ impl DirectV1Convo {
         Ok(Self { inner_group })
     }
 
+    /// Rebuilds the conversation from the state its scope holds.
+    pub fn load<S: ExternalServices>(
+        cx: &mut ServiceContext<S>,
+        kv: ScopedKvStore<'_>,
+        convo_id: ConversationId,
+    ) -> Result<Self, ChatError> {
+        Ok(Self {
+            inner_group: DelegateGroup::load(cx, kv, convo_id)?,
+        })
+    }
+
     /// Joins the conversation a welcome admits this installation to.
     pub fn new_from_welcome<S: ExternalServices>(
         cx: &mut ServiceContext<S>,

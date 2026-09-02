@@ -121,7 +121,7 @@ where
         let wakeup_service = ThreadedWakeupService::new(wakeup_tx);
         let directory = reg.clone();
         let ident = DelegateIdentity::new(ident, &account);
-        let mut core = Core::new_with_name(ident, transport, reg, wakeup_service, storage)?;
+        let mut core = Core::new_from_store(ident, transport, reg, wakeup_service, storage)?;
         if let Some(config) = group_v2 {
             core.set_group_v2_config(config);
         }
