@@ -2,10 +2,11 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted |
 | Issue | https://github.com/logos-messaging/libchat/issues/112 |
 | Discussion | https://github.com/logos-messaging/libchat/discussions/218 |
 | Date | 2026-08-25 |
+| Last revised | 2026-09-14 |
 
 ## Context and Problem
 
@@ -85,26 +86,34 @@ flowchart TB
 
 2. **A namespace is the protocol that owns the state, as a closed enum the conversation layer declares:** `Protocol::{GroupV1, DirectV1, GroupV2, InboxV2}`, gaining a variant when a protocol ships; the substrate stores it as an opaque `Namespace` name and never enumerates it. Uniqueness becomes a property of the type rather than a convention, protocol names already carry their version, and retiring one is `delete_namespace`. A conversation's record in `ConversationStore` names that protocol: the list maps a conversation id to the name of the protocol whose scope holds its state, kept by the store as the string it is given, so one string both files the state and names the type that rebuilds it, and the closed set stays out of the contract.
 
-3. **A conversation addresses storage through a `ScopedKvStore` handed to it, never through the substrate.** A `ScopedKvStore` is the key verbs with one scope already bound (`tx.scope(ns, instance)` builds it), so a type composes whatever key layout it wants inside its scope and can name neither another protocol's state nor a sibling conversation's. Scopes are per operation: the entry point opens the transaction, the scope over it is built wherever the conversation's identity is already known, and a conversation receives a fresh one per call, so a write outside the open unit is unrepresentable. `ServiceContext` does not carry the substrate; cross-type needs are met by services, never by another protocol's scope.
+3. **A conversation addresses storage through a `ScopedKvStore` handed to it, never through the substrate.** A `ScopedKvStore` is the key verbs with one scope already bound (`tx.scope(ns, convo_id)` builds it), so a type composes whatever key layout it wants inside its scope and can name neither another protocol's state nor a sibling conversation's. Scopes are per operation: the entry point opens the transaction, the scope over it is built wherever the conversation's identity is already known, and a conversation receives a fresh one per call, so a write outside the open unit is unrepresentable. `ServiceContext` does not carry the substrate; cross-type needs are met by services, never by another protocol's scope.
 
     ```rust
-    // core.rs, the one site that branches on the protocol a record names
-    let id = &record.local_convo_id;
-    let convo: Box<dyn Convo<S>> = match Protocol::from_name(&record.convo_type)? {
-        Protocol::GroupV1 => Box::new(GroupV1Convo::load(cx, tx.scope(Protocol::GroupV1, id))?),
-        Protocol::GroupV2 => Box::new(GroupV2Convo::load(cx, tx.scope(Protocol::GroupV2, id))?),
-        other => return Err(ChatError::UnsupportedConvoType(other.name().into())),
+    // core.rs, build_convo: the one site that turns the protocol a record names into its conversation type
+    let kv = tx.scope(protocol, convo_id);
+    let convo = match protocol {
+        Protocol::GroupV1 => {
+            ConvoTypeOwned::Group(Box::new(GroupV1Convo::load(cx, kv, convo_id.to_string())?))
+        }
+        Protocol::DirectV1 => {
+            ConvoTypeOwned::Direct(Box::new(DirectV1Convo::load(cx, kv, convo_id.to_string())?))
+        }
+        // GroupV2 state is durable, but de-mls offers no way to resume a conversation from it yet
+        Protocol::GroupV2 | Protocol::InboxV2 => {
+            return Err(ChatError::UnsupportedConvoType(protocol.name().into()));
+        }
     };
+    Ok(ScopedConvo { protocol, convo })
 
-    // conversation/group_v1.rs, the type shapes every key inside its own scope
-    let group_id = GroupId::from_slice(&hex::decode(scope.instance())?);
-    let mls = MlsAdapter::new(scope, cx.key_packages());
-    let mls_group = MlsGroup::load(&mls, &group_id)?;
+    // conversation/group_v1.rs, load: the type shapes every key inside its own scope
+    let group_id = Self::group_id_for(&convo_id)?;
+    let mls_group = MlsGroup::load(&MlsAdapter::for_convo(kv), &group_id)?
+        .ok_or_else(|| ChatError::NoConvo("mls group not found".into()))?;
     ```
 
     Conversation logic never composes a key inline; keys stay behind the type's accessors. Isolation runs in both directions and neither rests on a type shaping its keys correctly: a protocol cannot read its neighbour's state, and a conversation cannot read its sibling's.
 
-    The instance is the conversation id, which is also the MLS group id, so a conversation keeps the single identity it already carries on the wire rather than gaining a second one for storage. What the scope asks in return is that the id exist before the type's first write: a creator picks the group id instead of letting the library generate one, and a joiner takes it from the decrypted welcome before the group is persisted. Loading is the simple direction, where the core builds the scope from the stored record; creating is where the type binds its own, since only it can produce the id.
+    The instance is the conversation id, which is also the MLS group id, so a conversation keeps the single identity it already carries on the wire rather than gaining a second one for storage. What the scope asks in return is that the id exist before the type's first write: a creator picks the group id instead of letting the library generate one, and a joiner takes it from the decrypted welcome before the group is persisted. The core binds every scope: from the record when it loads, and from an id the type mints ahead of the create, so a conversation never learns where it is filed.
 
 4. **Code shared between types is written once and constructed with the owner's scope.** A component several types reuse takes its `ScopedKvStore` at construction, so one implementation lands state in whichever scope owns the conversation. The MLS `StorageProvider` adapter is today's case: GroupV1 and GroupV2 groups get identical key shapes from the same code and still land in separate scopes. The conversation is the scope, so it is one handle to load through and one call to purge.
 
@@ -115,50 +124,51 @@ flowchart TB
     (InboxV2, <signer id>)  key_package/<hash_ref>  minted once, consumed on Welcome
     ```
 
-    A cross-type entry stays single-copy with the type that mints it, offered to the rest as a service, never as a scope. Today that is the key package: InboxV2 mints it, a Welcome for a group of any type consumes it unless it is last resort, and `cx.key_packages()` is that service, implemented over InboxV2's protocol-level scope, where state a protocol owns outside any conversation lives, instanced by the signer the inbox serves.
+    A cross-type entry stays single-copy with the type that mints it, offered to the rest as a service, never as a scope. Today that is the key package: InboxV2 mints it, a Welcome for a group of any type consumes it unless it is last resort, and `KeyPackages`, which InboxV2 builds on the open transaction over the scope it binds for its signer, is that service, where state a protocol owns outside any conversation lives.
 
     An adapter for a foreign trait that spans both takes each destination at construction and routes per method, not per instance:
 
     ```rust
-    struct MlsAdapter<'a, K> {
-        convo: Option<ScopedKvStore<'a>>, // this conversation's scope; none until one exists
-        key_packages: &'a K,        // the scope InboxV2 binds, shared by every protocol
+    struct MlsAdapter<'a> {
+        convo: Option<ScopedKvStore<'a>>,       // this conversation's scope; none until one exists
+        key_packages: Option<KeyPackages<'a>>,  // the scope InboxV2 binds, shared by every protocol
     }
     ```
 
     | `StorageProvider` methods | Destination |
     |---|---|
-    | 44 keyed by group id | the conversation's scope |
     | 3 key package | the shared service |
-    | 3 standalone encryption keypair | the conversation's scope: update-leaf keys, written and read inside one group |
-    | 3 signature keypair, 3 PSK | never called; libchat signs through its own `IdentityProvider` and uses no PSKs |
+    | every other | the conversation's scope |
 
-    Two protocols' adapters differ in the first field alone, so both reach one key package at one address, and minting names no protocol at all.
+    The rest lands in the conversation's scope uniformly: the standalone encryption keypairs are update-leaf keys, written and read inside one group, and even the signature-keypair and PSK methods libchat never reaches route there, so the adapter carries no arm that can only panic. Two protocols' adapters differ in the first field alone, so both reach one key package at one address, and minting names no protocol at all.
 
-5. **One transaction per mutating core entry point, committed before anything is published,** so a crash loses at worst an unsent message, never sent-but-forgotten state.
+5. **One transaction per mutating core entry point, committed before anything is published,** so a crash loses at worst an unsent message, never sent-but-forgotten state. The delivery service a conversation publishes through holds every frame until the core releases it, so the ordering is a property of the type conversations hold, not a convention they keep. The record in `ConversationStore` cannot join the substrate's transaction, so it follows the commit on a create and precedes the delete on a remove: a crash between the two leaves state no record names, which a purge can sweep, never a record no state answers to.
 
     ```rust
-    // core.rs, handle_payload: one payload, one transaction, whichever path it dispatches to
-    let tx = self.storage.begin()?;
-    let outcome = match env.conversation_hint {
-        c if c == self.pq_inbox.id() => self.dispatch_to_inbox2(&tx, &env.payload)?,
-        // ...
+    // core.rs, dispatch_to_inbox2: one payload, one transaction, and what it staged waits on it
+    let tx = KvTransaction::begin(&self.store)?;
+    let handled = self.pq_inbox.handle_frame(&mut self.services, &tx, payload);
+    let Some(Joined { convo, protocol }) = Self::commit(&mut self.services, tx, handled)? else {
+        return Ok(PayloadOutcome::Empty);
     };
-    tx.commit()?; // only then publish
+    let convo_id = convo.id().to_string();
+    self.record(protocol, &convo_id)?; // the record follows the commit, so the store never lists what did not land
+    self.register_convo(protocol, convo)?;
+    self.publish()?; // only now does anything reach the wire
 
-    // conversation/group_v1.rs, new_from_welcome, reached through InboxV2::handle_frame: decrypting a
-    // welcome reads key packages and nothing group-scoped, so the group id is known before the group is written
-    let processed = ProcessedWelcome::new_from_welcome(
-        &MlsAdapter::for_welcome(cx.key_packages()), &Self::mls_join_config(), welcome)?;
-    let convo_id = hex::encode(processed.unverified_group_info().group_id().as_slice());
-    let mls = MlsAdapter::new(tx.scope(Protocol::GroupV1, &convo_id), cx.key_packages());
+    // inbox_v2.rs, handle_heavy_invite: decrypting a welcome reads key packages and nothing
+    // group-scoped, so the group id is known before the group is written
+    let processed = GroupV1Convo::process_welcome(cx, self.key_packages(tx), welcome)?;
+    let convo_id = GroupV1Convo::convo_id_for(processed.unverified_group_info().group_id());
+    // every welcome arriving on the inbox opens a pairwise conversation, whatever group backs it
+    let kv = tx.scope(Protocol::DirectV1, &convo_id);
     // staging checks that scope for an existing group; into_group writes mls/tree, context, epoch keys into it
-    let mls_group = processed.into_staged_welcome(&mls, None)?.into_group(&mls)?;
+    DirectV1Convo::new_from_welcome(cx, kv, processed)
     ```
 
     A crash between any two of those writes is a group that can never open; the transaction lives on the substrate so one unit can span scopes.
 
-    One path does not fit yet: a GroupV2 joiner gets its conversation id only after de-mls has persisted the group, so its scope cannot be bound in time. Exposing the id before staging, the way OpenMLS already does for a welcome, is the fix; until then that path alone carries an id libchat mints and is the one place a conversation has two.
+    A GroupV2 joiner reaches the same ordering through the same split, because de-mls seeds the MLS group id from the conversation id: processing the welcome for its group info names the conversation, its scope is bound from that, and de-mls then joins on the bound handle, decrypting the welcome a second time. The duplicated decryption is what buys one id on every path, and it presumes the key package is last resort: OpenMLS deletes a one-time package as the first pass reads it, inside the same transaction, so the second pass would find none. de-mls exposing the id before it stages the group would remove both.
 
 6. **App features are the app's concern.** libchat persists the state it owns; whatever the app builds on top, the app stores.
 
