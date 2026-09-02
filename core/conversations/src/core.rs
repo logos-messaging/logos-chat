@@ -23,7 +23,7 @@ use crate::{
 use openmls_libcrux_crypto::CryptoProvider as LibcruxCryptoProvider;
 use shared_traits::{IdentId, IdentIdRef};
 use std::collections::HashMap;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 pub use crate::conversation::ConversationId;
 
@@ -273,24 +273,29 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         convo_id: &str,
         members: &[IdentIdRef],
     ) -> Result<(), ChatError> {
-        let scoped = self
-            .cached_convos
-            .get_mut(convo_id)
-            .ok_or_else(|| ChatError::NoConvo(convo_id.to_string()))?;
-
         let tx = KvTransaction::begin(&self.store)?;
+        let scoped = Self::cached_or_loaded(
+            &mut self.cached_convos,
+            &mut self.services,
+            &self.store,
+            &tx,
+            convo_id,
+        )?;
+
+        // A conversation that takes no members is turned away before the transaction stages
+        // anything, so there is nothing to reload.
         let kind = scoped.kind;
-        let added = match &mut scoped.convo {
-            ConvoTypeOwned::Group(group_convo) => {
-                let kv = tx.scope(kind, convo_id);
-                group_convo.add_member(&mut self.services, kv, members)
-            }
-            ConvoTypeOwned::Direct(convo) => Err(ChatError::UnsupportedFunction(
-                convo.id().into(),
+        let ConvoTypeOwned::Group(group_convo) = &mut scoped.convo else {
+            return Err(ChatError::UnsupportedFunction(
+                convo_id.into(),
                 "Add Member".into(),
-            )),
+            ));
         };
-        Self::commit(&mut self.services, tx, added)?;
+
+        let kv = tx.scope(kind, convo_id);
+        let added = group_convo.add_member(&mut self.services, kv, members);
+        let committed = Self::commit(&mut self.services, tx, added);
+        self.reload_on_error(convo_id, committed)?;
         self.publish()
     }
 
@@ -301,48 +306,41 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         convo_id: &str,
         members: &[IdentIdRef],
     ) -> Result<(), ChatError> {
-        let scoped = self
-            .cached_convos
-            .get_mut(convo_id)
-            .ok_or_else(|| ChatError::NoConvo(convo_id.to_string()))?;
-
         let tx = KvTransaction::begin(&self.store)?;
+        let scoped = Self::cached_or_loaded(
+            &mut self.cached_convos,
+            &mut self.services,
+            &self.store,
+            &tx,
+            convo_id,
+        )?;
+
         let kind = scoped.kind;
-        let removed = match &mut scoped.convo {
-            ConvoTypeOwned::Group(group_convo) => {
-                let kv = tx.scope(kind, convo_id);
-                group_convo.remove_member(&mut self.services, kv, members)
-            }
-            ConvoTypeOwned::Direct(convo) => Err(ChatError::UnsupportedFunction(
-                convo.id().into(),
+        let ConvoTypeOwned::Group(group_convo) = &mut scoped.convo else {
+            return Err(ChatError::UnsupportedFunction(
+                convo_id.into(),
                 "Remove Member".into(),
-            )),
+            ));
         };
-        Self::commit(&mut self.services, tx, removed)?;
+
+        let kv = tx.scope(kind, convo_id);
+        let removed = group_convo.remove_member(&mut self.services, kv, members);
+        let committed = Self::commit(&mut self.services, tx, removed);
+        self.reload_on_error(convo_id, committed)?;
         self.publish()
     }
 
     /// Each member's MLS leaf-credential content (hex-encoded), for a direct
     /// conversation as for a group.
     pub fn group_members(&mut self, convo_id: &str) -> Result<Vec<Vec<u8>>, ChatError> {
-        let scoped = self
-            .cached_convos
-            .get(convo_id)
-            .ok_or_else(|| ChatError::NoConvo(convo_id.to_string()))?;
-
-        scoped.convo.members()
+        self.read_convo(convo_id)?.convo.members()
     }
 
     /// Each member invited here and still awaiting the group's commit, in the
     /// same encoding as [`Self::group_members`]. A direct conversation has no
     /// pending members and reports none.
     pub fn group_pending_members(&mut self, convo_id: &str) -> Result<Vec<Vec<u8>>, ChatError> {
-        let scoped = self
-            .cached_convos
-            .get(convo_id)
-            .ok_or_else(|| ChatError::NoConvo(convo_id.to_string()))?;
-
-        match &scoped.convo {
+        match &self.read_convo(convo_id)?.convo {
             ConvoTypeOwned::Group(group_convo) => group_convo.pending_members(),
             ConvoTypeOwned::Direct(_) => Ok(Vec::new()),
         }
@@ -407,6 +405,24 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         self.cached_convos.contains_key(convo_id) || self.listed(convo_id).unwrap_or(false)
     }
 
+    /// Removes a conversation: the record listing it, then everything its scope holds. Removing
+    /// one already gone succeeds, so a removal that fails partway can be run again.
+    pub fn remove_conversation(&mut self, convo_id: &str) -> Result<(), ChatError> {
+        // Out of the cache first, so nothing writes to a conversation half removed. The record
+        // goes before the scope: a crash between the two leaves state no record names, where the
+        // reverse order leaves a record whose scope is empty and no conversation can be rebuilt
+        // from. Once the record is gone nothing names the kind, so the scope goes under each one.
+        self.cached_convos.remove(convo_id);
+        self.store.remove_conversation(convo_id)?;
+
+        let tx = KvTransaction::begin(&self.store)?;
+        for kind in ConversationKind::ALL {
+            tx.delete_scope(kind, convo_id)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn take_missing_messages(&self) -> Vec<MissingMessage> {
         self.services.causal.take_missing()
     }
@@ -422,18 +438,18 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
     /// it.
     pub fn send_content(&mut self, convo_id: &str, content: &[u8]) -> Result<MessageId, ChatError> {
         let tx = KvTransaction::begin(&self.store)?;
-        let mut loaded;
-        let scoped = match self.cached_convos.get_mut(convo_id) {
-            Some(scoped) => scoped,
-            None => {
-                loaded = Self::load_convo(&mut self.services, &self.store, &tx, convo_id)?;
-                &mut loaded
-            }
-        };
+        let scoped = Self::cached_or_loaded(
+            &mut self.cached_convos,
+            &mut self.services,
+            &self.store,
+            &tx,
+            convo_id,
+        )?;
 
         let kv = tx.scope(scoped.kind, convo_id);
         let sent = scoped.convo.send_content(&mut self.services, kv, content);
-        let message_id = Self::commit(&mut self.services, tx, sent)?;
+        let committed = Self::commit(&mut self.services, tx, sent);
+        let message_id = self.reload_on_error(convo_id, committed)?;
         self.publish()?;
 
         Ok(message_id)
@@ -491,20 +507,20 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         let enc_payload = EncryptedPayload::decode(enc_payload_bytes)?;
 
         let tx = KvTransaction::begin(&self.store)?;
-        let mut loaded;
-        let scoped = match self.cached_convos.get_mut(convo_id) {
-            Some(scoped) => scoped,
-            None => {
-                loaded = Self::load_convo(&mut self.services, &self.store, &tx, convo_id)?;
-                &mut loaded
-            }
-        };
+        let scoped = Self::cached_or_loaded(
+            &mut self.cached_convos,
+            &mut self.services,
+            &self.store,
+            &tx,
+            convo_id,
+        )?;
 
         let kv = tx.scope(scoped.kind, convo_id);
         let handled = scoped
             .convo
             .handle_frame(&mut self.services, kv, enc_payload);
-        let outcome = Self::commit(&mut self.services, tx, handled)?;
+        let committed = Self::commit(&mut self.services, tx, handled);
+        let outcome = self.reload_on_error(convo_id, committed)?;
         self.publish()?;
 
         Ok(outcome)
@@ -529,7 +545,8 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         let tx = KvTransaction::begin(&self.store)?;
         let kv = tx.scope(scoped.kind, convo_id);
         let woken = scoped.convo.wakeup(&mut self.services, kv);
-        let outcome = Self::commit(&mut self.services, tx, woken)?;
+        let committed = Self::commit(&mut self.services, tx, woken);
+        let outcome = self.reload_on_error(convo_id, committed)?;
         self.publish()?;
 
         Ok(outcome)
@@ -570,6 +587,31 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
             .ds
             .flush()
             .map_err(|e| ChatError::Delivery(e.to_string()))
+    }
+
+    /// Rebuilds the conversation a failed operation touched from the state the store kept: what
+    /// the operation ran in memory is a step ahead of what landed. A rebuild that fails too leaves
+    /// the conversation uncached, for the next operation addressing it to rebuild.
+    ///
+    /// A GroupV2 conversation cannot be rebuilt yet (#135), so it stays cached and keeps that
+    /// step of lead over the store.
+    fn reload_on_error<T>(
+        &mut self,
+        convo_id: &str,
+        outcome: Result<T, ChatError>,
+    ) -> Result<T, ChatError> {
+        if outcome.is_err()
+            && self
+                .cached_convos
+                .get(convo_id)
+                .is_some_and(|scoped| scoped.kind != ConversationKind::GroupV2)
+        {
+            self.cached_convos.remove(convo_id);
+            if let Err(err) = self.reload(convo_id) {
+                warn!(convo_id, %err, "conversation left uncached after a failed reload");
+            }
+        }
+        outcome
     }
 
     /// Lists a conversation under the kind whose scope holds its state, once the transaction
@@ -613,7 +655,44 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         }
     }
 
-    /// Rebuilds a conversation from storage so an operation can run against it.
+    /// The conversation an operation addresses, rebuilt from the store and cached again when the
+    /// cache does not hold it, as after a failed operation whose reload failed too.
+    fn cached_or_loaded<'c>(
+        cached_convos: &'c mut HashMap<String, ScopedConvo<S>>,
+        cx: &mut ServiceContext<S>,
+        store: &S::CS,
+        tx: &KvTransaction<'_>,
+        convo_id: &str,
+    ) -> Result<&'c mut ScopedConvo<S>, ChatError> {
+        if !cached_convos.contains_key(convo_id) {
+            let scoped = Self::load_convo(cx, store, tx, convo_id)?;
+            cached_convos.insert(convo_id.to_string(), scoped);
+        }
+
+        Ok(cached_convos
+            .get_mut(convo_id)
+            .expect("the conversation was just cached"))
+    }
+
+    /// The conversation a read addresses. Only a rebuild reaches the store, so a cache hit opens
+    /// no transaction: a store is free to make one exclusive, and a read holding it would block
+    /// writers for nothing.
+    fn read_convo(&mut self, convo_id: &str) -> Result<&ScopedConvo<S>, ChatError> {
+        if !self.cached_convos.contains_key(convo_id) {
+            self.reload(convo_id)?;
+        }
+
+        Ok(&self.cached_convos[convo_id])
+    }
+
+    /// Rebuilds a conversation from the store and caches it.
+    fn reload(&mut self, convo_id: &str) -> Result<(), ChatError> {
+        let tx = KvTransaction::begin(&self.store)?;
+        let scoped = Self::load_convo(&mut self.services, &self.store, &tx, convo_id)?;
+        self.cached_convos.insert(convo_id.to_string(), scoped);
+        Ok(())
+    }
+
     fn load_convo(
         cx: &mut ServiceContext<S>,
         store: &S::CS,
@@ -649,20 +728,22 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         Ok(ScopedConvo { kind, convo })
     }
 
-    pub fn convo_metadata(&self, convo_id: ConversationIdRef) -> Result<ConvoMetadata, ChatError> {
-        match self.cached_convos.get(convo_id).map(|scoped| &scoped.convo) {
-            Some(ConvoTypeOwned::Group(group_convo)) => {
+    pub fn convo_metadata(
+        &mut self,
+        convo_id: ConversationIdRef,
+    ) -> Result<ConvoMetadata, ChatError> {
+        match &self.read_convo(convo_id)?.convo {
+            ConvoTypeOwned::Group(group_convo) => {
                 group_convo
                     .metadata()
                     .ok_or(ChatError::UnsupportedConvoType(
                         "metadata is not available for this legacy convo_type".into(),
                     ))
             }
-            Some(ConvoTypeOwned::Direct(_)) => Err(ChatError::UnsupportedFunction(
+            ConvoTypeOwned::Direct(_) => Err(ChatError::UnsupportedFunction(
                 convo_id.into(),
                 "implementation coming".into(),
             )),
-            None => Err(ChatError::NoConvo(convo_id.into())),
         }
     }
 }
