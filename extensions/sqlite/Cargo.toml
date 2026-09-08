@@ -13,5 +13,8 @@ libchat = { workspace = true }
 rusqlite = { version = "0.35", features = ["bundled-sqlcipher-vendored-openssl"] }
 
 [dev-dependencies]
+# Workspace dependencies (sorted)
+libchat = { workspace = true, features = ["test-support"] }
+
 # External dependencies (sorted)
 tempfile = "3"

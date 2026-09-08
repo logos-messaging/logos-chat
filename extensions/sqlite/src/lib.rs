@@ -2,6 +2,7 @@
 
 mod common;
 mod errors;
+mod kv;
 mod migrations;
 
 use libchat::{ConversationKind, ConversationMeta, ConversationStore, StorageError};
