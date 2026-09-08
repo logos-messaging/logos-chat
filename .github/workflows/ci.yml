@@ -25,6 +25,10 @@ jobs:
       # exercises them under Nix; here we keep the toolchain-only job fast by
       # skipping them.
       - run: cargo build --verbose --workspace --exclude chat-cli --exclude embedded-logos-delivery
+      # integration_tests_core turns libchat's test-support feature on as a normal
+      # dependency, so every step above compiles libchat with it. Nothing outside this
+      # workspace does, so compile that shape too.
+      - run: cargo check --verbose --workspace --exclude chat-cli --exclude embedded-logos-delivery --exclude integration_tests_core
       - run: cargo test --verbose --workspace --exclude chat-cli --exclude embedded-logos-delivery
 
   clippy:

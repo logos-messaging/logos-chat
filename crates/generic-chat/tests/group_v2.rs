@@ -6,9 +6,9 @@
 
 use std::time::Duration;
 
+use chat_sqlite::SqliteStore;
 use components::EphemeralRegistry;
 use crossbeam_channel::Receiver;
-use libchat::SqliteStore;
 use logos_account::TestLogosAccount;
 use logos_generic_chat::{
     ChatClient, ChatClientBuilder, ConversationClass, DelegateSigner, Event, GroupMetadata,

@@ -4,8 +4,8 @@ mod common;
 mod errors;
 mod migrations;
 
+use libchat::{ConversationKind, ConversationMeta, ConversationStore, StorageError};
 use rusqlite::params;
-use storage::{ConversationKind, ConversationMeta, ConversationStore, StorageError};
 
 use crate::{
     common::SqliteDb,
@@ -131,7 +131,7 @@ impl ConversationStore for SqliteStore {
 
 #[cfg(test)]
 mod tests {
-    use storage::{ConversationKind, ConversationMeta, ConversationStore};
+    use libchat::{ConversationKind, ConversationMeta, ConversationStore};
 
     use super::*;
 

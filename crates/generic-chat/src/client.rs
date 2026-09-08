@@ -6,13 +6,12 @@ use components::{ThreadedWakeupService, WakeupEvent};
 use crossbeam_channel::{Receiver, Sender, select};
 use crypto::Ed25519VerifyingKey;
 use libchat::{
-    ConversationId, ConvoMetadata, ConvoOutcome, Core, DeliveryAck, DeliveryService, GroupV2Config,
-    IdentId, IdentIdRef, InboxOutcome, MessageId, MissingMessage, PayloadOutcome,
-    RegistrationService,
+    ConversationId, ConversationStore, ConvoMetadata, ConvoOutcome, Core, DeliveryAck,
+    DeliveryService, GroupV2Config, IdentId, IdentIdRef, InboxOutcome, MessageId, MissingMessage,
+    PayloadOutcome, RegistrationService,
 };
 use logos_account::{AccountDirectory, resolve_device_ids};
 use parking_lot::Mutex;
-use storage::ConversationStore;
 
 use crate::delegate::{DelegateCredential, DelegateIdentity, DelegateSigner};
 use crate::errors::ClientError;

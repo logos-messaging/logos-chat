@@ -1,4 +1,5 @@
 use crate::test_ident::TestIdent;
+use libchat::test_support::MemStore;
 use libchat::{ConversationId, Core, IdentityProvider, PayloadOutcome};
 use libchat::{GroupV2Clock, GroupV2Config};
 use shared_traits::IdentId;
@@ -8,7 +9,7 @@ use std::ops::{Deref, DerefMut};
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
-use components::{EphemeralRegistry, LocalBroadcaster, MemStore};
+use components::{EphemeralRegistry, LocalBroadcaster};
 
 use crate::wakeup::{TestWakeupProvider, TestWakeupService, WakeupRecord};
 

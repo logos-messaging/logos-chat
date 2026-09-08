@@ -12,6 +12,5 @@ crate-type = ["rlib"]
 components = { workspace = true }
 crossbeam-channel = { workspace = true }
 embedded-logos-delivery = { workspace = true }
-libchat = { workspace = true }
 logos-account = { workspace = true, features = ["dev"] }
 logos-generic-chat = { workspace = true }

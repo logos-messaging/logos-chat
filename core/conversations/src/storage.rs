@@ -1,4 +1,26 @@
-use crate::StorageError;
+//! The contract a store answers: the conversations the client holds, as typed records a store
+//! keeps however it likes.
+
+use thiserror::Error;
+
+#[cfg(any(test, feature = "test-support"))]
+mod in_memory_store;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use in_memory_store::MemStore;
+
+/// Common storage errors.
+#[derive(Debug, Error)]
+pub enum StorageError {
+    #[error("database error: {0}")]
+    Database(String),
+
+    #[error("not found: {0}")]
+    NotFound(String),
+
+    #[error("invalid data: {0}")]
+    InvalidData(String),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConversationKind {

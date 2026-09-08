@@ -1,5 +1,5 @@
+use libchat::StorageError;
 use rusqlite::Error as RusqliteError;
-use storage::StorageError;
 
 pub(crate) fn map_rusqlite_error(err: RusqliteError) -> StorageError {
     StorageError::Database(err.to_string())

@@ -7,12 +7,13 @@ mod outcomes;
 mod proto;
 mod service_context;
 mod service_traits;
+mod storage;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 mod types;
 mod utils;
 
 pub use causal_history::{DeliveryAck, Frontier, MissingMessage};
-pub use chat_sqlite::SqliteStore;
-pub use chat_sqlite::StorageConfig;
 pub use conversation::{GroupV2Clock, MessageId};
 pub use core::{ConversationId, Core};
 /// Timing/policy for GroupV2 conversations (de-mls's per-conversation config).
@@ -30,6 +31,6 @@ pub use outcomes::{
 pub use service_context::ExternalServices;
 pub use service_traits::{DeliveryService, RegistrationService, WakeupService};
 pub use shared_traits::{IdentId, IdentIdRef, IdentityProvider};
-pub use storage::{ConversationKind, ConversationStore};
+pub use storage::{ConversationKind, ConversationMeta, ConversationStore, StorageError};
 pub use types::{AddressedEnvelope, ConvoMetadata};
 pub use utils::{hex_trunc, trunc};

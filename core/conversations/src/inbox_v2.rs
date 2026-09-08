@@ -1,12 +1,12 @@
 mod identity;
 mod mls_provider;
 
+use crate::storage::{ConversationKind, ConversationMeta, ConversationStore};
 use chat_proto::logoschat::envelope::EnvelopeV1;
 use de_mls::protos::de_mls::messages::v1::MemberWelcome;
 use openmls::prelude::tls_codec::Serialize;
 use openmls::prelude::*;
 use prost::{Message, Oneof};
-use storage::{ConversationKind, ConversationMeta, ConversationStore};
 use tracing::info;
 use tracing::instrument;
 
