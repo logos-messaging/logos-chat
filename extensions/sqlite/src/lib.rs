@@ -5,7 +5,7 @@ mod errors;
 mod kv;
 mod migrations;
 
-use libchat::{ConversationKind, ConversationMeta, ConversationStore, StorageError};
+use libchat::{ConversationMeta, ConversationStore, StorageError};
 use rusqlite::params;
 
 use crate::{
@@ -48,7 +48,7 @@ impl ConversationStore for SqliteStore {
             .connection()
             .execute(
                 "INSERT OR REPLACE INTO conversations (local_convo_id, convo_type) VALUES (?1, ?2)",
-                params![meta.local_convo_id, meta.kind.as_str()],
+                params![meta.local_convo_id, meta.convo_type],
             )
             .map_err(map_rusqlite_error)?;
         Ok(())
@@ -72,7 +72,7 @@ impl ConversationStore for SqliteStore {
             let convo_type: String = row.get(1)?;
             Ok(ConversationMeta {
                 local_convo_id,
-                kind: ConversationKind::from(convo_type.as_str()),
+                convo_type,
             })
         });
 
@@ -105,7 +105,7 @@ impl ConversationStore for SqliteStore {
                 let convo_type: String = row.get(1)?;
                 Ok(ConversationMeta {
                     local_convo_id,
-                    kind: ConversationKind::from(convo_type.as_str()),
+                    convo_type,
                 })
             })
             .map_err(map_rusqlite_error)?
@@ -132,7 +132,7 @@ impl ConversationStore for SqliteStore {
 
 #[cfg(test)]
 mod tests {
-    use libchat::{ConversationKind, ConversationMeta, ConversationStore};
+    use libchat::{ConversationMeta, ConversationStore};
 
     use super::*;
 
@@ -148,13 +148,13 @@ mod tests {
         storage
             .save_conversation(&ConversationMeta {
                 local_convo_id: "local_1".into(),
-                kind: ConversationKind::GroupV1,
+                convo_type: "group_v1".into(),
             })
             .unwrap();
         storage
             .save_conversation(&ConversationMeta {
                 local_convo_id: "local_2".into(),
-                kind: ConversationKind::GroupV1,
+                convo_type: "group_v1".into(),
             })
             .unwrap();
 
@@ -166,6 +166,6 @@ mod tests {
         let convos = storage.load_conversations().unwrap();
         assert_eq!(convos.len(), 1);
         assert_eq!(convos[0].local_convo_id, "local_2");
-        assert_eq!(convos[0].kind.as_str(), "group_v1");
+        assert_eq!(convos[0].convo_type, "group_v1");
     }
 }

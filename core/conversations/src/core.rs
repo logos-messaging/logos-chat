@@ -2,8 +2,9 @@ use crate::causal_history::{CausalHistoryStore, DeliveryAck, MissingMessage};
 use crate::conversation::{
     ConversationIdRef, DirectV1Convo, GroupV1Convo, GroupV2Convo, Identified, MessageId,
 };
+use crate::protocol::Protocol;
 use crate::service_context::{ExternalServices, ServiceContext};
-use crate::storage::{ConversationKind, ConversationMeta, ConversationStore};
+use crate::storage::{ConversationMeta, ConversationStore};
 use crate::types::ConvoMetadata;
 use crate::{
     DeliveryService, GroupV2Clock, GroupV2Config, IdentityProvider, RegistrationService,
@@ -187,10 +188,9 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         // desynchronized state: MlsGroup persistence, conversation persistence, and
         // invite delivery all happen separately.
         let mut convo = GroupV1Convo::new(&mut self.services)?;
-        self.services.store.save_conversation(&ConversationMeta {
-            local_convo_id: convo.id().to_string(),
-            kind: ConversationKind::GroupV1,
-        })?;
+        self.services
+            .store
+            .save_conversation(&Protocol::GroupV1.record(convo.id()))?;
         convo.add_member(&mut self.services, participants)?;
         let convo_id = convo.id().to_string();
 
@@ -400,15 +400,13 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         }
     }
 
-    /// Rebuilds a conversation from storage — the one site that branches on
-    /// `ConversationKind`.
+    /// Rebuilds a conversation from storage, the one site that branches on the protocol its
+    /// record names.
     fn load_convo(&mut self, convo_id: &str) -> Result<Box<dyn Convo<S>>, ChatError> {
         let record = self.load_conversation_meta(convo_id)?;
-        Ok(match record.kind {
-            ConversationKind::GroupV1 => Box::new(self.load_mls_convo(&record.local_convo_id)?),
-            ConversationKind::Unknown(_) => {
-                return Err(ChatError::UnsupportedConvoType(record.kind.as_str().into()));
-            }
+        Ok(match Protocol::from_name(&record.convo_type)? {
+            Protocol::GroupV1 => Box::new(self.load_mls_convo(&record.local_convo_id)?),
+            other => return Err(ChatError::UnsupportedConvoType(other.name().into())),
         })
     }
 

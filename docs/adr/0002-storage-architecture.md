@@ -83,17 +83,17 @@ flowchart TB
     }
     ```
 
-2. **A namespace is the protocol that owns the state, as a closed enum the conversation layer declares:** `Protocol::{GroupV1, DirectV1, GroupV2, InboxV2}`, gaining a variant when a protocol ships; the substrate stores it as an opaque `Namespace` name and never enumerates it. Uniqueness becomes a property of the type rather than a convention, protocol names already carry their version, and retiring one is `delete_namespace`.
+2. **A namespace is the protocol that owns the state, as a closed enum the conversation layer declares:** `Protocol::{GroupV1, DirectV1, GroupV2, InboxV2}`, gaining a variant when a protocol ships; the substrate stores it as an opaque `Namespace` name and never enumerates it. Uniqueness becomes a property of the type rather than a convention, protocol names already carry their version, and retiring one is `delete_namespace`. A conversation's record in `ConversationStore` names that protocol: the list maps a conversation id to the name of the protocol whose scope holds its state, kept by the store as the string it is given, so one string both files the state and names the type that rebuilds it, and the closed set stays out of the contract.
 
 3. **A conversation addresses storage through a `ScopedKvStore` handed to it, never through the substrate.** A `ScopedKvStore` is the key verbs with one scope already bound (`tx.scope(ns, instance)` builds it), so a type composes whatever key layout it wants inside its scope and can name neither another protocol's state nor a sibling conversation's. Scopes are per operation: the entry point opens the transaction, the scope over it is built wherever the conversation's identity is already known, and a conversation receives a fresh one per call, so a write outside the open unit is unrepresentable. `ServiceContext` does not carry the substrate; cross-type needs are met by services, never by another protocol's scope.
 
     ```rust
-    // core.rs, the one site that branches on the stored kind
+    // core.rs, the one site that branches on the protocol a record names
     let id = &record.local_convo_id;
-    let convo: Box<dyn Convo<S>> = match record.kind {
-        ConversationKind::GroupV1 => Box::new(GroupV1Convo::load(cx, tx.scope(Protocol::GroupV1, id))?),
-        ConversationKind::GroupV2 => Box::new(GroupV2Convo::load(cx, tx.scope(Protocol::GroupV2, id))?),
-        ConversationKind::Unknown(kind) => return Err(ChatError::UnsupportedConvoType(kind)),
+    let convo: Box<dyn Convo<S>> = match Protocol::from_name(&record.convo_type)? {
+        Protocol::GroupV1 => Box::new(GroupV1Convo::load(cx, tx.scope(Protocol::GroupV1, id))?),
+        Protocol::GroupV2 => Box::new(GroupV2Convo::load(cx, tx.scope(Protocol::GroupV2, id))?),
+        other => return Err(ChatError::UnsupportedConvoType(other.name().into())),
     };
 
     // conversation/group_v1.rs, the type shapes every key inside its own scope

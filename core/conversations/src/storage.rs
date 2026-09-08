@@ -85,34 +85,12 @@ pub trait KvTx {
     fn commit(self: Box<Self>) -> Result<(), StorageError>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConversationKind {
-    Unknown(String),
-    GroupV1,
-}
-
-impl ConversationKind {
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::Unknown(value) => value.as_str(),
-            Self::GroupV1 => "group_v1",
-        }
-    }
-}
-
-impl From<&str> for ConversationKind {
-    fn from(value: &str) -> Self {
-        match value {
-            "group_v1" => Self::GroupV1,
-            other => Self::Unknown(other.to_string()),
-        }
-    }
-}
-
+/// A conversation the client holds, and the name of the protocol whose state it is. A store keeps
+/// the name as it is given; the conversation layer alone reads it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConversationMeta {
     pub local_convo_id: String,
-    pub kind: ConversationKind,
+    pub convo_type: String,
 }
 
 pub trait ConversationStore {

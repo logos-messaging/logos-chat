@@ -45,7 +45,7 @@ Crates: **app** — `bin/chat-cli`, future `logos-chat-module`; **client** — `
 
 3. **Two enums, mapping at the client boundary.** `PayloadOutcome` is the dispatcher-level sum of observations from one payload; `Event` is a discrete app-facing notification. The two enums are allowed to diverge: a protocol-internal observation the app does not need lives only on a core outcome type; a client-only event like `DeliveryFailed { Timeout }` lives only on `Event`. Translation is an explicit per-variant `match` inside the client — not a blanket `From` impl — to preserve that divergence as both sides grow.
 
-4. **`ConversationClass` is a core boundary type, not a client-only one.** The protocol-versioned `ConversationKind` (`GroupV1`, …) is a storage concern; clients only need the coarse class (`Private`, `Group`). The kind→class mapping happens in core where `NewConversation` is constructed, so adding a new `ConversationKind` is a one-line change in core's mapping site rather than a ripple into every client. The client re-exports `ConversationClass` for consumers, but the canonical definition lives in core alongside the outcome types.
+4. **`ConversationClass` is a core boundary type, not a client-only one.** The versioned protocol a record names (`Protocol::GroupV1`, …) is a storage concern; clients only need the coarse class (`Private`, `Group`). The protocol→class mapping happens in core where `NewConversation` is constructed, so adding a protocol is a one-line change in core's mapping site rather than a ripple into every client. The client re-exports `ConversationClass` for consumers, but the canonical definition lives in core alongside the outcome types.
 
 ## Events vs errors
 
