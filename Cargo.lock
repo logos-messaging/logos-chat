@@ -1424,8 +1424,8 @@ dependencies = [
 name = "chat-sqlite"
 version = "0.1.0"
 dependencies = [
+ "libchat",
  "rusqlite",
- "storage",
  "tempfile",
 ]
 
@@ -1554,7 +1554,6 @@ dependencies = [
  "prost",
  "reqwest 0.12.28",
  "serde",
- "storage",
  "thiserror",
  "tracing",
 ]
@@ -3127,7 +3126,6 @@ dependencies = [
  "crypto",
  "libchat",
  "shared-traits",
- "storage",
  "tempfile",
  "tracing",
  "tracing-subscriber",
@@ -3324,8 +3322,6 @@ dependencies = [
  "base64",
  "blake2",
  "chat-proto",
- "chat-sqlite",
- "components",
  "crypto",
  "de-mls",
  "hashgraph-like-consensus",
@@ -3339,7 +3335,6 @@ dependencies = [
  "rand_core 0.6.4",
  "serde",
  "shared-traits",
- "storage",
  "tempfile",
  "thiserror",
  "tracing",
@@ -3683,7 +3678,6 @@ dependencies = [
  "components",
  "crossbeam-channel",
  "embedded-logos-delivery",
- "libchat",
  "logos-account",
  "logos-generic-chat",
 ]
@@ -3713,7 +3707,6 @@ dependencies = [
  "logos-account",
  "parking_lot",
  "shared-traits",
- "storage",
  "tempfile",
  "thiserror",
  "tracing",
@@ -5645,13 +5638,6 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
-
-[[package]]
-name = "storage"
-version = "0.1.0"
-dependencies = [
- "thiserror",
-]
 
 [[package]]
 name = "strsim"

@@ -1,6 +1,6 @@
 //! Bundles the services a conversation operation needs into one [`ServiceContext`].
 
-use storage::ConversationStore;
+use crate::storage::ConversationStore;
 
 use crate::IdentityProvider;
 use crate::causal_history::CausalHistoryStore;

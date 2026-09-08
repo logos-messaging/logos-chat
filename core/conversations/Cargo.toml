@@ -7,13 +7,15 @@ license.workspace = true
 [lib]
 crate-type = ["rlib"]
 
+[features]
+# The in-memory store, for crates that test against one.
+test-support = []
+
 [dependencies]
 # Workspace dependencies (sorted)
 blake2 = { workspace = true }
-chat-sqlite = { workspace = true }
 crypto = { workspace = true }
 shared-traits = { workspace = true }
-storage = { workspace = true }
 
 # External dependencies (sorted)
 alloy = "2.0"
@@ -39,8 +41,5 @@ x25519-dalek = { version = "2.0.1", features = [
 ] }
 
 [dev-dependencies]
-# Workspace dependencies (sorted)
-components = { workspace = true }
-
 # External dependencies (sorted)
 tempfile = "3"

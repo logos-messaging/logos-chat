@@ -18,11 +18,11 @@
 use components::{ContactRegistry, RegistryPublishMode};
 use crossbeam_channel::Receiver;
 use embedded_logos_delivery::{EmbeddedLogosDelivery, P2pConfig};
-use libchat::{SqliteStore, StorageConfig};
 use logos_account::TestLogosAccount;
 
 use logos_generic_chat::{
-    ChatClient, ChatClientBuilder, ClientError, DelegateSigner, Event, GroupV2Config, Transport,
+    ChatClient, ChatClientBuilder, ClientError, DelegateSigner, Event, GroupV2Config, SqliteStore,
+    StorageConfig, Transport,
 };
 
 /// The endpoint for the account and keypackage registration service.
