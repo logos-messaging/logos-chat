@@ -20,11 +20,11 @@ Issue #112 is the trigger: MLS group state lives in an in-memory `MemoryStorage`
 
 ## Architecture
 
-The app injects one store carrying two independent contracts: a typed `ConversationStore` for the core's conversation list and a `NamespacedKvStore` substrate for everything a conversation type owns. Local identity storage is outside this ADR.
+The app injects one store carrying two independent contracts: a typed `ConversationStore` for the core's conversation list and a `KvStore` substrate for everything a conversation type owns. Local identity storage is outside this ADR.
 
 `ConversationStore` is the one typed contract: the core's list of its conversations, each filed under the protocol that rebuilds it. It is typed, not a schema mandate, so a store may back it with rows or with its own key-value layout.
 
-Everything above the substrate is libchat's. A conversation gets a `KvStore`, the substrate's verbs with its own scope already bound; a type keeps its typed accessors and its adapters for foreign storage traits in one module, the typed layer in the diagram. The list is to the core what that layer is to a conversation type; the difference is that the store implements one and libchat the other.
+Everything above the substrate is libchat's. A conversation gets a `ScopedKvStore`, the substrate's verbs with its own scope already bound; a type keeps its typed accessors and its adapters for foreign storage traits in one module, the typed layer in the diagram. The list is to the core what that layer is to a conversation type; the difference is that the store implements one and libchat the other.
 
 ```mermaid
 flowchart TB
@@ -34,12 +34,12 @@ flowchart TB
     Types["<b>conversation types</b><br/>GroupV1 · DirectV1 · GroupV2 · InboxV2"]
 
     subgraph Typed["typed layer"]
-        KV["<b>KvStore</b><br/>(key, value)"]
+        KV["<b>ScopedKvStore</b><br/>(key, value)"]
     end
 
     subgraph Store["injected store: two independent contracts"]
         CS["<b>ConversationStore</b><br/>the conversation list, typed"]
-        NKV["<b>NamespacedKvStore</b><br/>(scope, key, value)"]
+        NKV["<b>KvStore</b><br/>(scope, key, value)"]
     end
 
     App --> Client
@@ -52,47 +52,47 @@ flowchart TB
 
 ## Decisions
 
-1. **The injected substrate addresses bytes by scope, singly or in a transaction.** A scope is the protocol that owns the state plus the conversation it belongs to, when it belongs to one, and `NamespacedKvStore` takes it on every call. Bare verbs are autocommit singles; `begin()` opens a transaction carrying the same verbs for anything larger. The stock store implements it as `CREATE TABLE kv (ns TEXT, instance BLOB, key BLOB, value BLOB, PRIMARY KEY (ns, instance, key))` beside whatever it uses for `ConversationStore`, protocol-level state taking the empty instance; the in-memory store is a map per scope. Neither contract knows about the other, so a store can implement one and reuse a stock implementation of the other.
+1. **The injected substrate addresses bytes by scope, inside a transaction.** A scope is the namespace of the owner plus the instance the value belongs to, a conversation for a conversation protocol, and every verb takes it. `begin()` opens the transaction the verbs live in, one at a time; `commit` lands it and a drop discards it. The stock store implements it as `CREATE TABLE kv (ns TEXT, instance TEXT, key BLOB, value BLOB, PRIMARY KEY (ns, instance, key))` beside whatever it uses for `ConversationStore`; the in-memory store is a map per scope. Neither contract knows about the other, so a store can implement one and reuse a stock implementation of the other.
 
     ```rust
-    /// Where a value lives: the owning protocol, and the conversation when the state belongs to one.
-    struct Scope { ns: Namespace, instance: Option<ConvoId> }
+    /// Where a value lives: the namespace of its owner, and the instance of that owner the value belongs to.
+    struct Scope<'a> { ns: Namespace, instance: &'a str }
 
-    /// `&self` throughout because OpenMLS requires it; implementations may use interior mutability.
-    trait NamespacedKvStore {
-        type Error: std::error::Error;
-
-        fn get(&self, scope: &Scope, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error>;
-        fn put(&self, scope: &Scope, key: &[u8], value: &[u8]) -> Result<(), Self::Error>;
-        fn delete(&self, scope: &Scope, key: &[u8]) -> Result<(), Self::Error>;
-        fn scan_prefix(&self, scope: &Scope, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, Self::Error>;
-
-        fn delete_prefix(&self, scope: &Scope, prefix: &[u8]) -> Result<(), Self::Error>;
-
-        /// Empties one scope, which is how a conversation is removed.
-        fn delete_scope(&self, scope: &Scope) -> Result<(), Self::Error>;
-
-        /// Drops every scope under a protocol, its conversations included.
-        fn delete_namespace(&self, ns: Namespace) -> Result<(), Self::Error>;
-
-        /// One atomic unit: `commit` lands everything, drop without commit rolls back.
-        fn begin(&self) -> Result<Box<dyn KvTx<Error = Self::Error> + '_>, Self::Error>;
+    trait KvStore {
+        /// Opens a transaction; a second one while it is open is an error.
+        fn begin(&self) -> Result<Box<dyn KvTx + '_>, StorageError>;
     }
 
-    /// The same verbs, plus `fn commit(self: Box<Self>)`; reads inside see the unit's own writes.
-    trait KvTx { /* ... */ }
+    /// The verbs take `&self`: several scopes over one transaction are alive at once, and OpenMLS
+    /// writes through `&self`, so a store mutates through interior mutability.
+    trait KvTx {
+        fn get(&self, scope: &Scope, key: &[u8]) -> Result<Option<Vec<u8>>, StorageError>;
+        fn put(&self, scope: &Scope, key: &[u8], value: &[u8]) -> Result<(), StorageError>;
+        fn delete(&self, scope: &Scope, key: &[u8]) -> Result<(), StorageError>;
+        fn scan_prefix(&self, scope: &Scope, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, StorageError>;
+        fn delete_prefix(&self, scope: &Scope, prefix: &[u8]) -> Result<(), StorageError>;
+
+        /// Empties one scope, which is how a conversation is removed.
+        fn delete_scope(&self, scope: &Scope) -> Result<(), StorageError>;
+
+        /// Drops every scope under a namespace, its conversations included.
+        fn delete_namespace(&self, ns: Namespace) -> Result<(), StorageError>;
+
+        /// Lands the transaction; reads inside see its own writes, and a drop without commit discards them.
+        fn commit(self: Box<Self>) -> Result<(), StorageError>;
+    }
     ```
 
-2. **A namespace is the protocol that owns the state, as a closed enum:** `Namespace::{GroupV1, DirectV1, GroupV2, InboxV2}`, gaining a variant when a protocol ships. Uniqueness becomes a property of the type rather than a convention, protocol names already carry their version, and retiring one is `delete_namespace`.
+2. **A namespace is the protocol that owns the state, as a closed enum the conversation layer declares:** `Protocol::{GroupV1, DirectV1, GroupV2, InboxV2}`, gaining a variant when a protocol ships; the substrate stores it as an opaque `Namespace` name and never enumerates it. Uniqueness becomes a property of the type rather than a convention, protocol names already carry their version, and retiring one is `delete_namespace`.
 
-3. **A conversation addresses storage through a `KvStore` handed to it, never through the substrate.** A `KvStore` is the key verbs with one scope already bound (`tx.scope(ns, instance)` builds it), so a type composes whatever key layout it wants inside its scope and can name neither another protocol's state nor a sibling conversation's. Scopes are per operation: the entry point opens the transaction, the scope over it is built wherever the conversation's identity is already known, and a conversation receives a fresh one per call, so a write outside the open unit is unrepresentable. `ServiceContext` does not carry the substrate; cross-type needs are met by services, never by another protocol's scope.
+3. **A conversation addresses storage through a `ScopedKvStore` handed to it, never through the substrate.** A `ScopedKvStore` is the key verbs with one scope already bound (`tx.scope(ns, instance)` builds it), so a type composes whatever key layout it wants inside its scope and can name neither another protocol's state nor a sibling conversation's. Scopes are per operation: the entry point opens the transaction, the scope over it is built wherever the conversation's identity is already known, and a conversation receives a fresh one per call, so a write outside the open unit is unrepresentable. `ServiceContext` does not carry the substrate; cross-type needs are met by services, never by another protocol's scope.
 
     ```rust
     // core.rs, the one site that branches on the stored kind
     let id = &record.local_convo_id;
     let convo: Box<dyn Convo<S>> = match record.kind {
-        ConversationKind::GroupV1 => Box::new(GroupV1Convo::load(cx, tx.scope(Namespace::GroupV1, id))?),
-        ConversationKind::GroupV2 => Box::new(GroupV2Convo::load(cx, tx.scope(Namespace::GroupV2, id))?),
+        ConversationKind::GroupV1 => Box::new(GroupV1Convo::load(cx, tx.scope(Protocol::GroupV1, id))?),
+        ConversationKind::GroupV2 => Box::new(GroupV2Convo::load(cx, tx.scope(Protocol::GroupV2, id))?),
         ConversationKind::Unknown(kind) => return Err(ChatError::UnsupportedConvoType(kind)),
     };
 
@@ -106,23 +106,23 @@ flowchart TB
 
     The instance is the conversation id, which is also the MLS group id, so a conversation keeps the single identity it already carries on the wire rather than gaining a second one for storage. What the scope asks in return is that the id exist before the type's first write: a creator picks the group id instead of letting the library generate one, and a joiner takes it from the decrypted welcome before the group is persisted. Loading is the simple direction, where the core builds the scope from the stored record; creating is where the type binds its own, since only it can produce the id.
 
-4. **Code shared between types is written once and constructed with the owner's scope.** A component several types reuse takes its `KvStore` at construction, so one implementation lands state in whichever scope owns the conversation. The MLS `StorageProvider` adapter is today's case: GroupV1 and GroupV2 groups get identical key shapes from the same code and still land in separate scopes. The conversation is the scope, so it is one handle to load through and one call to purge.
+4. **Code shared between types is written once and constructed with the owner's scope.** A component several types reuse takes its `ScopedKvStore` at construction, so one implementation lands state in whichever scope owns the conversation. The MLS `StorageProvider` adapter is today's case: GroupV1 and GroupV2 groups get identical key shapes from the same code and still land in separate scopes. The conversation is the scope, so it is one handle to load through and one call to purge.
 
     ```
     (GroupV1, <convo_id>)   mls/tree, mls/context, mls/epoch/<epoch>/<leaf>/enc_keys
     (GroupV2, <convo_id>)   mls/...                 same shapes, same code, separate scope
                             config, peer_scores/<ident>
-    (InboxV2, no instance)  key_package/<hash_ref>  minted once, consumed on Welcome
+    (InboxV2, <signer id>)  key_package/<hash_ref>  minted once, consumed on Welcome
     ```
 
-    A cross-type entry stays single-copy with the type that mints it, offered to the rest as a service, never as a scope. Today that is the key package: InboxV2 mints it, a Welcome for a group of any type consumes it unless it is last resort, and `cx.key_packages()` is that service, implemented over InboxV2's protocol-level scope, where state a protocol owns outside any conversation lives.
+    A cross-type entry stays single-copy with the type that mints it, offered to the rest as a service, never as a scope. Today that is the key package: InboxV2 mints it, a Welcome for a group of any type consumes it unless it is last resort, and `cx.key_packages()` is that service, implemented over InboxV2's protocol-level scope, where state a protocol owns outside any conversation lives, instanced by the signer the inbox serves.
 
     An adapter for a foreign trait that spans both takes each destination at construction and routes per method, not per instance:
 
     ```rust
     struct MlsAdapter<'a, K> {
-        convo: Option<KvStore<'a>>, // this conversation's scope; none until one exists
-        key_packages: &'a K,        // InboxV2's protocol-level scope, shared by every protocol
+        convo: Option<ScopedKvStore<'a>>, // this conversation's scope; none until one exists
+        key_packages: &'a K,        // the scope InboxV2 binds, shared by every protocol
     }
     ```
 
@@ -151,7 +151,7 @@ flowchart TB
     let processed = ProcessedWelcome::new_from_welcome(
         &MlsAdapter::for_welcome(cx.key_packages()), &Self::mls_join_config(), welcome)?;
     let convo_id = hex::encode(processed.unverified_group_info().group_id().as_slice());
-    let mls = MlsAdapter::new(tx.scope(Namespace::GroupV1, &convo_id), cx.key_packages());
+    let mls = MlsAdapter::new(tx.scope(Protocol::GroupV1, &convo_id), cx.key_packages());
     // staging checks that scope for an existing group; into_group writes mls/tree, context, epoch keys into it
     let mls_group = processed.into_staged_welcome(&mls, None)?.into_group(&mls)?;
     ```
