@@ -11,7 +11,7 @@ mod types;
 mod utils;
 
 pub use causal_history::{DeliveryAck, Frontier, MissingMessage};
-pub use chat_sqlite::ChatStorage;
+pub use chat_sqlite::SqliteStore;
 pub use chat_sqlite::StorageConfig;
 pub use conversation::{GroupV2Clock, MessageId};
 pub use core::{ConversationId, Core};
