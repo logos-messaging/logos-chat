@@ -18,7 +18,7 @@
 use components::{ContactRegistry, RegistryPublishMode};
 use crossbeam_channel::Receiver;
 use embedded_logos_delivery::{EmbeddedLogosDelivery, P2pConfig};
-use libchat::{ChatStorage, StorageConfig};
+use libchat::{SqliteStore, StorageConfig};
 use logos_account::TestLogosAccount;
 
 use logos_generic_chat::{
@@ -127,7 +127,7 @@ pub fn open_with_transport<T: Transport + Clone>(
     transport: T,
 ) -> Result<
     (
-        ChatClient<T, ContactRegistry<T>, ChatStorage>,
+        ChatClient<T, ContactRegistry<T>, SqliteStore>,
         Receiver<Event>,
     ),
     ClientError,
@@ -165,8 +165,8 @@ pub fn open_with_transport<T: Transport + Clone>(
 /// account registry ([`ContactRegistry`], which is both the keypackage store
 /// and the account → device directory; it queries over HTTP and submits over
 /// HTTP or the delivery network per [`LogosConfig::set_registry_publish_mode`]),
-/// and encrypted [`ChatStorage`] — running an embedded logos-delivery node as
+/// and encrypted [`SqliteStore`] — running an embedded logos-delivery node as
 /// its transport. Open one with [`open`], or swap the transport via
 /// [`open_with_transport`].
 pub type LogosChatClient =
-    ChatClient<EmbeddedLogosDelivery, ContactRegistry<EmbeddedLogosDelivery>, ChatStorage>;
+    ChatClient<EmbeddedLogosDelivery, ContactRegistry<EmbeddedLogosDelivery>, SqliteStore>;
