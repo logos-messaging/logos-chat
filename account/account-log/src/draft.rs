@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::EntryData;
 use crate::account_log::{AccountEntry, AccountLog, IndexedAccountEntry};
 use crate::context::Context;
@@ -79,8 +81,10 @@ impl AccountLogDraft {
 
         let mut entries = self.0.entries().to_vec();
         entries.push(entry);
+        let log = AccountLog::from_entries(entries)?;
+        ensure_single_use_keys(&log)?;
         // Assigned only on success, so a rejected push needs no undo.
-        self.0 = AccountLog::from_entries(entries)?;
+        self.0 = log;
         Ok(())
     }
 
@@ -93,6 +97,30 @@ impl AccountLogDraft {
     pub fn into_log(self) -> AccountLog {
         self.0
     }
+}
+
+/// No Ed25519 key is live under more than one entry.
+///
+/// This is an opinion that this library holds for accountlogs it generates: a log endorsing one key twice is valid
+/// and must be accepted on the way in.
+fn ensure_single_use_keys(log: &AccountLog) -> Result<(), AccountLogError> {
+    let mut seen = HashSet::new();
+    for val in log.live_indexed() {
+        let AccountEntry::Add {
+            data: EntryData::Ed25519Key(key),
+            ..
+        } = val.entry
+        else {
+            continue;
+        };
+        if !seen.insert(key) {
+            return Err(AccountLogError::Malformed(format!(
+                "key at position {} is live more than once",
+                val.index
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -141,6 +169,33 @@ mod tests {
 
         assert_eq!(draft.entries().len(), 1);
         assert_eq!(*draft.log(), before);
+    }
+
+    #[test]
+    fn a_key_cannot_be_endorsed_while_already_live() {
+        let bytes = Ed25519SigningKey::generate()
+            .verifying_key()
+            .as_ref()
+            .try_into()
+            .expect("32 bytes");
+        let mut draft = AccountLogDraft::new();
+        draft
+            .add(SIGNER_CONTEXT.clone(), EntryData::Ed25519Key(bytes))
+            .unwrap();
+
+        assert!(matches!(
+            draft.add(
+                Context::new("storage.vault").unwrap(),
+                EntryData::Ed25519Key(bytes),
+            ),
+            Err(AccountLogError::Malformed(m)) if m.contains("live more than once")
+        ));
+
+        draft.revoke(0).unwrap();
+        draft
+            .add(SIGNER_CONTEXT.clone(), EntryData::Ed25519Key(bytes))
+            .unwrap();
+        assert_eq!(draft.live_entries().len(), 1);
     }
 
     /// A log carrying an entry this build cannot read may be held and read,
