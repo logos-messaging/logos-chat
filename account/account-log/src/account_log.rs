@@ -19,14 +19,11 @@
 //! - A `Remove` tombstones a strictly earlier, still-live entry that is not
 //!   itself a `Remove`; anything else rejects the whole log
 //!   ([`AccountLog::from_entries`]).
-//! - No Ed25519 key is live twice, whatever contexts the occurrences carry.
 //!
 //! The entries still live ([`AccountLog::live_entries`]) are the account's
 //! current state. Every endorsement is selected by context
 //! ([`AccountLog::keys_for`]):
 //! there is deliberately no way to ask for every live key at once.
-
-use std::collections::HashSet;
 
 use crate::AccountAddr;
 use crate::context::Context;
@@ -118,7 +115,6 @@ impl AccountLog {
     /// Create a AccountLog from a list of entries. Returns an error if the created log would be invalid.
     pub(crate) fn from_entries(entries: Vec<AccountEntry>) -> Result<Self, AccountLogError> {
         let live = valid_live_entries(&entries)?;
-        ensure_single_use_keys(&live)?;
         ensure_valid_types(&live)?;
         Ok(Self { entries })
     }
@@ -296,26 +292,6 @@ fn valid_live_entries(
     Ok(entries)
 }
 
-/// Every live  key appears only once.
-fn ensure_single_use_keys(entries: &[IndexedAccountEntry]) -> Result<(), AccountLogError> {
-    let mut seen = HashSet::<&EntryData>::new();
-    for val in entries {
-        let AccountEntry::Add { data, .. } = val.entry else {
-            continue;
-        };
-
-        // Text Entries are not required to be unique across contexts
-        if matches!(data, EntryData::Text(_)) {
-            continue;
-        }
-
-        if !seen.insert(data) {
-            return Err(malformed(val.index, "is live more than once"));
-        }
-    }
-    Ok(())
-}
-
 /// Ensure typed variants are valid.
 fn ensure_valid_types(entries: &[IndexedAccountEntry]) -> Result<(), AccountLogError> {
     for val in entries {
@@ -333,10 +309,6 @@ fn ensure_valid_types(entries: &[IndexedAccountEntry]) -> Result<(), AccountLogE
     }
 
     Ok(())
-}
-
-fn malformed(position: u32, detail: &str) -> AccountLogError {
-    AccountLogError::Malformed(format!("key at position {position} {detail}"))
 }
 
 /// How a log compares to another
@@ -513,10 +485,11 @@ mod tests {
         }
     }
 
-    /// One key live twice rejects the log, whatever contexts it carries —
-    /// but re-adding it after a remove is fine.
+    /// A key live twice is a valid log a consumer must accept, under one
+    /// context or two. Declining to author one is an owner's call, made in
+    /// [`AccountLogDraft`](crate::AccountLogDraft).
     #[test]
-    fn new_rejects_a_key_live_twice() {
+    fn new_accepts_a_key_live_twice() {
         let a = key_bytes();
         let same_context = vec![key(a), key(a)];
         let two_contexts = vec![
@@ -527,20 +500,14 @@ mod tests {
             ),
         ];
         for entries in [same_context, two_contexts] {
-            assert!(matches!(
-                AccountLog::from_entries(entries),
-                Err(AccountLogError::Malformed(m)) if m.contains("live more than once")
-            ));
+            assert_eq!(
+                AccountLog::from_entries(entries)
+                    .unwrap()
+                    .live_indexed()
+                    .len(),
+                2
+            );
         }
-
-        let readded = vec![key(a), AccountEntry::Remove { index: 0 }, key(a)];
-        assert_eq!(
-            AccountLog::from_entries(readded)
-                .unwrap()
-                .ed25519_keys_for(&SIGNER_CONTEXT)
-                .len(),
-            1
-        );
     }
 
     /// An unusable key rejects the log rather than being skipped at lookup:
