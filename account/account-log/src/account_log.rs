@@ -19,6 +19,8 @@
 //! - A `Remove` tombstones a strictly earlier, still-live entry that is not
 //!   itself a `Remove`; anything else rejects the whole log
 //!   ([`AccountLog::from_entries`]).
+//! - Every `Ed25519Key` in the log is canonically encoded and not small-order,
+//!   whether or not it is still live.
 //!
 //! The entries still live ([`AccountLog::live_entries`]) are the account's
 //! current state. Every endorsement is selected by context
@@ -114,8 +116,8 @@ impl AccountEntry {
 impl AccountLog {
     /// Create a AccountLog from a list of entries. Returns an error if the created log would be invalid.
     pub(crate) fn from_entries(entries: Vec<AccountEntry>) -> Result<Self, AccountLogError> {
-        let live = valid_live_entries(&entries)?;
-        ensure_valid_types(&live)?;
+        filter_mask_removed(&entries)?;
+        ensure_valid_types(&entries)?;
         Ok(Self { entries })
     }
 
@@ -292,10 +294,11 @@ fn valid_live_entries(
     Ok(entries)
 }
 
-/// Ensure typed variants are valid.
-fn ensure_valid_types(entries: &[IndexedAccountEntry]) -> Result<(), AccountLogError> {
-    for val in entries {
-        let AccountEntry::Add { data, .. } = val.entry else {
+/// Ensure typed variants are valid, across the whole log: a key that is not
+/// usable is rejected even where a `Remove` has since tombstoned it.
+fn ensure_valid_types(entries: &[AccountEntry]) -> Result<(), AccountLogError> {
+    for entry in entries {
+        let AccountEntry::Add { data, .. } = entry else {
             continue;
         };
 
@@ -530,10 +533,11 @@ mod tests {
             Err(AccountLogError::Malformed(m)) if m.contains("canonical")
         ));
 
-        // A removed key is not live, so it is never checked.
-        assert!(
-            AccountLog::from_entries(vec![key([0u8; 32]), AccountEntry::Remove { index: 0 }])
-                .is_ok()
-        );
+        // A tombstone does not excuse it: the check covers every key in the
+        // log, so two builds cannot disagree on whether this log is valid.
+        assert!(matches!(
+            AccountLog::from_entries(vec![key([0u8; 32]), AccountEntry::Remove { index: 0 }]),
+            Err(AccountLogError::Malformed(m)) if m.contains("small-order")
+        ));
     }
 }
