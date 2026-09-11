@@ -22,10 +22,12 @@ mod draft;
 mod error;
 
 pub use account_log::{
-    AccountEntry, AccountLog, EncodedAccountLog, EntryData, IndexedAccountEntry, SignedAccountLog,
+    AccountEntry, AccountLog, EncodedAccountLog, EntryData, IndexedAccountEntry, LogFreshness,
+    SignedAccountLog,
 };
 pub use account_record::{AccountRecord, AccountRecordUpdate, Outcome};
 pub use addr::AccountAddr;
+pub use codec::{ACCOUNT_LOG_DOMAIN, MAX_PAYLOAD_BYTES};
 pub use context::{Context, SIGNER_CONTEXT};
 pub use crypto::{Ed25519SigningKey, Ed25519VerifyingKey};
 pub use draft::AccountLogDraft;

@@ -54,7 +54,7 @@ impl AccountLog {
     /// self-delimiting and an entry's index is its position, so neither can
     /// disagree with the bytes it describes. The account key is not embedded
     /// either — the account is identified by the address the caller already
-    /// holds, and [`verify_log`] checks the signature under it.
+    /// holds, and [`SignedAccountLog::verify`] checks the signature under it.
     ///
     /// Fails only on [`MAX_PAYLOAD_BYTES`]: an owner must not publish a
     /// payload no consumer will accept.
@@ -63,7 +63,7 @@ impl AccountLog {
     }
 }
 
-/// The encoder itself. Separate from [`Account::encode`] because it must also
+/// The encoder itself. Separate from [`AccountLog::encode`] because it must also
 /// serve entries no account can author — an opaque entry written by a newer
 /// build, which this one can only carry through unchanged.
 pub(crate) fn encode_entries(
@@ -118,15 +118,14 @@ impl EncodedAccountLog {
     /// knowing the entry format.
     ///
     /// Bytes from an untrusted source should reach this only through
-    /// [`verify_received`], which checks the signature first.
+    /// [`SignedAccountLog::verify`], which checks the signature first.
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, AccountLogError> {
         check_size(&bytes)?;
         Ok(Self(bytes))
     }
 
     /// Decode the payload: domain prefix and version, entry framing to the
-    /// exact end of the payload, and the log itself via
-    /// [`AccountLog::from_entries`].
+    /// exact end of the payload, and then the log's own validity rules.
     pub fn decode(&self) -> Result<AccountLog, AccountLogError> {
         AccountLog::from_entries(decode_entries(&self.0)?)
     }
