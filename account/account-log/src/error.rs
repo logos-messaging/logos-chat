@@ -34,14 +34,4 @@ pub enum AccountLogError {
     /// The account signature does not verify over the payload bytes.
     #[error("account signature verification failed")]
     SignatureInvalid,
-
-    /// The candidate log is not newer than the one already held.
-    #[error("account log is not newer than the log already held")]
-    Stale,
-
-    /// The candidate log is longer but does not extend the held one: history has
-    /// been rewritten. Either the signer is showing different histories to
-    /// different readers, or the account key is compromised.
-    #[error("account log forks from the log already held")]
-    Forked,
 }

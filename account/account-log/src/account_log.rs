@@ -11,21 +11,19 @@
 //!
 //! Invariants:
 //! - Append-only: a newer log strictly extends the older one
-//!   ([`compare_log_freshness`](crate::compare_log_freshness)). There is no version
+//!   ([`AccountRecord::update`](crate::AccountRecord::update)). There is no version
 //!   counter — a longer log is a newer log. A log that is longer but does not
 //!   extend the old one has rewritten history: either the signer is showing
 //!   different histories to different readers, or the account key is
 //!   compromised.
 //! - A `Remove` tombstones a strictly earlier, still-live entry that is not
-//!   itself a `Remove`; anything else rejects the whole log
-//!   ([`AccountLog::from_entries`]).
+//!   itself a `Remove`; anything else rejects the whole log.
 //! - Every `Ed25519Key` in the log is canonically encoded and not small-order,
 //!   whether or not it is still live.
 //!
-//! The entries still live ([`AccountLog::live_entries`]) are the account's
-//! current state. Every endorsement is selected by context
-//! ([`AccountLog::keys_for`]):
-//! there is deliberately no way to ask for every live key at once.
+//! The entries still live are the account's current state. Every endorsement
+//! is selected by context ([`AccountLog::entries_for`]): there is deliberately
+//! no way to ask for every live key at once.
 
 use crate::AccountAddr;
 use crate::context::Context;
@@ -55,7 +53,7 @@ pub struct SignedAccountLog {
 pub struct EncodedAccountLog(pub(crate) Vec<u8>);
 
 /// The log as a validated entry list. Construction checks every `Remove`, so
-/// [`live_entries`](Self::live_entries) cannot fail on a held log.
+/// reading the live set cannot fail on a held log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountLog {
     entries: Vec<AccountEntry>,
@@ -87,7 +85,7 @@ pub enum AccountEntry {
 #[non_exhaustive]
 pub enum EntryData {
     /// A device (LocalIdentity) verifying key. Canonical and not small-order
-    /// — checked in [`AccountLog::from_entries`].
+    /// — checked when the log is built.
     Ed25519Key([u8; 32]),
     /// A UTF-8 record. What it means is defined by its context.
     Text(String),
@@ -204,8 +202,6 @@ impl AccountLog {
             .collect()
     }
 
-    /// The entries left once every `Remove` is applied — the account's current
-    /// state, in add order.
     /// The position of the first entry this build cannot interpret.
     ///
     /// Covers the whole history, not just live entries: encoding writes every
