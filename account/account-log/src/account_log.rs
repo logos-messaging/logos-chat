@@ -11,7 +11,7 @@
 //!
 //! Invariants:
 //! - Append-only: a newer log strictly extends the older one
-//!   ([`verify_extension`](crate::verify_extension)). There is no version
+//!   ([`compare_log_freshness`](crate::compare_log_freshness)). There is no version
 //!   counter — a longer log is a newer log. A log that is longer but does not
 //!   extend the old one has rewritten history: either the signer is showing
 //!   different histories to different readers, or the account key is
