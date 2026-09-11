@@ -15,7 +15,3 @@ SignedAccountLog          payload + account signature over its exact bytes
 ```
 
 Wire format and invariants: see the spec (TODO: link once published).
-
-## Status
-
-Work in progress. `codec.rs` is unimplemented.
