@@ -27,6 +27,14 @@ pub fn get_migrations() -> Vec<(&'static str, &'static str)> {
             "004_drop_ephemeral_keys",
             include_str!("migrations/004_drop_ephemeral_keys.sql"),
         ),
+        (
+            "005_drop_identity",
+            include_str!("migrations/005_drop_identity.sql"),
+        ),
+        (
+            "006_drop_remote_convo_id",
+            include_str!("migrations/006_drop_remote_convo_id.sql"),
+        ),
     ]
 }
 

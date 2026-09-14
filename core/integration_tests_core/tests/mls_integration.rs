@@ -22,7 +22,7 @@ fn create_group() {
         .saro()
         .create_group_convo_v1(&[&raya_id])
         .expect("Saro invite Raya ");
-    harness.process_until(|h| h.raya().list_conversations().unwrap().len() == 1);
+    harness.process_until(|h| h.raya().list_all_conversations().unwrap().len() == 1);
 
     // Step: Raya Send Content
 
@@ -39,7 +39,7 @@ fn create_group() {
         .saro()
         .group_add_member(&convo_id, &[&pax_id])
         .expect("Saro invite pax");
-    harness.process_until(|h| h.pax().list_conversations().unwrap().len() == 1);
+    harness.process_until(|h| h.pax().list_all_conversations().unwrap().len() == 1);
 
     // Step: Pax send Content
 

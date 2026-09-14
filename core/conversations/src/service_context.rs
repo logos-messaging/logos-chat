@@ -1,7 +1,6 @@
 //! Bundles the services a conversation operation needs into one [`ServiceContext`].
 
-use crypto::Identity;
-use storage::ChatStore;
+use storage::ConversationStore;
 
 use crate::IdentityProvider;
 use crate::causal_history::CausalHistoryStore;
@@ -17,7 +16,7 @@ pub trait ExternalServices {
     type DS: DeliveryService;
     type RS: RegistrationService;
     type WS: WakeupService;
-    type CS: ChatStore;
+    type CS: ConversationStore;
 }
 
 impl<IP, DS, RS, WS, CS> ExternalServices for (IP, DS, RS, WS, CS)
@@ -26,7 +25,7 @@ where
     DS: DeliveryService,
     RS: RegistrationService,
     WS: WakeupService,
-    CS: ChatStore,
+    CS: ConversationStore,
 {
     type IP = IP;
     type DS = DS;
@@ -43,7 +42,6 @@ pub(crate) struct ServiceContext<S: ExternalServices> {
     pub(crate) mls_identity: MlsIdentityProvider<S::IP>,
     pub(crate) mls_provider: MlsEphemeralPqProvider,
     pub(crate) causal: CausalHistoryStore,
-    pub(crate) identity: Identity,
     pub(crate) wakeup_service: S::WS,
     /// Time source for GroupV2 (de-mls) conversations.
     pub(crate) demls_clock: GroupV2Clock,

@@ -15,12 +15,11 @@ use crate::{
     outcomes::{ConvoOutcome, InboxOutcome, PayloadOutcome},
     proto::{EncryptedPayload, EnvelopeV1, Message},
 };
-use crypto::{Identity, PublicKey};
 use openmls::group::GroupId;
 use shared_traits::{IdentId, IdentIdRef};
 use std::collections::HashMap;
 use std::fmt::Debug;
-use storage::{ChatStore, ConversationKind, ConversationStore};
+use storage::{ConversationKind, ConversationStore};
 use tracing::{info, instrument};
 
 pub use crate::conversation::ConversationId;
@@ -46,35 +45,17 @@ where
     DS: DeliveryService + 'static,
     RS: RegistrationService + 'static,
     WS: WakeupService + 'static,
-    CS: ChatStore + 'static,
+    CS: ConversationStore + 'static,
 {
-    /// Opens or creates a `Core` with the given storage configuration.
-    ///
-    /// If an identity exists in storage, it will be restored.
-    /// Otherwise, a new identity will be created with the given name and saved.
+    /// Opens or creates a `Core` over the given store.
     pub fn new_from_store(
         ident: IP,
         delivery: DS,
         registration: RS,
         wakeup_service: WS,
-        mut store: CS,
+        store: CS,
     ) -> Result<Self, ChatError> {
-        let identity = if let Some(identity) = store.load_identity()? {
-            identity
-        } else {
-            let identity = Identity::new(ident.id().as_str().to_string());
-            store.save_identity(&identity)?;
-            identity
-        };
-
-        Self::assemble(
-            ident,
-            identity,
-            delivery,
-            registration,
-            wakeup_service,
-            store,
-        )
+        Self::assemble(ident, delivery, registration, wakeup_service, store)
     }
 
     /// Creates a new in-memory `Core` (for testing).
@@ -87,15 +68,7 @@ where
         wakeup_service: WS,
         store: CS,
     ) -> Result<Self, ChatError> {
-        let identity = Identity::new(ident.id().as_str().to_string());
-        let mut core = Self::assemble(
-            ident,
-            identity,
-            delivery,
-            registration,
-            wakeup_service,
-            store,
-        )?;
+        let mut core = Self::assemble(ident, delivery, registration, wakeup_service, store)?;
 
         core.register_keypackage()?;
         Ok(core)
@@ -116,7 +89,6 @@ where
     /// addresses, and assembles the service bundle — shared by both constructors.
     fn assemble(
         ident: IP,
-        identity: Identity,
         mut delivery: DS,
         registration: RS,
         wakeup_service: WS,
@@ -146,7 +118,6 @@ where
                 mls_identity,
                 mls_provider,
                 causal,
-                identity,
                 wakeup_service,
                 demls_clock: GroupV2Clock::default(),
                 demls_config: GroupV2Config::default(),
@@ -166,10 +137,6 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         &self.services.store
     }
 
-    pub fn identity(&self) -> &Identity {
-        &self.services.identity
-    }
-
     /// The signer id this core receives InboxV2 invites under — the hex of the
     /// signer's verifying key.
     pub fn ident_id(&'a self) -> IdentIdRef<'a> {
@@ -184,11 +151,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
     }
 
     pub fn installation_name(&self) -> &str {
-        self.services.identity.get_name()
-    }
-
-    pub fn installation_key(&self) -> PublicKey {
-        self.services.identity.public_key()
+        self.services.mls_identity.id().as_str()
     }
 
     pub fn create_direct_convo(
@@ -228,7 +191,6 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
             .store
             .save_conversation(&storage::ConversationMeta {
                 local_convo_id: convo.id().to_string(),
-                remote_convo_id: "0".into(),
                 kind: ConversationKind::GroupV1,
             })?;
         convo.add_member(&mut self.services, participants)?;
@@ -304,7 +266,11 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         }
     }
 
-    pub fn list_conversations(&self) -> Result<Vec<ConversationId>, ChatError> {
+    /// Every conversation this client knows — persisted or loaded this session.
+    /// Membership in this list means the conversation *exists*; it says nothing
+    /// about whether content can be sent or retrieved (see [`Self::can_send`] /
+    /// [`Self::can_receive`] and [`Self::list_sendable_conversations`]).
+    pub fn list_all_conversations(&self) -> Result<Vec<ConversationId>, ChatError> {
         // Check Legacy load_convo store
         let records = self.services.store.load_conversations()?;
         let mut convos: Vec<ConversationId> =
@@ -323,6 +289,42 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         let mut seen = std::collections::HashSet::new();
         convos.retain(|c| seen.insert(c.clone()));
         Ok(convos)
+    }
+
+    /// The subset of [`Self::list_all_conversations`] that content can currently
+    /// be sent to — the "sendable" roster a UI usually wants.
+    pub fn list_sendable_conversations(&self) -> Result<Vec<ConversationId>, ChatError> {
+        Ok(self
+            .list_all_conversations()?
+            .into_iter()
+            .filter(|id| self.can_send(id))
+            .collect())
+    }
+
+    /// Whether content can currently be submitted to `convo_id`: it is loaded
+    /// this session and the local identity is still a member with send rights.
+    ///
+    /// Distinct from "the conversation exists" — a known conversation
+    /// ([`Self::list_all_conversations`]) may not be sendable, e.g. one restored
+    /// from a previous session that has not been reloaded, or one we were
+    /// removed from.
+    pub fn can_send(&self, convo_id: &str) -> bool {
+        self.cached_convos
+            .get(convo_id)
+            .map(|c| c.can_send())
+            .unwrap_or(false)
+    }
+
+    /// Whether `convo_id` can be read/received from: it is known to this client,
+    /// either loaded this session or persisted in the store. Broader than
+    /// [`Self::can_send`] — a conversation can be received from yet not sent to.
+    pub fn can_receive(&self, convo_id: &str) -> bool {
+        self.cached_convos.contains_key(convo_id)
+            || self
+                .services
+                .store
+                .has_conversation(convo_id)
+                .unwrap_or(false)
     }
 
     pub fn take_missing_messages(&self) -> Vec<MissingMessage> {
@@ -545,6 +547,13 @@ impl<S: ExternalServices> Convo<S> for ConvoTypeOwned<S> {
         match self {
             ConvoTypeOwned::Group(group_convo) => group_convo.members(),
             ConvoTypeOwned::Direct(convo) => convo.members(),
+        }
+    }
+
+    fn can_send(&self) -> bool {
+        match self {
+            ConvoTypeOwned::Group(group_convo) => group_convo.can_send(),
+            ConvoTypeOwned::Direct(convo) => convo.can_send(),
         }
     }
 }

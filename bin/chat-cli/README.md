@@ -1,6 +1,6 @@
 # chat-cli
 
-A terminal chat application built on top of libchat. End-to-end encrypted messaging in your terminal.
+A terminal chat application built on top of logos-chat. End-to-end encrypted messaging in your terminal.
 
 ## Building
 
@@ -27,7 +27,7 @@ Both transports are compiled into the binary and selected at runtime via `--tran
 
 | Value (`--transport`) | Description |
 |-----------------------|-------------|
-| `logos-delivery` (default) | Embedded Waku node on the logos.dev network |
+| `logos-delivery` (default) | Embedded Waku node on the logos.test network |
 | `file` | Shared directory; no network needed — great for local testing |
 
 ## Quick start
@@ -102,7 +102,7 @@ The registry is a throwaway testnet helper; v0.3 replaces it with a
 | `--transport <kind>` | `logos-delivery` | Transport to use (`logos-delivery` or `file`) |
 | `--data <dir>` | `tmp/chat-cli-data` | Data directory (UI state and default SQLite path) |
 | `--db <path>` | `<data>/<name>.db` | SQLite file for persistent identity |
-| `--preset <name>` | `logos.dev` | logos-delivery network preset |
+| `--preset <name>` | `logos.test` | logos-delivery network preset |
 | `--port <n>` | `60000` | TCP port for the embedded logos-delivery node |
 | `--registry-url <url>` | *(unset)* | Use the HTTP-backed [keypackage-registry](https://github.com/logos-messaging/chat-store) at this URL instead of the in-memory registry |
 | `--log-file <path>` | *(stderr, off)* | Write logs to a file instead of stderr |

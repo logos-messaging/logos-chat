@@ -6,8 +6,5 @@ license.workspace = true
 description = "Shared storage layer for libchat"
 
 [dependencies]
-# Workspace dependencies (sorted)
-crypto = { workspace = true }
-
 # External dependencies (sorted)
 thiserror = "2"

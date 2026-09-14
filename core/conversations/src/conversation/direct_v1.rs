@@ -65,4 +65,9 @@ where
     fn members(&self) -> Result<Vec<Vec<u8>>, ChatError> {
         Convo::<S>::members(&self.inner_group)
     }
+
+    fn can_send(&self) -> bool {
+        // A DM is a pairwise GroupV1; defer to the inner group's membership.
+        Convo::<S>::can_send(&self.inner_group)
+    }
 }

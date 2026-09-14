@@ -9,4 +9,4 @@ mod errors;
 mod store;
 
 pub use errors::StorageError;
-pub use store::{ChatStore, ConversationKind, ConversationMeta, ConversationStore, IdentityStore};
+pub use store::{ConversationKind, ConversationMeta, ConversationStore};
