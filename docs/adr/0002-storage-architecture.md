@@ -20,16 +20,17 @@ Issue #112 is the trigger: MLS group state lives in an in-memory `MemoryStorage`
 
 ## Architecture
 
-The app injects one store carrying two independent contracts: a typed `ClientStore` for client-level state and a `NamespacedKvStore` substrate for everything a conversation type owns.
+The app injects one store carrying two independent contracts: a typed `ConversationStore` for the core's conversation list and a `NamespacedKvStore` substrate for everything a conversation type owns. Local identity storage is outside this ADR.
 
-`ClientStore` names the client-level boundary rather than one fixed trait: the conversation list today, more traits as the client's domains grow. It is a typed contract, not a schema mandate, so a store may back it with rows or with its own key-value layout.
+`ConversationStore` is the one typed contract: the core's list of its conversations, each filed under the protocol that rebuilds it. It is typed, not a schema mandate, so a store may back it with rows or with its own key-value layout.
 
-Everything above the substrate is libchat's. A conversation gets a `KvStore`, the substrate's verbs with its own scope already bound; a type keeps its typed accessors and its adapters for foreign storage traits in one module, the typed layer in the diagram. `ClientStore` is to the client what that layer is to a conversation type; the difference is that the store implements one and libchat the other.
+Everything above the substrate is libchat's. A conversation gets a `KvStore`, the substrate's verbs with its own scope already bound; a type keeps its typed accessors and its adapters for foreign storage traits in one module, the typed layer in the diagram. The list is to the core what that layer is to a conversation type; the difference is that the store implements one and libchat the other.
 
 ```mermaid
 flowchart TB
     App["<b>app</b>"]
-    Client["<b>client</b><br/>conversation list"]
+    Client["<b>client</b>"]
+    Core["<b>core</b><br/>conversation list"]
     Types["<b>conversation types</b><br/>GroupV1 · DirectV1 · GroupV2 · InboxV2"]
 
     subgraph Typed["typed layer"]
@@ -37,20 +38,21 @@ flowchart TB
     end
 
     subgraph Store["injected store: two independent contracts"]
-        CS["<b>ClientStore</b><br/>client-level state, typed"]
+        CS["<b>ConversationStore</b><br/>the conversation list, typed"]
         NKV["<b>NamespacedKvStore</b><br/>(scope, key, value)"]
     end
 
     App --> Client
-    Client --> Types
-    Client -- "typed calls" --> CS
+    Client --> Core
+    Core --> Types
+    Core -- "typed calls" --> CS
     Types -- "typed calls" --> Typed
     KV -- "scope + key" --> NKV
 ```
 
 ## Decisions
 
-1. **The injected substrate addresses bytes by scope, singly or in a transaction.** A scope is the protocol that owns the state plus the conversation it belongs to, when it belongs to one, and `NamespacedKvStore` takes it on every call. Bare verbs are autocommit singles; `begin()` opens a transaction carrying the same verbs for anything larger. The stock store implements it as `CREATE TABLE kv (ns TEXT, instance BLOB, key BLOB, value BLOB, PRIMARY KEY (ns, instance, key))` beside whatever it uses for `ClientStore`, protocol-level state taking the empty instance; the in-memory store is a map per scope. Neither contract knows about the other, so a store can implement one and reuse a stock implementation of the other.
+1. **The injected substrate addresses bytes by scope, singly or in a transaction.** A scope is the protocol that owns the state plus the conversation it belongs to, when it belongs to one, and `NamespacedKvStore` takes it on every call. Bare verbs are autocommit singles; `begin()` opens a transaction carrying the same verbs for anything larger. The stock store implements it as `CREATE TABLE kv (ns TEXT, instance BLOB, key BLOB, value BLOB, PRIMARY KEY (ns, instance, key))` beside whatever it uses for `ConversationStore`, protocol-level state taking the empty instance; the in-memory store is a map per scope. Neither contract knows about the other, so a store can implement one and reuse a stock implementation of the other.
 
     ```rust
     /// Where a value lives: the owning protocol, and the conversation when the state belongs to one.
@@ -158,11 +160,11 @@ flowchart TB
 
     One path does not fit yet: a GroupV2 joiner gets its conversation id only after de-mls has persisted the group, so its scope cannot be bound in time. Exposing the id before staging, the way OpenMLS already does for a welcome, is the fix; until then that path alone carries an id libchat mints and is the one place a conversation has two.
 
-6. **App features are the app's concern.** libchat persists protocol and client state; whatever the app builds on top, the app stores.
+6. **App features are the app's concern.** libchat persists the state it owns; whatever the app builds on top, the app stores.
 
 ## Consequences
 
 Shipping a conversation type is a namespace variant plus the type's own storage module, all inside libchat; an app on the stock store bumps the dependency and gains rows in the existing `kv` table. The price is that type-owned state is opaque to the store: listing is scan-and-decode, inspection sees blobs, and schema discipline moves into serialization conventions. What a store does see is the address, so it can index or partition by conversation without knowing what a single key means.
 
-`ClientStore` changes remain breaking for stores, and that is the bet: types keep arriving, while a conversation list is close to complete. If the bet proves wrong, folding client state into a namespace converges this design onto a pure substrate.
+`ConversationStore` changes remain breaking for stores, and that is the bet: types keep arriving, while a conversation list is close to complete. If the bet proves wrong, folding the list into a namespace converges this design onto a pure substrate.
 
