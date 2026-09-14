@@ -302,8 +302,19 @@ fn saro_raya_message_exchange() {
         );
     }
 
-    assert_eq!(saro.list_conversations().unwrap().len(), 1);
-    assert_eq!(raya.list_conversations().unwrap().len(), 1);
+    assert_eq!(saro.list_all_conversations().unwrap().len(), 1);
+    assert_eq!(raya.list_all_conversations().unwrap().len(), 1);
+
+    // A live conversation is both sendable and retrievable, and shows up in the
+    // sendable roster; an unknown id is neither.
+    assert!(saro.can_send(&saro_convo_id));
+    assert!(saro.can_receive(&saro_convo_id));
+    assert_eq!(
+        saro.list_sendable_conversations().unwrap(),
+        vec![saro_convo_id.clone()]
+    );
+    assert!(!saro.can_send("deadbeef"));
+    assert!(!saro.can_receive("deadbeef"));
 }
 
 /// Group metadata is a group concept: a direct conversation has none, so the

@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use crossbeam_channel::Receiver;
 use logos_chat::{
-    AccountDirectory, ChatClient, ChatStore, Event, GroupV2Config, LogosConfig, P2pConfig,
+    AccountDirectory, ChatClient, ConversationStore, Event, GroupV2Config, LogosConfig, P2pConfig,
     RegistrationService, RegistryPublishMode, Transport,
 };
 
@@ -88,7 +88,7 @@ struct Cli {
     db: Option<PathBuf>,
 
     // ── logos-delivery transport options ──────────────────────────────────────
-    /// logos-delivery network preset (e.g. `logos.dev`). When omitted, the
+    /// logos-delivery network preset (e.g. `logos.test`). When omitted, the
     /// preconfigured network preset is used.
     #[arg(long)]
     preset: Option<String>,
@@ -226,7 +226,7 @@ fn launch_tui<T, R, S>(
 where
     T: Transport,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
-    S: ChatStore + Send,
+    S: ConversationStore + Send,
 {
     let mut app = ChatApp::new(client, events, &cli.name, &cli.data)?;
 
@@ -244,7 +244,7 @@ fn run_app<T, R, S>(terminal: &mut ui::Tui, app: &mut ChatApp<T, R, S>) -> Resul
 where
     T: Transport,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
-    S: ChatStore + Send,
+    S: ConversationStore + Send,
 {
     loop {
         app.process_incoming()?;

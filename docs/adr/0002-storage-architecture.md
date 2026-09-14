@@ -22,14 +22,14 @@ Issue #112 is the trigger: MLS group state lives in an in-memory `MemoryStorage`
 
 The app injects one store carrying two independent contracts: a typed `ClientStore` for client-level state and a `NamespacedKvStore` substrate for everything a conversation type owns.
 
-`ClientStore` names the client-level boundary rather than one fixed trait: the conversation list and identity today, more traits as the client's domains grow. It is a typed contract, not a schema mandate, so a store may back it with rows or with its own key-value layout.
+`ClientStore` names the client-level boundary rather than one fixed trait: the conversation list today, more traits as the client's domains grow. It is a typed contract, not a schema mandate, so a store may back it with rows or with its own key-value layout.
 
 Everything above the substrate is libchat's. A conversation gets a `KvStore`, the substrate's verbs with its own scope already bound; a type keeps its typed accessors and its adapters for foreign storage traits in one module, the typed layer in the diagram. `ClientStore` is to the client what that layer is to a conversation type; the difference is that the store implements one and libchat the other.
 
 ```mermaid
 flowchart TB
     App["<b>app</b>"]
-    Client["<b>client</b><br/>conversation list, identity"]
+    Client["<b>client</b><br/>conversation list"]
     Types["<b>conversation types</b><br/>GroupV1 · DirectV1 · GroupV2 · InboxV2"]
 
     subgraph Typed["typed layer"]
@@ -164,5 +164,5 @@ flowchart TB
 
 Shipping a conversation type is a namespace variant plus the type's own storage module, all inside libchat; an app on the stock store bumps the dependency and gains rows in the existing `kv` table. The price is that type-owned state is opaque to the store: listing is scan-and-decode, inspection sees blobs, and schema discipline moves into serialization conventions. What a store does see is the address, so it can index or partition by conversation without knowing what a single key means.
 
-`ClientStore` changes remain breaking for stores, and that is the bet: types keep arriving, while a conversation list and one identity are close to complete. If the bet proves wrong, folding client state into a namespace converges this design onto a pure substrate.
+`ClientStore` changes remain breaking for stores, and that is the bet: types keep arriving, while a conversation list is close to complete. If the bet proves wrong, folding client state into a namespace converges this design onto a pure substrate.
 

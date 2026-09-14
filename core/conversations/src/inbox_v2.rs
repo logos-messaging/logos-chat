@@ -160,11 +160,9 @@ impl InboxV2 {
         convo: &GroupV1Convo,
         cx: &mut ServiceContext<S>,
     ) -> Result<(), ChatError> {
-        // TODO: (P2) Remove remote_convo_id: GroupV1 persistence hard-codes it to "0" and nothing reads it back.
         // TODO: (P3) Implement From<Convo> for ConversationMeta
         let meta = ConversationMeta {
             local_convo_id: convo.id().to_string(),
-            remote_convo_id: "0".into(),
             kind: ConversationKind::GroupV1,
         };
         cx.store.save_conversation(&meta)?;

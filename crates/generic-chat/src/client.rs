@@ -12,7 +12,7 @@ use libchat::{
 };
 use logos_account::{AccountDirectory, resolve_device_ids};
 use parking_lot::Mutex;
-use storage::ChatStore;
+use storage::ConversationStore;
 
 use crate::delegate::{DelegateCredential, DelegateIdentity, DelegateSigner};
 use crate::errors::ClientError;
@@ -86,7 +86,7 @@ pub struct ChatClient<T, R, S>
 where
     T: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
-    S: ChatStore + Send + 'static,
+    S: ConversationStore + Send + 'static,
 {
     /// `parking_lot::Mutex` for its eventual fairness: an inbound burst can't
     /// starve caller operations of the lock.
@@ -106,7 +106,7 @@ impl<T, R, S> ChatClient<T, R, S>
 where
     T: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
-    S: ChatStore + Send + 'static,
+    S: ConversationStore + Send + 'static,
 {
     pub fn new(
         ident: DelegateSigner,
@@ -269,9 +269,44 @@ where
             .map_err(Into::into)
     }
 
-    /// List all conversation IDs known to this client.
-    pub fn list_conversations(&self) -> Result<Vec<ConversationId>, ClientError> {
-        self.core.lock().list_conversations().map_err(Into::into)
+    /// Every conversation ID known to this client, whether or not it can
+    /// currently be sent to or read. Existence only — see [`Self::can_send`] /
+    /// [`Self::can_receive`] to act on one, or [`Self::list_sendable_conversations`]
+    /// for the pre-filtered roster a UI usually wants.
+    pub fn list_all_conversations(&self) -> Result<Vec<ConversationId>, ClientError> {
+        self.core
+            .lock()
+            .list_all_conversations()
+            .map_err(Into::into)
+    }
+
+    /// The subset of [`Self::list_all_conversations`] content can currently be
+    /// sent to.
+    pub fn list_sendable_conversations(&self) -> Result<Vec<ConversationId>, ClientError> {
+        self.core
+            .lock()
+            .list_sendable_conversations()
+            .map_err(Into::into)
+    }
+
+    /// Whether this client can currently submit content to `convo_id`: it is
+    /// usable this session and the local identity is still a member with send
+    /// rights.
+    ///
+    /// Deliberately distinct from existence: a conversation can be *known*
+    /// ([`Self::list_all_conversations`]) yet not sendable — restored from a
+    /// previous session and not reloaded, or one we were removed from. Send
+    /// permission (read-only / broadcast conversations) will refine this once
+    /// roles carry it; today it reflects live MLS membership.
+    pub fn can_send(&self, convo_id: &str) -> bool {
+        self.core.lock().can_send(convo_id)
+    }
+
+    /// Whether `convo_id` can be read/received from: it is known to this client
+    /// (loaded this session or persisted). Broader than [`Self::can_send`] — a
+    /// conversation can be received from yet not sent to.
+    pub fn can_receive(&self, convo_id: &str) -> bool {
+        self.core.lock().can_receive(convo_id)
     }
 
     /// Encrypt and send `content` to an existing conversation. The core
@@ -321,7 +356,7 @@ impl<T, R, S> Drop for ChatClient<T, R, S>
 where
     T: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
-    S: ChatStore + Send + 'static,
+    S: ConversationStore + Send + 'static,
 {
     fn drop(&mut self) {
         // Dropping the sender disconnects the worker's shutdown channel, waking
@@ -336,7 +371,7 @@ where
 /// Background loop: block until an inbound payload or shutdown arrives, drive
 /// the core on each payload, and forward events. No polling — `select!` parks
 /// the thread until one of the channels is ready.
-fn worker_loop<T, R, S: ChatStore + 'static>(
+fn worker_loop<T, R, S: ConversationStore + 'static>(
     core: Arc<Mutex<ClientCore<T, R, S>>>,
     directory: R,
     inbound: Receiver<Vec<u8>>,

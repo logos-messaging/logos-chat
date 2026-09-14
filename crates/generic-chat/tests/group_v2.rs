@@ -217,9 +217,15 @@ fn group_v2_three_members() {
     wait_for_members(&mut raya, &raya_convo_id, &all);
     wait_for_members(&mut pax, &pax_convo_id, &all);
 
-    assert_eq!(saro.list_conversations().unwrap().len(), 1);
-    assert_eq!(raya.list_conversations().unwrap().len(), 1);
-    assert_eq!(pax.list_conversations().unwrap().len(), 1);
+    assert_eq!(saro.list_all_conversations().unwrap().len(), 1);
+    assert_eq!(raya.list_all_conversations().unwrap().len(), 1);
+    assert_eq!(pax.list_all_conversations().unwrap().len(), 1);
+
+    // A live GroupV2 member can send to and retrieve the conversation; the
+    // membership check runs against de-mls's exposed member view.
+    assert!(saro.can_send(&convo_id));
+    assert!(saro.can_receive(&convo_id));
+    assert_eq!(saro.list_sendable_conversations().unwrap(), vec![convo_id]);
 }
 
 /// The same two peers are invited to several groups at once. Each installation
@@ -268,7 +274,7 @@ fn peers_invited_to_many_groups() {
         );
     }
 
-    assert_eq!(saro.list_conversations().unwrap().len(), GROUPS);
+    assert_eq!(saro.list_all_conversations().unwrap().len(), GROUPS);
 }
 
 /// The creator is in its own roster from the start, with no other members: the

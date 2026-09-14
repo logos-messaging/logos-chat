@@ -48,6 +48,17 @@ pub(crate) trait Convo<S: ExternalServices>: Identified + Send {
     /// Each current member's MLS leaf-credential content (hex-encoded), self
     /// included.
     fn members(&self) -> Result<Vec<Vec<u8>>, ChatError>;
+
+    /// Whether the local identity may currently submit content: it is still a
+    /// member of this (loaded) conversation with send rights.
+    ///
+    /// This is the "can submit new content" capability, kept deliberately
+    /// separate from whether the conversation merely *exists* — see
+    /// [`Core::can_send`](crate::Core::can_send) /
+    /// [`Core::can_receive`](crate::Core::can_receive). Send permission
+    /// (read-only / broadcast conversations) will refine this once roles carry
+    /// that distinction; today it reflects live membership.
+    fn can_send(&self) -> bool;
 }
 
 /// Group-only operations.

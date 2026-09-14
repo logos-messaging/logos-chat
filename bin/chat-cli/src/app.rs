@@ -6,7 +6,7 @@ use anyhow::Result;
 use arboard::Clipboard;
 use crossbeam_channel::Receiver;
 use logos_chat::{
-    AccountDirectory, ChatClient, ChatStore, ConversationClass, Event, GroupMetadata,
+    AccountDirectory, ChatClient, ConversationClass, ConversationStore, Event, GroupMetadata,
     RegistrationService, Transport,
 };
 use serde::{Deserialize, Serialize};
@@ -102,11 +102,15 @@ pub struct ChatApp<T, R, S>
 where
     T: Transport,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
-    S: ChatStore + Send + 'static,
+    S: ConversationStore + Send + 'static,
 {
     pub client: ChatClient<T, R, S>,
     events: Receiver<Event>,
     pub state: AppState,
+    /// Whether the active chat can accept outbound content this session. Mirrors
+    /// [`ChatClient::can_send`] for the active chat; `false` for a chat
+    /// restored from a previous session that the MLS client can't reload yet.
+    is_active: bool,
     /// Ephemeral command output — not persisted, cleared on chat switch.
     command_output: Vec<DisplayMessage>,
     pub input: String,
@@ -119,7 +123,7 @@ impl<T, R, S> ChatApp<T, R, S>
 where
     T: Transport,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
-    S: ChatStore + Send,
+    S: ConversationStore + Send,
 {
     pub fn new(
         client: ChatClient<T, R, S>,
@@ -133,24 +137,31 @@ where
         let state = Self::load_state(&state_path);
 
         let chat_count = state.chats.len();
-        let status = if chat_count > 0 {
-            format!(
-                "Welcome back, {user_name}! {chat_count} chat(s) loaded. Type /help for commands."
-            )
-        } else {
+        let status = if chat_count == 0 {
             format!("Welcome, {user_name}! Type /help for commands.")
+        } else {
+            format!(
+                "Welcome back, {user_name}! {chat_count} chat(s) loaded — read-only from a previous \
+                 session; start a new /dm or /new to chat. Type /help."
+            )
         };
 
-        Ok(Self {
+        let mut app = Self {
             client,
             events,
             state,
+            is_active: false,
             command_output: Vec::new(),
             input: String::new(),
             status,
             user_name: user_name.to_string(),
             state_path,
-        })
+        };
+        // Restored chats can't be reloaded into the MLS client yet, so open on the
+        // roster (with read-only flags) rather than a dead active chat.
+        app.state.active_chat = None;
+        app.show_chats_list();
+        Ok(app)
     }
 
     fn load_state(path: &Path) -> AppState {
@@ -185,8 +196,47 @@ where
     }
 
     fn set_active_chat(&mut self, chat_id: Option<String>) {
+        self.is_active = chat_id
+            .as_deref()
+            .map(|id| self.client.can_send(id))
+            .unwrap_or(false);
         self.state.active_chat = chat_id;
         self.command_output.clear();
+    }
+
+    /// Whether the active chat can accept outbound content this session.
+    pub fn is_active(&self) -> bool {
+        self.is_active
+    }
+
+    /// Render the chat list; chats restored from a previous session that the MLS
+    /// client can't reload are flagged read-only.
+    fn show_chats_list(&mut self) {
+        self.command_output.clear();
+        let sessions: Vec<_> = self.state.chats.values().cloned().collect();
+        if sessions.is_empty() {
+            self.add_system_message("No chats yet. Use /dm or /new to start one.");
+            return;
+        }
+        self.add_system_message(&format!("── Your Chats ({}) ──", sessions.len()));
+        for s in &sessions {
+            let active = self.state.active_chat.as_deref() == Some(&s.chat_id);
+            let read_only = !self.client.can_send(&s.chat_id);
+            let mut tags = String::new();
+            if active {
+                tags.push_str(" (active)");
+            }
+            if read_only {
+                tags.push_str(" (read-only)");
+            }
+            let label = format!(
+                "  • [{:?}] {} ({}){tags}",
+                s.kind,
+                s.display_name(),
+                &s.chat_id[..8.min(s.chat_id.len())]
+            );
+            self.add_system_message(&label);
+        }
     }
 
     /// Insert a freshly created conversation and make it active.
@@ -376,6 +426,13 @@ where
             .active_chat
             .clone()
             .ok_or_else(|| anyhow::anyhow!("No active chat. Use /dm or /new first."))?;
+
+        if !self.is_active {
+            anyhow::bail!(
+                "This conversation is from a previous session and can't receive messages yet \
+                 — chats don't persist across restart. Start a new one with /dm or /new."
+            );
+        }
 
         let message_id = self
             .client
@@ -618,29 +675,13 @@ where
                 Ok(Some(format!("Nickname set to '{args}'")))
             }
             "/chats" => {
-                let sessions: Vec<_> = self.state.chats.values().cloned().collect();
-                if sessions.is_empty() {
-                    Ok(Some(
-                        "No chats yet. Use /dm or /new to start one.".to_string(),
-                    ))
+                self.show_chats_list();
+                let n = self.state.chats.len();
+                Ok(Some(if n == 0 {
+                    "No chats yet".to_string()
                 } else {
-                    self.add_system_message(&format!("── Your Chats ({}) ──", sessions.len()));
-                    for s in &sessions {
-                        let marker = if self.state.active_chat.as_deref() == Some(&s.chat_id) {
-                            " (active)"
-                        } else {
-                            ""
-                        };
-                        let label = format!(
-                            "  • [{:?}] {} ({}){marker}",
-                            s.kind,
-                            s.display_name(),
-                            &s.chat_id[..8.min(s.chat_id.len())]
-                        );
-                        self.add_system_message(&label);
-                    }
-                    Ok(Some(format!("{} chat(s)", sessions.len())))
-                }
+                    format!("{n} chat(s)")
+                }))
             }
             "/switch" => {
                 if args.is_empty() {

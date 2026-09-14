@@ -53,12 +53,12 @@ pub struct P2pConfig {
 }
 
 impl Default for P2pConfig {
-    // Generate a P2pConfig that connects to the `logos.dev` network and  uses a randomly assigned port.
+    // Generate a P2pConfig that connects to the `logos.test` network and  uses a randomly assigned port.
     // Random port avoids conflicts with other services on the machine, and allows multiple instances
     // to run in parallel.
     fn default() -> Self {
         /// The logos-delivery network preset joined by default.
-        const DEFAULT_NETWORK_PRESET: &str = "logos.dev";
+        const DEFAULT_NETWORK_PRESET: &str = "logos.test";
         /// Default to an OS assigned port, that is available
         const DEFAULT_PORT: u16 = 0;
         Self {

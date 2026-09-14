@@ -4,7 +4,6 @@ use storage::{
     // TODO: (P4) Importable crates need to be prefixed with a project name to avoid conflicts
     ConversationMeta,
     ConversationStore,
-    IdentityStore,
 };
 
 /// An Test focused StorageService which holds data in a hashmap
@@ -54,17 +53,5 @@ impl ConversationStore for MemStore {
 
     fn has_conversation(&self, local_convo_id: &str) -> Result<bool, storage::StorageError> {
         Ok(self.convos.contains_key(local_convo_id))
-    }
-}
-
-impl IdentityStore for MemStore {
-    fn load_identity(&self) -> Result<Option<crypto::Identity>, storage::StorageError> {
-        // todo!()
-        Ok(None)
-    }
-
-    fn save_identity(&mut self, _identity: &crypto::Identity) -> Result<(), storage::StorageError> {
-        // todo!()
-        Ok(())
     }
 }

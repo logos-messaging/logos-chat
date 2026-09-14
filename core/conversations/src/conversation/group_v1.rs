@@ -318,6 +318,12 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
             .map(|m| m.credential.serialized_content().to_vec())
             .collect())
     }
+
+    fn can_send(&self) -> bool {
+        // OpenMLS marks a group inactive once our own leaf is removed by a
+        // commit, so an inactive group is one we can no longer send to.
+        self.mls_group.is_active()
+    }
 }
 
 impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {

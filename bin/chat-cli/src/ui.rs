@@ -16,7 +16,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
 };
 
-use logos_chat::{AccountDirectory, ChatStore, RegistrationService, Transport};
+use logos_chat::{AccountDirectory, ConversationStore, RegistrationService, Transport};
 
 use crate::app::ChatApp;
 
@@ -42,7 +42,7 @@ pub fn draw<D, R, S>(frame: &mut Frame, app: &ChatApp<D, R, S>)
 where
     D: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
-    S: ChatStore + Send + 'static,
+    S: ConversationStore + Send + 'static,
 {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -64,14 +64,15 @@ fn draw_header<D, R, S>(frame: &mut Frame, app: &ChatApp<D, R, S>, area: Rect)
 where
     D: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
-    S: ChatStore + Send + 'static,
+    S: ConversationStore + Send + 'static,
 {
     let title = match app.current_session() {
         Some(session) => {
             let id = &session.chat_id[..8.min(session.chat_id.len())];
+            let ro = if app.is_active() { "" } else { " [read-only]" };
             match &session.nickname {
-                Some(name) => format!(" 💬 Chat: {} ↔ {name} ({id}) ", app.user_name),
-                None => format!(" 💬 Chat: {} ↔ ({id}) ", app.user_name),
+                Some(name) => format!(" 💬 Chat: {} ↔ {name} ({id}){ro} ", app.user_name),
+                None => format!(" 💬 Chat: {} ↔ ({id}){ro} ", app.user_name),
             }
         }
         None => format!(" 💬 {} — no active chat ", app.user_name),
@@ -92,7 +93,7 @@ fn draw_messages<D, R, S>(frame: &mut Frame, app: &ChatApp<D, R, S>, area: Rect)
 where
     D: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
-    S: ChatStore + Send + 'static,
+    S: ConversationStore + Send + 'static,
 {
     let remote_name = app
         .current_session()
@@ -209,7 +210,7 @@ fn draw_input<D, R, S>(frame: &mut Frame, app: &ChatApp<D, R, S>, area: Rect)
 where
     D: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
-    S: ChatStore + Send + 'static,
+    S: ConversationStore + Send + 'static,
 {
     // Inner width: area minus borders (2).
     let inner_width = area.width.saturating_sub(2) as usize;
@@ -241,7 +242,7 @@ fn draw_status<D, R, S>(frame: &mut Frame, app: &ChatApp<D, R, S>, area: Rect)
 where
     D: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
-    S: ChatStore + Send + 'static,
+    S: ConversationStore + Send + 'static,
 {
     let status = Paragraph::new(app.status.as_str())
         .style(Style::default().fg(Color::Gray))
@@ -256,7 +257,7 @@ pub fn handle_events<D, R, S>(app: &mut ChatApp<D, R, S>) -> io::Result<bool>
 where
     D: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
-    S: ChatStore + Send + 'static,
+    S: ConversationStore + Send + 'static,
 {
     // Poll for events with a short timeout to allow checking incoming messages
     if event::poll(std::time::Duration::from_millis(100))?

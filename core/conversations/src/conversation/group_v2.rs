@@ -387,6 +387,17 @@ where
             .map(|m| m.credential.serialized_content().to_vec())
             .collect())
     }
+
+    fn can_send(&self) -> bool {
+        // A de-mls member id is the big-endian u32 of the member's ratchet-tree
+        // leaf index; `member_id_bytes` is our own. We can send while a member
+        // still occupies that leaf — i.e. we have not been removed.
+        let me = self.conversation.member_id_bytes();
+        self.conversation
+            .members_view()
+            .iter()
+            .any(|m| m.index.u32().to_be_bytes().as_slice() == me)
+    }
 }
 
 impl<S> GroupConvo<S> for GroupV2Convo
