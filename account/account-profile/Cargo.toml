@@ -1,0 +1,10 @@
+[package]
+name = "account-profile"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "The `profile` namespace of an account log: metadata describing the account's owner."
+
+[dependencies]
+account-log = { path = "../account-log" }
+thiserror = "2"
