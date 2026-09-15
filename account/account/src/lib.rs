@@ -1,10 +1,12 @@
 mod account;
 mod error;
+mod resolver;
 
 use std::fmt::{Debug, Display};
 
 pub use crate::account::Account;
 pub use crate::error::AccountError;
+pub use crate::resolver::AccountResolver;
 use account_log::{AccountAddr, SignedAccountLog};
 
 /// Read access to published account logs.
