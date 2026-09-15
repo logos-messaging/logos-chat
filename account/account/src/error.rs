@@ -10,4 +10,9 @@ pub enum AccountError {
     /// The provider's own error, stringified.
     #[error("account provider: {0}")]
     Provider(String),
+
+    /// The fetched log does not extend the one already held: the account has
+    /// shown two histories. The held record stands.
+    #[error("account log forks from the log already held")]
+    Forked,
 }

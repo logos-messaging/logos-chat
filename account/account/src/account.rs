@@ -57,20 +57,26 @@ pub struct AccountUpdate<'a, AP> {
 }
 
 impl<AP: AccountProvider + AccountPublisher> AccountUpdate<'_, AP> {
-    /// Endorse `key` under `context`.
+    /// Append `entry`, built anywhere — the extension point for other crates'
+    /// context specifications.
+    pub fn push(mut self, entry: AccountEntry) -> Self {
+        self.entries.push(entry);
+        self
+    }
+
+    /// Endorse `key` under `context`. Applies no rule beyond the log's own.
     pub fn endorse_ed25519_key(self, context: Context, key: &Ed25519VerifyingKey) -> Self {
         self.add(context, EntryData::Ed25519Key(key.to_bytes()))
     }
 
-    /// Endorse a text record under `context`.
+    /// Endorse a text record under `context`. Applies no rule beyond the log's own.
     pub fn endorse_text(self, context: Context, value: impl Into<String>) -> Self {
         self.add(context, EntryData::Text(value.into()))
     }
 
     /// Endorse `data` under `context`.
-    fn add(mut self, context: Context, data: EntryData) -> Self {
-        self.entries.push(AccountEntry::add(context, data));
-        self
+    fn add(self, context: Context, data: EntryData) -> Self {
+        self.push(AccountEntry::add(context, data))
     }
 
     /// Tombstone the entry at `index`.
@@ -131,6 +137,27 @@ mod tests {
 
     fn device() -> Ed25519VerifyingKey {
         Ed25519SigningKey::generate().verifying_key()
+    }
+
+    /// `push` takes an entry built anywhere, so a context specification's own
+    /// crate can contribute one without this crate knowing what it means.
+    #[test]
+    fn push_accepts_an_entry_built_elsewhere() {
+        let mut account = Account::new(FakeProvider::default());
+        let addr = account.addr();
+        let elsewhere = Context::new("elsewhere.record").unwrap();
+
+        let signed = account
+            .update()
+            .push(AccountEntry::add(
+                elsewhere.clone(),
+                EntryData::Text("opaque".into()),
+            ))
+            .publish()
+            .unwrap();
+
+        let log = signed.verify(&addr).unwrap();
+        assert_eq!(log.text_for(&elsewhere), vec!["opaque"]);
     }
 
     /// A chain of edits lands in one published log, in the order given.
