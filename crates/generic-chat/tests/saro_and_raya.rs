@@ -250,6 +250,7 @@ fn saro_raya_message_exchange() {
             convo_id,
             content,
             sender,
+            ..
         } => {
             assert_eq!(convo_id, raya_convo_id);
             assert_eq!(content.as_slice(), b"hello raya");

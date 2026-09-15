@@ -1,0 +1,12 @@
+[package]
+name = "message-types"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+description = "Batteries-included content (message) types for libchat, and the pattern to add your own."
+
+[dependencies]
+# External dependencies (sorted)
+ciborium = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2"

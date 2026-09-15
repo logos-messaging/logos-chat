@@ -37,6 +37,8 @@ pub enum Event {
         convo_id: Arc<str>,
         content: Vec<u8>,
         sender: MessageSender,
+        /// Cross-peer id of this message, for referencing it (replies/reactions).
+        message_id: String,
     },
     /// A peer acknowledged a message this client sent: it referenced that
     /// message in the causal history of a message of its own, so it held ours
