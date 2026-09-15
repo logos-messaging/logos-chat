@@ -582,6 +582,7 @@ impl GroupV2Convo {
                     // `sender` is the MLS-authenticated signer of the frame; its
                     // credential content is the account identity to attribute to.
                     encoded_credential: sender.credential.serialized_content().to_vec(),
+                    message_id: reliable.message_id.clone(),
                 })
             })
             .transpose()?;
