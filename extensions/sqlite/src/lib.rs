@@ -70,13 +70,12 @@ impl ConversationStore for SqliteStore {
         let result = stmt.query_row(params![local_convo_id], |row| {
             let local_convo_id: String = row.get(0)?;
             let convo_type: String = row.get(1)?;
-            Ok(ConversationMeta {
-                local_convo_id,
-                kind: ConversationKind::from(convo_type.as_str()),
-            })
+            Ok((local_convo_id, convo_type))
         });
 
-        map_optional_row(result)
+        map_optional_row(result)?
+            .map(|(local_convo_id, convo_type)| meta(local_convo_id, &convo_type))
+            .transpose()
     }
 
     /// Removes a conversation by its local ID.
@@ -92,6 +91,9 @@ impl ConversationStore for SqliteStore {
     }
 
     /// Loads all conversation records.
+    ///
+    /// A record naming a kind this build has no variant for is left out: the state behind it is
+    /// intact, and the build that wrote it is the one that can rebuild from it.
     fn load_conversations(&self) -> Result<Vec<ConversationMeta>, StorageError> {
         let mut stmt = self
             .db
@@ -103,16 +105,16 @@ impl ConversationStore for SqliteStore {
             .query_map([], |row| {
                 let local_convo_id: String = row.get(0)?;
                 let convo_type: String = row.get(1)?;
-                Ok(ConversationMeta {
-                    local_convo_id,
-                    kind: ConversationKind::from(convo_type.as_str()),
-                })
+                Ok((local_convo_id, convo_type))
             })
             .map_err(map_rusqlite_error)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(map_rusqlite_error)?;
 
-        Ok(records)
+        Ok(records
+            .into_iter()
+            .filter_map(|(local_convo_id, convo_type)| meta(local_convo_id, &convo_type).ok())
+            .collect())
     }
 
     /// Checks if a conversation exists by its local ID.
@@ -128,6 +130,14 @@ impl ConversationStore for SqliteStore {
             .map_err(map_rusqlite_error)?;
         Ok(exists)
     }
+}
+
+/// A record as the conversations table holds it; a kind no variant names is invalid data.
+fn meta(local_convo_id: String, convo_type: &str) -> Result<ConversationMeta, StorageError> {
+    Ok(ConversationMeta {
+        local_convo_id,
+        kind: ConversationKind::try_from(convo_type)?,
+    })
 }
 
 #[cfg(test)]
@@ -167,5 +177,27 @@ mod tests {
         assert_eq!(convos.len(), 1);
         assert_eq!(convos[0].local_convo_id, "local_2");
         assert_eq!(convos[0].kind.as_str(), "group_v1");
+    }
+
+    #[test]
+    fn test_unknown_conversation_kind_is_left_out_of_the_listing() {
+        let storage = SqliteStore::new(StorageConfig::InMemory).unwrap();
+        storage
+            .db
+            .connection()
+            .execute(
+                "INSERT INTO conversations (local_convo_id, convo_type) VALUES ('local_1', 'group_v9')",
+                [],
+            )
+            .unwrap();
+
+        assert!(storage.load_conversations().unwrap().is_empty());
+
+        // Asked for this record by id the store still reports it: the caller named a conversation
+        // it expects to exist, so an omission would read as no such conversation.
+        assert!(matches!(
+            storage.load_conversation("local_1"),
+            Err(StorageError::InvalidData(_))
+        ));
     }
 }

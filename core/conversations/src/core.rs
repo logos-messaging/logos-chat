@@ -469,9 +469,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         let record = self.load_conversation_meta(convo_id)?;
         Ok(match record.kind {
             ConversationKind::GroupV1 => Box::new(self.load_mls_convo(&record.local_convo_id)?),
-            ConversationKind::Unknown(_) => {
-                return Err(ChatError::UnsupportedConvoType(record.kind.as_str().into()));
-            }
+            other => return Err(ChatError::UnsupportedConvoType(other.as_str().into())),
         })
     }
 
