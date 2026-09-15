@@ -48,6 +48,12 @@ crate = "chat-proto"
 expression = "MIT OR Apache-2.0"
 license-files = []
 
+# mimi-content's manifest omits `license`; the mimi-rs repo is Apache-2.0.
+[[licenses.clarify]]
+crate = "mimi-content"
+expression = "Apache-2.0"
+license-files = []
+
 [bans]
 multiple-versions = "warn"
 wildcards = "allow"
@@ -58,4 +64,5 @@ unknown-git = "deny"
 allow-git = [
     "https://github.com/logos-messaging/chat_proto",
     "https://github.com/vacp2p/de-mls",
+    "https://github.com/nexun-foundation/mimi-rs",
 ]

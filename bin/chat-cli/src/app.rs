@@ -13,6 +13,28 @@ use serde::{Deserialize, Serialize};
 
 use crate::utils::now;
 
+/// Render a decoded content body for display. Markdown is tagged so it's visibly
+/// distinct; unknown types show a placeholder.
+fn render_content(content: &message_types::MessageContent) -> String {
+    use message_types::MessageContent::{Markdown, Text, Unsupported};
+    match content {
+        Text(s) => s.clone(),
+        Markdown(s) => format!("[md] {s}"),
+        Unsupported { content_type } => format!("[unsupported: {content_type}]"),
+    }
+}
+
+/// A short one-line snippet of a stored message body, for "replying to …" previews.
+fn snippet_of(body: &str) -> String {
+    let line = body.lines().next().unwrap_or("");
+    let short: String = line.chars().take(24).collect();
+    if line.chars().count() > 24 {
+        format!("{short}…")
+    } else {
+        short
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DisplayMessage {
     pub from_self: bool,
@@ -280,6 +302,7 @@ where
                 convo_id,
                 content,
                 sender,
+                message_id,
             } => {
                 let chat_id = convo_id.to_string();
                 // The client resolved the credential to an account; classify by it.
@@ -289,14 +312,26 @@ where
                     // Unassociated device — no account claim; fall back to its signer id.
                     None => MessageOrigin::Foreign(sender.local_identity.as_str().to_string()),
                 };
+                // Decode the content-type body; if it's a reply, prefix a short
+                // preview of the referenced message (resolved via its stored id).
+                let (mut body, in_reply_to) = match message_types::decode(&content) {
+                    Ok(msg) => (render_content(&msg.content), msg.in_reply_to),
+                    Err(_) => (String::from_utf8_lossy(&content).into_owned(), None),
+                };
                 let Some(session) = self.state.chats.get_mut(&chat_id) else {
                     return;
                 };
-                let message = DisplayMessage::new(
-                    false,
-                    String::from_utf8_lossy(&content).into_owned(),
-                    origin,
-                );
+                if let Some(target) = in_reply_to {
+                    let preview = session
+                        .messages
+                        .iter()
+                        .find(|m| m.message_id.as_deref() == Some(&target))
+                        .map(|m| snippet_of(&m.content))
+                        .unwrap_or_else(|| format!("re: {}", &target[..8.min(target.len())]));
+                    body = format!("↩ {preview}\n{body}");
+                }
+                let mut message = DisplayMessage::new(false, body, origin);
+                message.message_id = Some(message_id);
                 session.messages.push(message);
             }
             Event::MessageAcked {
@@ -360,7 +395,21 @@ where
         }
     }
 
+    /// Send a plain-text (`text/plain`) message.
     pub fn send_message(&mut self, content: &str) -> Result<()> {
+        let encoded = message_types::encode_text(content).map_err(|e| anyhow::anyhow!("{e}"))?;
+        self.send_encoded(encoded, content.to_string())
+    }
+
+    /// Send a Markdown (`text/markdown`) message.
+    fn send_markdown(&mut self, content: &str) -> Result<()> {
+        let encoded =
+            message_types::encode_markdown(content).map_err(|e| anyhow::anyhow!("{e}"))?;
+        self.send_encoded(encoded, format!("[md] {content}"))
+    }
+
+    /// Send already-encoded content bytes and echo a local copy in our view.
+    fn send_encoded(&mut self, encoded: Vec<u8>, echo: String) -> Result<()> {
         let chat_id = self
             .state
             .active_chat
@@ -376,11 +425,11 @@ where
 
         let message_id = self
             .client
-            .send_message(&chat_id, content.as_bytes())
+            .send_message(&chat_id, &encoded)
             .map_err(|e| anyhow::anyhow!("{e:?}"))?;
 
         if let Some(session) = self.state.chats.get_mut(&chat_id) {
-            let mut message = DisplayMessage::new(true, content.to_string(), MessageOrigin::Own);
+            let mut message = DisplayMessage::new(true, echo, MessageOrigin::Own);
             // Kept so `MessageAcked` can find this message again.
             message.message_id = Some(message_id);
             session.messages.push(message);
@@ -411,6 +460,8 @@ where
                 self.add_system_message("/new <name> [address...] - Create a group chat");
                 self.add_system_message("/add <address> - Add someone to the active group");
                 self.add_system_message("/members - List members of the active conversation");
+                self.add_system_message("/md <text> - Send a Markdown message");
+                self.add_system_message("/reply <text> - Reply to the latest message");
                 self.add_system_message("/nickname <name> - Name the active chat");
                 self.add_system_message("/chats - List all chats");
                 self.add_system_message("/switch <name|id> - Switch active chat");
@@ -552,6 +603,48 @@ where
                 }
                 Ok(Some(format!("{} member(s)", members.len())))
             }
+            "/md" => {
+                if args.is_empty() {
+                    return Ok(Some("Usage: /md <markdown text>".to_string()));
+                }
+                self.send_markdown(args)?;
+                Ok(Some("Sent (markdown)".to_string()))
+            }
+            "/reply" => {
+                let text = args.trim();
+                if text.is_empty() {
+                    return Ok(Some("Usage: /reply <text>".to_string()));
+                }
+                let chat_id = self
+                    .state
+                    .active_chat
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("No active chat. Use /dm or /new first."))?;
+                // Reply to the most recent message in this chat that has an id.
+                let target = self
+                    .state
+                    .chats
+                    .get(&chat_id)
+                    .and_then(|s| s.messages.iter().rev().find_map(|m| m.message_id.clone()));
+                let Some(target) = target else {
+                    return Ok(Some("Nothing to reply to yet.".to_string()));
+                };
+                let preview = self
+                    .state
+                    .chats
+                    .get(&chat_id)
+                    .and_then(|s| {
+                        s.messages
+                            .iter()
+                            .find(|m| m.message_id.as_deref() == Some(&target))
+                    })
+                    .map(|m| snippet_of(&m.content))
+                    .unwrap_or_default();
+                let encoded = message_types::encode_reply(&target, text)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                self.send_encoded(encoded, format!("↩ {preview}\n{text}"))?;
+                Ok(Some("Reply sent".to_string()))
+            }
             "/nickname" => {
                 if args.is_empty() {
                     return Ok(Some("Usage: /nickname <name>".to_string()));
@@ -648,5 +741,31 @@ where
                 "Unknown command: {command}. Type /help for commands."
             ))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{render_content, snippet_of};
+    use message_types::{decode, encode_markdown, encode_text};
+
+    fn body_of(bytes: &[u8]) -> String {
+        render_content(&decode(bytes).unwrap().content)
+    }
+
+    #[test]
+    fn renders_text() {
+        assert_eq!(body_of(&encode_text("hi there").unwrap()), "hi there");
+    }
+
+    #[test]
+    fn tags_markdown() {
+        assert_eq!(body_of(&encode_markdown("# H").unwrap()), "[md] # H");
+    }
+
+    #[test]
+    fn snippet_truncates_long_lines() {
+        assert_eq!(snippet_of("short"), "short");
+        assert_eq!(snippet_of(&"x".repeat(30)), format!("{}…", "x".repeat(24)));
     }
 }

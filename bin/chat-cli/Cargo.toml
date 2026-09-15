@@ -13,6 +13,7 @@ path = "src/main.rs"
 crossbeam-channel = { workspace = true }
 logos-account = { workspace = true, features = ["dev"] }
 logos-chat = { workspace = true }
+message-types = { workspace = true }
 
 # External dependencies (sorted)
 anyhow = "1.0"

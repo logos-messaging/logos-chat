@@ -286,6 +286,7 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
                 Some(Content {
                     bytes: reliable.content.to_vec(),
                     encoded_credential: cred_bytes,
+                    message_id: reliable.message_id.clone(),
                 })
             }
             ProcessedMessageContent::StagedCommitMessage(commit) => {

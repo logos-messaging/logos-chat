@@ -1,0 +1,12 @@
+[package]
+name = "message-types"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+description = "Content (message) types for libchat, backed by the MIMI content format (mimi-content)."
+
+[dependencies]
+# External dependencies (sorted)
+hex = "0.4"
+mimi-content = { git = "https://github.com/nexun-foundation/mimi-rs", rev = "d33c7e027a7fc3ab183de623f22a131586334c00" }
+thiserror = "2"

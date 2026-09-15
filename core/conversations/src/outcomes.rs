@@ -17,6 +17,9 @@ pub struct Content {
     /// Hex-encoded [`DelegateCredential`] of the sender, if present in the message.
     /// Empty when the sender did not attach a credential.
     pub encoded_credential: Vec<u8>,
+    /// Cross-peer message id (from the reliability envelope), so a consumer can
+    /// reference this message — e.g. a reply or reaction.
+    pub message_id: String,
 }
 
 #[derive(Debug, Clone)]
