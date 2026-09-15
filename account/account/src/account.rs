@@ -18,6 +18,14 @@ impl<AP: AccountProvider + AccountPublisher> Account<AP> {
         }
     }
 
+    /// The account whose address is `signing_key`'s verifying key.
+    pub fn from_signing_key(signing_key: Ed25519SigningKey, provider: AP) -> Self {
+        Self {
+            signing_key,
+            provider,
+        }
+    }
+
     /// The account's address.
     pub fn addr(&self) -> AccountAddr {
         AccountAddr::from(&self.signing_key.verifying_key())
@@ -302,5 +310,34 @@ mod tests {
         );
 
         assert_eq!(account.provider.fetch(&addr).unwrap().unwrap(), before);
+    }
+
+    /// A key exported and imported again is the same account: its next publish
+    /// extends the log it published before.
+    #[test]
+    fn an_imported_key_extends_its_published_log() {
+        let key = Ed25519SigningKey::generate();
+        let exported = key.DANGER_to_bytes();
+        let mut account = Account::from_signing_key(key, FakeProvider::default());
+        let addr = account.addr();
+
+        let first = account
+            .update()
+            .endorse_ed25519_key(SIGNER_CONTEXT.clone(), &device())
+            .publish()
+            .unwrap();
+
+        let mut imported =
+            Account::from_signing_key(Ed25519SigningKey::from_bytes(&exported), account.provider);
+        assert_eq!(imported.addr(), addr);
+
+        let second = imported
+            .update()
+            .endorse_ed25519_key(SIGNER_CONTEXT.clone(), &device())
+            .publish()
+            .unwrap();
+
+        let record = AccountRecord::new(addr, first).unwrap();
+        assert_eq!(record.update(second).outcome, Outcome::Updated);
     }
 }
