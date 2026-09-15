@@ -6,7 +6,7 @@ use std::{
 
 use crypto::Ed25519VerifyingKey;
 use libchat::{IdentityProvider, RegistrationService};
-use logos_account::{AccountDirectory, DeviceSet, SignedDeviceBundle, verify_bundle};
+use logos_account_DELETE::{AccountDirectory, DeviceSet, SignedDeviceBundle, verify_bundle};
 
 /// A Contact Registry used for Tests.
 /// This implementation stores bundle bytes and then returns them when

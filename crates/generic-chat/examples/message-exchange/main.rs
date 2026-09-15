@@ -1,5 +1,5 @@
 use components::EphemeralRegistry;
-use logos_account::TestLogosAccount;
+use logos_account_DELETE::TestLogosAccount;
 use logos_generic_chat::{ChatClientBuilder, DelegateSigner, Event, InProcessDelivery, MessageBus};
 use std::time::Duration;
 

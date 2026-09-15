@@ -6,7 +6,9 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use chat_proto::logoschat::store::{AccountSubmissionV1, KeyPackageSubmissionV1};
 use crypto::{Ed25519Signature, Ed25519VerifyingKey};
 use libchat::{AddressedEnvelope, DeliveryService, IdentityProvider, RegistrationService};
-use logos_account::{AccountDirectory, BundleError, DeviceSet, SignedDeviceBundle, verify_bundle};
+use logos_account_DELETE::{
+    AccountDirectory, BundleError, DeviceSet, SignedDeviceBundle, verify_bundle,
+};
 use prost::Message;
 use prost::bytes::Bytes;
 use serde::{Deserialize, Serialize};

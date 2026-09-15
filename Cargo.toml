@@ -37,7 +37,7 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 # Internal Workspace dependency declarations (sorted)
-logos-account = { path = "core/account" }
+logos-account-DELETE = { path = "core/account", package= "logos-account" }
 chat-sqlite = { path = "core/sqlite" }
 components = { path = "extensions/components" }
 crypto = { path = "core/crypto" }

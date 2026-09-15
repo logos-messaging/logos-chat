@@ -9,7 +9,7 @@ use std::time::Duration;
 use components::EphemeralRegistry;
 use crossbeam_channel::Receiver;
 use libchat::ChatStorage;
-use logos_account::TestLogosAccount;
+use logos_account_DELETE::TestLogosAccount;
 use logos_generic_chat::{
     ChatClient, ChatClientBuilder, ConversationClass, DelegateSigner, Event, GroupMetadata,
     GroupV2Config, InProcessDelivery, MessageBus,

@@ -3,7 +3,7 @@ use std::time::Duration;
 use components::EphemeralRegistry;
 use crossbeam_channel::{Receiver, Sender};
 use crypto::Ed25519VerifyingKey;
-use logos_account::TestLogosAccount;
+use logos_account_DELETE::TestLogosAccount;
 use logos_generic_chat::{
     AddressedEnvelope, ChatClient, ChatClientBuilder, ConversationClass, DelegateSigner,
     DeliveryService, Event, InProcessDelivery, MessageBus, Transport,

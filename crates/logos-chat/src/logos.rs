@@ -19,7 +19,7 @@ use components::{ContactRegistry, RegistryPublishMode};
 use crossbeam_channel::Receiver;
 use embedded_logos_delivery::{EmbeddedLogosDelivery, P2pConfig};
 use libchat::{ChatStorage, StorageConfig};
-use logos_account::TestLogosAccount;
+use logos_account_DELETE::TestLogosAccount;
 
 use logos_generic_chat::{
     ChatClient, ChatClientBuilder, ClientError, DelegateSigner, Event, GroupV2Config, Transport,

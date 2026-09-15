@@ -10,7 +10,7 @@ use libchat::{
     IdentId, IdentIdRef, InboxOutcome, MessageId, MissingMessage, PayloadOutcome,
     RegistrationService,
 };
-use logos_account::{AccountDirectory, resolve_device_ids};
+use logos_account_DELETE::{AccountDirectory, resolve_device_ids};
 use parking_lot::Mutex;
 use storage::ConversationStore;
 
@@ -701,7 +701,7 @@ mod sender_check_tests {
 
     use crypto::{Ed25519SigningKey, Ed25519VerifyingKey};
     use libchat::IdentId;
-    use logos_account::{DeviceSet, SignedDeviceBundle};
+    use logos_account_DELETE::{DeviceSet, SignedDeviceBundle};
 
     use super::{
         Event, GroupMember, MessageSender, SenderError, decode_sender, dedup_members,
@@ -733,7 +733,7 @@ mod sender_check_tests {
         }
     }
 
-    impl logos_account::AccountDirectory for FakeDir {
+    impl logos_account_DELETE::AccountDirectory for FakeDir {
         type Error = &'static str;
 
         fn publish(&mut self, _: &SignedDeviceBundle) -> Result<(), Self::Error> {
