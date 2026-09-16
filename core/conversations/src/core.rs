@@ -43,7 +43,7 @@ pub struct Core<S: ExternalServices> {
 impl<IP, AS, DS, RS, WS, CS> Core<(IP, AS, DS, RS, WS, CS)>
 where
     IP: IdentityProvider + 'static,
-    AS: AuthService + 'static,
+    AS: AuthService + Send +'static,
     DS: DeliveryService + 'static,
     RS: RegistrationService + 'static,
     WS: WakeupService + 'static,

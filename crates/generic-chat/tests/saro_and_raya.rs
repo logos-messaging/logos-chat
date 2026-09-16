@@ -11,7 +11,7 @@ use crypto::Ed25519VerifyingKey;
 use logos_account::AccountAddr;
 use logos_generic_chat::{
     AddressedEnvelope, ChatClient, ChatClientBuilder, ConversationClass, DelegateSigner,
-    DeliveryService, Event, InProcessDelivery, MessageBus, Transport,
+    DeliveryService, Event, InProcessDelivery, MessageBus, Transport, UncheckedAuth,
 };
 
 /// A client for a fresh account: mints the account and a delegate, then builds
@@ -22,7 +22,7 @@ fn create_test_client(
     reg: EphemeralRegistry,
 ) -> Result<
     (
-        ChatClient<InProcessDelivery, EphemeralRegistry, libchat::ChatStorage>,
+        ChatClient<InProcessDelivery, EphemeralRegistry, UncheckedAuth, libchat::ChatStorage>,
         Receiver<Event>,
     ),
     logos_generic_chat::ClientError,
@@ -34,6 +34,7 @@ fn create_test_client(
         .ident(delegate)
         .transport(d)
         .registration(reg)
+        .auth(UncheckedAuth {})
         .build()
 }
 
@@ -116,6 +117,7 @@ fn direct_v1_standalone_integration() {
         .ident(saro_delegate)
         .transport(InProcessDelivery::new(bus.clone()))
         .registration(reg_service.clone())
+        .auth(UncheckedAuth {})
         .build()
         .expect("client create");
     let (raya, raya_events) =
@@ -172,6 +174,7 @@ fn direct_v1_by_account_address() {
         .ident(raya_delegate)
         .transport(InProcessDelivery::new(bus.clone()))
         .registration(reg_service.clone())
+        .auth(UncheckedAuth {})
         .build()
         .expect("client create");
     let (mut saro, saro_events) =
@@ -437,6 +440,7 @@ fn malformed_inbound_surfaces_as_error_event() {
 
     let (_client, events) = ChatClientBuilder::new(TestLogosAccount::new().address())
         .transport(delivery)
+        .auth(UncheckedAuth)
         .build()
         .expect("client create");
 

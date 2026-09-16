@@ -1,5 +1,7 @@
 use components::EphemeralRegistry;
-use logos_generic_chat::{ChatClientBuilder, DelegateSigner, Event, InProcessDelivery, MessageBus};
+use logos_generic_chat::{
+    ChatClientBuilder, DelegateSigner, Event, InProcessDelivery, MessageBus, UncheckedAuth,
+};
 use std::time::Duration;
 
 fn main() {
@@ -18,6 +20,7 @@ fn main() {
         .ident(saro_delegate)
         .transport(InProcessDelivery::new(bus.clone()))
         .registration(reg.clone())
+        .auth(UncheckedAuth)
         .build()
         .unwrap();
 
@@ -25,6 +28,7 @@ fn main() {
         .ident(raya_delegate)
         .transport(InProcessDelivery::new(bus))
         .registration(reg)
+        .auth(UncheckedAuth)
         .build()
         .unwrap();
 

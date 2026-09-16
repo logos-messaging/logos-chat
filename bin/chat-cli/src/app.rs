@@ -6,8 +6,8 @@ use anyhow::Result;
 use arboard::Clipboard;
 use crossbeam_channel::Receiver;
 use logos_chat::{
-    AccountAddr, ChatClient, ConversationClass, ConversationStore, Event, GroupMetadata,
-    RegistrationService, Transport,
+    AccountAddr, AuthService, ChatClient, ConversationClass, ConversationStore, Event,
+    GroupMetadata, RegistrationService, Transport,
 };
 use serde::{Deserialize, Serialize};
 
@@ -74,13 +74,14 @@ pub struct AppState {
     pub active_chat: Option<String>,
 }
 
-pub struct ChatApp<T, R, S>
+pub struct ChatApp<T, R, A, S>
 where
     T: Transport,
     R: RegistrationService + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
-    pub client: ChatClient<T, R, S>,
+    pub client: ChatClient<T, R, A, S>,
     events: Receiver<Event>,
     pub state: AppState,
     /// Whether the active chat can accept outbound content this session. Mirrors
@@ -95,14 +96,15 @@ where
     state_path: PathBuf,
 }
 
-impl<T, R, S> ChatApp<T, R, S>
+impl<T, R, A, S> ChatApp<T, R, A, S>
 where
     T: Transport,
     R: RegistrationService + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send,
 {
     pub fn new(
-        client: ChatClient<T, R, S>,
+        client: ChatClient<T, R, A, S>,
         events: Receiver<Event>,
         user_name: &str,
         data_dir: &Path,

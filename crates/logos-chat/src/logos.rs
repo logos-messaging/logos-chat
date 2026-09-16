@@ -21,7 +21,8 @@ use embedded_logos_delivery::{EmbeddedLogosDelivery, P2pConfig};
 use libchat::{ChatStorage, StorageConfig};
 
 use logos_generic_chat::{
-    ChatClient, ChatClientBuilder, ClientError, DelegateSigner, Event, GroupV2Config, Transport,
+    ChatClient, ChatClientBuilder, ClientError, DelegateSigner, Event, GroupV2Config, PanicAuth,
+    Transport, UncheckedAuth,
 };
 
 /// The endpoint for the account and keypackage registration service.
@@ -126,7 +127,7 @@ pub fn open_with_transport<T: Transport + Clone>(
     transport: T,
 ) -> Result<
     (
-        ChatClient<T, ContactRegistry<T>, ChatStorage>,
+        ChatClient<T, ContactRegistry<T>, PanicAuth, ChatStorage>,
         Receiver<Event>,
     ),
     ClientError,
@@ -146,6 +147,7 @@ pub fn open_with_transport<T: Transport + Clone>(
         .ident(delegate)
         .transport(transport)
         .registration(registry)
+        .auth(PanicAuth)
         .storage_config(StorageConfig::Encrypted {
             path: config.db_path,
             key: config.db_key,
@@ -164,8 +166,12 @@ pub fn open_with_transport<T: Transport + Clone>(
 /// and encrypted [`ChatStorage`] — running an embedded logos-delivery node as
 /// its transport. Open one with [`open`], or swap the transport via
 /// [`open_with_transport`].
-pub type LogosChatClient =
-    ChatClient<EmbeddedLogosDelivery, ContactRegistry<EmbeddedLogosDelivery>, ChatStorage>;
+pub type LogosChatClient = ChatClient<
+    EmbeddedLogosDelivery,
+    ContactRegistry<EmbeddedLogosDelivery>,
+    PanicAuth,
+    ChatStorage,
+>;
 
 /// A stand-in account address while the account layer is out.
 ///

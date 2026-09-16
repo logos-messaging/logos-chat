@@ -301,3 +301,19 @@ impl libchat::AuthService for UncheckedAuth {
         Ok(libchat::AuthResult::Valid)
     }
 }
+
+/// Temp mock: panics so tests will not pass
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PanicAuth;
+
+impl libchat::AuthService for PanicAuth {
+    type Error = std::convert::Infallible;
+
+    fn validate_external_identifier(
+        &self,
+        _signer: Signer,
+        _external_id: libchat::ExternalIdentifier,
+    ) -> Result<libchat::AuthResult, Self::Error> {
+        panic!("DANGER")
+    }
+}
