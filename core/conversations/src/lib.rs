@@ -28,8 +28,10 @@ pub use outcomes::{
     Content, ConversationClass, ConvoOutcome, InboxOutcome, NewConversation, PayloadOutcome,
 };
 pub use service_context::ExternalServices;
-pub use service_traits::{DeliveryService, RegistrationService, WakeupService};
-pub use shared_traits::{IdentityProvider, Signer, SignerRef};
+pub use service_traits::{
+    AuthResult, AuthService, DeliveryService, RegistrationService, WakeupService,
+};
+pub use shared_traits::{ExternalIdentifier, IdentityProvider, Signer, SignerRef};
 pub use storage::{ConversationKind, ConversationStore};
 pub use types::{AddressedEnvelope, ConvoMetadata};
 pub use utils::{hex_trunc, trunc};

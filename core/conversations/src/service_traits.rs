@@ -1,7 +1,7 @@
 /// Service traits define the functionality which must be externally supplied by
 /// platform clients. Platforms can alter the behaviour of the chat core by supplying
 /// different implementations.
-use shared_traits::IdentityProvider;
+use shared_traits::{ExternalIdentifier, IdentityProvider, Signer};
 use std::{
     fmt::{Debug, Display},
     time::Duration,
@@ -55,4 +55,19 @@ impl<T: RegistrationService> KeyPackageProvider for T {
 
 pub trait WakeupService: Debug {
     fn wakeup_in(&mut self, duration: Duration, convo_id: ConversationId);
+}
+
+pub enum AuthResult {
+    Valid,
+    Revoked,
+    Invalid,
+}
+
+pub trait AuthService: Debug {
+    type Error: Display + Debug;
+    fn validate_external_identifier(
+        &self,
+        signer: Signer,
+        external_id: ExternalIdentifier,
+    ) -> Result<AuthResult, Self::Error>;
 }

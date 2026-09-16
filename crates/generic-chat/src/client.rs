@@ -15,11 +15,18 @@ use logos_account_DELETE::{AccountDirectory, resolve_device_ids};
 use parking_lot::Mutex;
 use storage::ConversationStore;
 
-use crate::delegate::{DelegateCredential, DelegateIdentity, DelegateSigner};
+use crate::delegate::{DelegateCredential, DelegateIdentity, DelegateSigner, UncheckedAuth};
 use crate::errors::ClientError;
 use crate::event::{Event, MessageSender};
 
-type ClientCore<T, R, S> = Core<(DelegateIdentity, T, R, ThreadedWakeupService, S)>;
+type ClientCore<T, R, S> = Core<(
+    DelegateIdentity,
+    UncheckedAuth,
+    T,
+    R,
+    ThreadedWakeupService,
+    S,
+)>;
 type AccountAddressRef<'a> = &'a str;
 type LocalSigner = Signer;
 
@@ -123,7 +130,14 @@ where
         let wakeup_service = ThreadedWakeupService::new(wakeup_tx);
         let directory = reg.clone();
         let ident = DelegateIdentity::new(ident, &account);
-        let mut core = Core::new_with_name(ident, transport, reg, wakeup_service, storage)?;
+        let mut core = Core::new_with_name(
+            ident,
+            UncheckedAuth,
+            transport,
+            reg,
+            wakeup_service,
+            storage,
+        )?;
         if let Some(config) = group_v2 {
             core.set_group_v2_config(config);
         }
@@ -332,11 +346,25 @@ where
     fn signers_from_account(
         &self,
         account: AccountAddressRef,
-    ) -> Result<Vec<LocalSignerId>, ClientError> {
-        let account = IdentId::new(account.to_string());
-        let device_ids = resolve_device_ids(&self.directory, &account)
+    ) -> Result<Vec<LocalSigner>, ClientError> {
+        let account: AccountAddr = account
+            .parse()
+            .map_err(|_| ClientError::AccountResolution("not an account address".to_owned()))?;
+        let account_signer = Signer::try_from(account.to_bytes())
+            .map_err(|_| ClientError::AccountResolution("not an account key".to_owned()))?;
+        let device_ids = resolve_device_ids(&self.directory, &account_signer)
             .map_err(|e| ClientError::AccountResolution(e.to_string()))?;
-        Ok(device_ids.into_iter().map(IdentId::new).collect())
+        device_ids
+            .into_iter()
+            .map(|id| {
+                hex::decode(&id)
+                    .ok()
+                    .and_then(|bytes| Signer::try_from(bytes.as_slice()).ok())
+                    .ok_or_else(|| {
+                        ClientError::AccountResolution(format!("malformed device id: {id}"))
+                    })
+            })
+            .collect()
     }
 
     /// Resolve each account to its signer ids and flatten them, failing on the
@@ -344,7 +372,7 @@ where
     fn signers_from_accounts(
         &self,
         accounts: &[AccountAddressRef],
-    ) -> Result<Vec<LocalSignerId>, ClientError> {
+    ) -> Result<Vec<LocalSigner>, ClientError> {
         let mut signers = Vec::new();
         for account in accounts {
             signers.extend(self.signers_from_account(account)?);
@@ -400,8 +428,8 @@ fn worker_loop<T, R, S: ConversationStore + 'static>(
                             }]
                         }
                     };
-                    events.extend(delivery_ack_events(core.take_acks(), &directory));
-                    events.extend(missing_events(core.take_missing_messages(), &directory));
+                    events.extend(delivery_ack_events(core.take_acks()));
+                    events.extend(missing_events(core.take_missing_messages()));
                     events
                 };
                 for event in events {
@@ -424,8 +452,8 @@ fn worker_loop<T, R, S: ConversationStore + 'static>(
                             Vec::new()
                         }
                     };
-                    events.extend(delivery_ack_events(core.take_acks(), &directory));
-                    events.extend(missing_events(core.take_missing_messages(), &directory));
+                    events.extend(delivery_ack_events(core.take_acks()));
+                    events.extend(missing_events(core.take_missing_messages()));
                     events
                 };
                 for event in events {
@@ -456,12 +484,12 @@ fn events_from_inbound(result: PayloadOutcome, directory: &impl AccountDirectory
 ///
 /// Drained from the same place as [`missing_events`]: the causal history of the
 /// message just processed is what carried the acknowledgement.
-fn delivery_ack_events(acks: Vec<DeliveryAck>, directory: &impl AccountDirectory) -> Vec<Event> {
+fn delivery_ack_events(acks: Vec<DeliveryAck>) -> Vec<Event> {
     acks.into_iter()
         .map(|a| Event::MessageAcked {
             convo_id: Arc::from(a.conversation_id),
             message_id: a.message_id,
-            acked_by: sender_hint(directory, &a.acked_by),
+            acked_by: sender_hint(&a.acked_by),
         })
         .collect()
 }
@@ -473,13 +501,13 @@ fn delivery_ack_events(acks: Vec<DeliveryAck>, directory: &impl AccountDirectory
 /// of events for the message that revealed it — and after them, so a gap on a
 /// conversation this payload just started still follows its
 /// [`Event::ConversationStarted`].
-fn missing_events(missing: Vec<MissingMessage>, directory: &impl AccountDirectory) -> Vec<Event> {
+fn missing_events(missing: Vec<MissingMessage>) -> Vec<Event> {
     missing
         .into_iter()
         .map(|m| Event::MessageMissing {
             convo_id: Arc::from(m.conversation_id),
             message_id: m.frontier.message_id().to_owned(),
-            sender_hint: sender_hint(directory, m.frontier.sender_id()),
+            sender_hint: sender_hint(m.frontier.sender_id()),
         })
         .collect()
 }
@@ -491,14 +519,11 @@ fn missing_events(missing: Vec<MissingMessage>, directory: &impl AccountDirector
 /// self-asserted rather than authenticated, so an unconfirmable account yields
 /// the device alone rather than dropping the observation. `None` when the value
 /// is not a credential at all.
-fn sender_hint(directory: &impl AccountDirectory, encoded: &str) -> Option<MessageSender> {
-    let (device, claim) = parse_credential(directory, encoded.as_bytes()).ok()?;
+fn sender_hint(encoded: &str) -> Option<MessageSender> {
+    let bytes = hex::decode(encoded).ok()?;
     Some(MessageSender {
-        account: match claim {
-            AccountClaim::Verified(account) => Some(account),
-            AccountClaim::None | AccountClaim::Unverified(_) => None,
-        },
-        local_identity: device,
+        account: None,
+        local_identity: Signer::try_from(bytes.as_slice()).ok()?,
     })
 }
 
@@ -514,8 +539,6 @@ enum SenderError {
     /// No credential at all, so no sender can be attributed. Every delivered
     /// message must carry an explicit sender.
     Missing,
-    /// Credential bytes were not valid hex.
-    NotHex,
     /// Credential bytes did not decode to a delegate credential.
     Malformed,
     /// The claimed account address is not an Ed25519 verifying key.
@@ -531,7 +554,7 @@ enum AccountClaim {
     /// The credential claimed no account.
     None,
     /// Confirmed: the directory lists this device under the claimed account.
-    Verified(IdentId),
+    Verified(AccountAddr),
     /// An account was claimed but could not be confirmed (see [`SenderError`]).
     Unverified(SenderError),
 }
@@ -545,20 +568,16 @@ enum AccountClaim {
 fn parse_credential(
     directory: &impl AccountDirectory,
     encoded: &[u8],
-) -> Result<(IdentId, AccountClaim), SenderError> {
+) -> Result<(Signer, AccountClaim), SenderError> {
     // No credential at all: there is no device to attribute.
     if encoded.is_empty() {
         return Err(SenderError::Missing);
     }
-    let Ok(data) = hex::decode(encoded) else {
-        tracing::warn!("credential is not valid hex");
-        return Err(SenderError::NotHex);
-    };
-    let Ok(cred) = DelegateCredential::try_from(data) else {
+    let Ok(cred) = DelegateCredential::try_from(encoded.to_vec()) else {
         tracing::warn!("malformed credential");
         return Err(SenderError::Malformed);
     };
-    let device = IdentId::new(hex::encode(cred.delegate_id().as_ref()));
+    let device = Signer::from(cred.delegate_id().clone());
     // An unassociated delegate asserts no account → device mapping.
     let Some(account_addr) = cred.account_addr() else {
         return Ok((device, AccountClaim::None));
@@ -570,12 +589,18 @@ fn parse_credential(
             AccountClaim::Unverified(SenderError::AccountNotAKey),
         ));
     };
+    // The directory is keyed on hex device ids, so the comparison is in that
+    // spelling.
+    let device_hex = device.to_string();
     let claim = match directory.fetch(&account_key) {
-        Ok(Some(set)) if set.devices.iter().any(|d| d.as_str() == device.as_str()) => {
-            AccountClaim::Verified(IdentId::new(account_addr.to_string()))
+        Ok(Some(set)) if set.devices.contains(&device_hex) => {
+            match account_addr.parse::<AccountAddr>() {
+                Ok(account) => AccountClaim::Verified(account),
+                Err(_) => AccountClaim::Unverified(SenderError::AccountNotAKey),
+            }
         }
         _ => {
-            tracing::warn!(account_addr, device = %device.as_str(), "account → device mapping is wrong or unconfirmable");
+            tracing::warn!(account_addr, device = %device_hex, "account → device mapping is wrong or unconfirmable");
             AccountClaim::Unverified(SenderError::Unverified)
         }
     };
@@ -631,12 +656,11 @@ fn roster_member(directory: &impl AccountDirectory, encoded: &[u8]) -> Option<Gr
 /// verified account, so an account's several devices count once; or, for a
 /// member with no confirmed account, its device — unique per MLS leaf, so it
 /// never merges with another.
-fn member_key(member: &GroupMember) -> &str {
-    member
-        .account
-        .as_ref()
-        .unwrap_or(&member.local_identity)
-        .as_str()
+fn member_key(member: &GroupMember) -> String {
+    match &member.account {
+        Some(account) => account.to_string(),
+        None => member.local_identity.to_string(),
+    }
 }
 
 /// Collapse a roster to one entry per account (keeping the first-seen device as
@@ -701,12 +725,11 @@ mod sender_check_tests {
     use std::collections::HashMap;
 
     use crypto::{Ed25519SigningKey, Ed25519VerifyingKey};
-    use libchat::IdentId;
     use logos_account_DELETE::{DeviceSet, SignedDeviceBundle};
 
     use super::{
-        Event, GroupMember, MessageSender, SenderError, decode_sender, dedup_members,
-        delivery_ack_events, member_key, missing_events, roster_member,
+        AccountAddr, Event, GroupMember, MessageSender, SenderError, Signer, decode_sender,
+        dedup_members, delivery_ack_events, member_key, missing_events, roster_member,
     };
     use crate::delegate::DelegateCredential;
     use libchat::{DeliveryAck, Frontier, MissingMessage};
@@ -762,11 +785,16 @@ mod sender_check_tests {
     /// Encode a credential exactly as it travels on the wire: the hex of the
     /// serialized TLV, matching the MLS leaf credential's content bytes.
     fn encoded(cred: DelegateCredential) -> Vec<u8> {
-        hex::encode(cred.serialize()).into_bytes()
+        cred.serialize()
     }
 
-    fn local_id(k: &Ed25519VerifyingKey) -> IdentId {
-        IdentId::new(hex::encode(k.as_ref()))
+    fn local_id(k: &Ed25519VerifyingKey) -> Signer {
+        Signer::from(k.clone())
+    }
+
+    /// The same key an account is known by, as an address.
+    fn addr(k: &Ed25519VerifyingKey) -> AccountAddr {
+        AccountAddr::try_from(k.as_ref()).expect("a generated key is an address")
     }
 
     /// The account published a device set that includes the sending device — the
@@ -780,7 +808,7 @@ mod sender_check_tests {
         assert_eq!(
             decode_sender(&dir, &encoded(cred)),
             Ok(MessageSender {
-                account: Some(local_id(&account)),
+                account: Some(addr(&account)),
                 local_identity: local_id(&device),
             })
         );
@@ -859,11 +887,11 @@ mod sender_check_tests {
     #[test]
     fn malformed_credential_is_dropped() {
         let dir = FakeDir::default();
-        assert_eq!(decode_sender(&dir, b"not hex"), Err(SenderError::NotHex));
         assert_eq!(
-            decode_sender(&dir, hex::encode([0u8; 4]).as_bytes()),
+            decode_sender(&dir, b"not a credential"),
             Err(SenderError::Malformed)
         );
+        assert_eq!(decode_sender(&dir, &[0u8; 4]), Err(SenderError::Malformed));
     }
 
     /// An account address that isn't a verifying key can't be looked up, so the
@@ -889,7 +917,7 @@ mod sender_check_tests {
         assert_eq!(
             roster_member(&dir, &encoded(cred)),
             Some(GroupMember {
-                account: Some(local_id(&account)),
+                account: Some(addr(&account)),
                 local_identity: local_id(&device),
                 pending: false,
             })
@@ -975,27 +1003,39 @@ mod sender_check_tests {
     /// order preserved.
     #[test]
     fn dedup_collapses_account_devices_and_keeps_unknowns() {
-        let with_account = |account: &str, device: &str| GroupMember {
-            account: Some(IdentId::new(account.to_string())),
-            local_identity: IdentId::new(device.to_string()),
+        let (alice, bob) = (addr(&key()), addr(&key()));
+        let (alice_dev_1, alice_dev_2) = (local_id(&key()), local_id(&key()));
+        let bob_dev_1 = local_id(&key());
+        let (orphan_x, orphan_y) = (local_id(&key()), local_id(&key()));
+        let with_account = |account: &AccountAddr, device: &Signer| GroupMember {
+            account: Some(account.clone()),
+            local_identity: device.clone(),
             pending: false,
         };
-        let device_only = |device: &str| GroupMember {
+        let device_only = |device: &Signer| GroupMember {
             account: None,
-            local_identity: IdentId::new(device.to_string()),
+            local_identity: device.clone(),
             pending: false,
         };
         let roster = dedup_members(vec![
-            with_account("alice", "alice-dev-1"),
-            with_account("alice", "alice-dev-2"),
-            device_only("orphan-x"),
-            with_account("bob", "bob-dev-1"),
-            device_only("orphan-y"),
+            with_account(&alice, &alice_dev_1),
+            with_account(&alice, &alice_dev_2),
+            device_only(&orphan_x),
+            with_account(&bob, &bob_dev_1),
+            device_only(&orphan_y),
         ]);
-        let keys: Vec<&str> = roster.iter().map(member_key).collect();
-        assert_eq!(keys, ["alice", "orphan-x", "bob", "orphan-y"]);
+        let keys: Vec<String> = roster.iter().map(member_key).collect();
+        assert_eq!(
+            keys,
+            [
+                alice.to_string(),
+                orphan_x.to_string(),
+                bob.to_string(),
+                orphan_y.to_string(),
+            ]
+        );
         // Alice's collapsed entry keeps her first-seen device.
-        assert_eq!(roster[0].local_identity.as_str(), "alice-dev-1");
+        assert_eq!(roster[0].local_identity, alice_dev_1);
     }
 
     /// An account that is both committed and pending collapses to its committed
@@ -1003,14 +1043,15 @@ mod sender_check_tests {
     /// the first entry per account.
     #[test]
     fn dedup_collapses_a_pending_duplicate_into_the_committed_member() {
+        let alice = addr(&key());
         let committed = GroupMember {
-            account: Some(IdentId::new("alice")),
-            local_identity: IdentId::new("alice-dev-1"),
+            account: Some(alice.clone()),
+            local_identity: local_id(&key()),
             pending: false,
         };
         let pending = GroupMember {
-            account: Some(IdentId::new("alice")),
-            local_identity: IdentId::new("alice-dev-2"),
+            account: Some(alice),
+            local_identity: local_id(&key()),
             pending: true,
         };
         assert_eq!(
@@ -1026,10 +1067,6 @@ mod sender_check_tests {
             conversation_id: "convo".to_owned(),
             frontier: Frontier::new(sender_hint.to_owned(), "msg-id".to_owned()),
         }
-    }
-
-    fn hex_cred(cred: DelegateCredential) -> String {
-        hex::encode(cred.serialize())
     }
 
     /// Unwrap the single `MessageMissing` a one-gap batch produces.
@@ -1054,32 +1091,27 @@ mod sender_check_tests {
 
     /// An account claim the directory contradicts drops a *delivered* message,
     /// but a gap is still worth reporting: the hint keeps the device and
-    /// forgoes the account, since nothing about an unseen message is verifiable
-    /// anyway.
+    /// forgoes the account: the causal history names a signer, and a signer
+    /// alone does not say which account it acts for.
     #[test]
-    fn missing_message_hint_keeps_the_device_when_the_account_claim_fails() {
-        let account = key();
-        let endorsed = key();
-        let spoofer = key();
-        let dir = FakeDir::with_devices(&account, &[&endorsed]);
-        let cred = DelegateCredential::associated(&spoofer, &hex::encode(account.as_ref()));
+    fn missing_message_hint_names_the_device_without_an_account() {
+        let device = key();
 
-        let (_, sender) = only_missing(missing_events(vec![gap(&hex_cred(cred))], &dir));
+        let (_, sender) = only_missing(missing_events(vec![gap(&hex::encode(device.as_ref()))]));
         assert_eq!(
             sender,
             Some(MessageSender {
                 account: None,
-                local_identity: local_id(&spoofer),
+                local_identity: local_id(&device),
             })
         );
     }
 
-    /// A hint that is not a credential at all still reports the gap — the
-    /// message id is the part the application needs.
+    /// A hint that is not a signer at all still reports the gap — the message
+    /// id is the part the application needs.
     #[test]
     fn missing_message_without_a_resolvable_hint_is_still_reported() {
-        let (message_id, sender) =
-            only_missing(missing_events(vec![gap("saro")], &FakeDir::default()));
+        let (message_id, sender) = only_missing(missing_events(vec![gap("saro")]));
         assert_eq!(message_id, "msg-id");
         assert_eq!(sender, None);
     }
@@ -1088,19 +1120,13 @@ mod sender_check_tests {
     /// application would list against the message.
     #[test]
     fn acks_name_the_peers_that_hold_the_message() {
-        let account = key();
         let device = key();
-        let dir = FakeDir::with_devices(&account, &[&device]);
-        let peer = DelegateCredential::associated(&device, &hex::encode(account.as_ref()));
 
-        let events = delivery_ack_events(
-            vec![DeliveryAck {
-                conversation_id: "convo".to_owned(),
-                message_id: "msg-id".to_owned(),
-                acked_by: hex_cred(peer),
-            }],
-            &dir,
-        );
+        let events = delivery_ack_events(vec![DeliveryAck {
+            conversation_id: "convo".to_owned(),
+            message_id: "msg-id".to_owned(),
+            acked_by: hex::encode(device.as_ref()),
+        }]);
 
         match <[Event; 1]>::try_from(events)
             .expect("one ack produces one event")
@@ -1118,7 +1144,7 @@ mod sender_check_tests {
                 assert_eq!(
                     acked_by,
                     Some(MessageSender {
-                        account: Some(local_id(&account)),
+                        account: None,
                         local_identity: local_id(&device),
                     })
                 );
