@@ -8,12 +8,13 @@ use chat_proto::logoschat::reliability::ReliablePayload;
 use openmls::prelude::tls_codec::Deserialize;
 use openmls::prelude::*;
 use prost::Message as _;
-use shared_traits::SignerRef;
+use shared_traits::{ExternalIdentifier, Signer, SignerRef};
 use std::collections::VecDeque;
 use tracing::debug;
 
 use crate::conversation::{ConversationIdRef, MessageId};
 use crate::inbox_v2::MlsProvider;
+use crate::outcomes::AuthenticatedSender;
 use crate::service_context::{ExternalServices, ServiceContext};
 
 use crate::types::ConvoMetadata;
@@ -279,15 +280,24 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
             .process_message(&cx.mls_provider, protocol_message)
             .map_err(ChatError::generic)?;
 
+        // Taken before `into_content` consumes the message.
         let cred_bytes = processed.credential().serialized_content().to_vec();
-
         let content = match processed.into_content() {
             ProcessedMessageContent::ApplicationMessage(msg) => {
+                // TODO! Must validate credential.
+                // TODO! The sender's signature key is not plumbed through here
+                // yet — `ProcessedMessage` names the sender by leaf index, so
+                // it needs a lookup in the group. Empty until that lands.
+                let authenticated = AuthenticatedSender::with(
+                    Vec::new(),
+                    ExternalIdentifier::from(&cred_bytes[..]),
+                );
+
                 let reliable = ReliablePayload::decode(msg.into_bytes().as_slice())?;
                 cx.causal.on_receive(&self.convo_id, &reliable);
                 Some(Content {
                     bytes: reliable.content.to_vec(),
-                    encoded_credential: cred_bytes,
+                    sender: authenticated,
                 })
             }
             ProcessedMessageContent::StagedCommitMessage(commit) => {

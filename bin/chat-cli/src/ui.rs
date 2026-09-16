@@ -16,7 +16,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
 };
 
-use logos_chat::{AccountDirectory, ConversationStore, RegistrationService, Transport};
+use logos_chat::{ConversationStore, RegistrationService, Transport};
 
 use crate::app::ChatApp;
 
@@ -41,7 +41,7 @@ pub fn restore() -> io::Result<()> {
 pub fn draw<D, R, S>(frame: &mut Frame, app: &ChatApp<D, R, S>)
 where
     D: Transport + Send + 'static,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
     let chunks = Layout::default()
@@ -63,7 +63,7 @@ where
 fn draw_header<D, R, S>(frame: &mut Frame, app: &ChatApp<D, R, S>, area: Rect)
 where
     D: Transport + Send + 'static,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
     let title = match app.current_session() {
@@ -92,7 +92,7 @@ where
 fn draw_messages<D, R, S>(frame: &mut Frame, app: &ChatApp<D, R, S>, area: Rect)
 where
     D: Transport + Send + 'static,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
     let remote_name = app
@@ -209,7 +209,7 @@ where
 fn draw_input<D, R, S>(frame: &mut Frame, app: &ChatApp<D, R, S>, area: Rect)
 where
     D: Transport + Send + 'static,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
     // Inner width: area minus borders (2).
@@ -241,7 +241,7 @@ where
 fn draw_status<D, R, S>(frame: &mut Frame, app: &ChatApp<D, R, S>, area: Rect)
 where
     D: Transport + Send + 'static,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
     let status = Paragraph::new(app.status.as_str())
@@ -256,7 +256,7 @@ where
 pub fn handle_events<D, R, S>(app: &mut ChatApp<D, R, S>) -> io::Result<bool>
 where
     D: Transport + Send + 'static,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
     // Poll for events with a short timeout to allow checking incoming messages

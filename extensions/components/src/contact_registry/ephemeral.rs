@@ -4,21 +4,18 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crypto::Ed25519VerifyingKey;
 use libchat::{IdentityProvider, RegistrationService};
-use logos_account_DELETE::{AccountDirectory, DeviceSet, SignedDeviceBundle, verify_bundle};
 
 /// A Contact Registry used for Tests.
 /// This implementation stores bundle bytes and then returns them when
 /// retrieved.
 ///
-/// Like the real `keypackage-registry`, one object serves both roles: a
-/// keypackage store ([`RegistrationService`]) keyed by `device_id`, and an
-/// account → device directory ([`AccountDirectory`]) keyed by the hex account key.
+/// A keypackage store ([`RegistrationService`]) keyed by `device_id`. The
+/// account → device directory it also served was removed with the
+/// device-bundle crate; account resolution returns with account-log.
 #[derive(Clone, Default)]
 pub struct EphemeralRegistry {
     key_packages: Arc<Mutex<HashMap<String, Vec<u8>>>>,
-    installations: Arc<Mutex<HashMap<String, SignedDeviceBundle>>>,
 }
 
 impl EphemeralRegistry {
@@ -73,40 +70,5 @@ impl RegistrationService for EphemeralRegistry {
         device_id: &str,
     ) -> Result<Option<Vec<u8>>, <Self as RegistrationService>::Error> {
         Ok(self.key_packages.lock().unwrap().get(device_id).cloned())
-    }
-}
-
-/// Account → device directory, verifying each bundle on `fetch` exactly as the
-/// HTTP client does so callers exercise the same trust path without a server.
-impl AccountDirectory for EphemeralRegistry {
-    type Error = String;
-
-    fn publish(
-        &mut self,
-        bundle: &SignedDeviceBundle,
-    ) -> Result<(), <Self as AccountDirectory>::Error> {
-        self.installations
-            .lock()
-            .unwrap()
-            .insert(hex::encode(bundle.account_pub.as_ref()), bundle.clone());
-        Ok(())
-    }
-
-    fn fetch(
-        &self,
-        account: &Ed25519VerifyingKey,
-    ) -> Result<Option<DeviceSet>, <Self as AccountDirectory>::Error> {
-        let Some(bundle) = self
-            .installations
-            .lock()
-            .unwrap()
-            .get(&hex::encode(account.as_ref()))
-            .cloned()
-        else {
-            return Ok(None);
-        };
-        verify_bundle(account, &bundle)
-            .map(Some)
-            .map_err(|e| e.to_string())
     }
 }

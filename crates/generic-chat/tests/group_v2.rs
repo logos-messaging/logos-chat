@@ -10,7 +10,6 @@ use components::EphemeralRegistry;
 use crossbeam_channel::Receiver;
 use libchat::ChatStorage;
 use logos_account::AccountAddr;
-use logos_account_DELETE::TestLogosAccount;
 use logos_generic_chat::{
     ChatClient, ChatClientBuilder, ConversationClass, DelegateSigner, Event, GroupMetadata,
     GroupV2Config, InProcessDelivery, MessageBus,
@@ -60,9 +59,6 @@ fn create_test_client_with(
 ) -> (TestClient, Receiver<Event>, String) {
     let account = TestLogosAccount::new();
     let delegate = DelegateSigner::random();
-    account
-        .add_delegate_signer(&mut reg, delegate.public_key())
-        .unwrap();
     let (client, events) = ChatClientBuilder::new(account.address())
         .ident(delegate)
         .transport(InProcessDelivery::new(message_bus))
@@ -386,9 +382,6 @@ fn add_batch_with_missing_key_package_invites_no_one() {
     // never registered a key package (no client was built for it).
     let ghost_account = TestLogosAccount::new();
     let ghost_delegate = DelegateSigner::random();
-    ghost_account
-        .add_delegate_signer(&mut reg, ghost_delegate.public_key())
-        .unwrap();
 
     let convo_id = saro
         .create_group_conversation(&[&raya_addr], unnamed_group())
@@ -545,4 +538,21 @@ fn a_sent_message_is_acknowledged_by_the_peers_that_reply() {
     let mut expected = vec![raya.installation_name(), pax.installation_name()];
     expected.sort();
     assert_eq!(holders, expected, "both replying peers should be listed");
+}
+
+/// A stand-in account address while the account layer is out.
+///
+/// The device-bundle directory that resolved an account to its devices was
+/// removed; nothing publishes or endorses until account-log replaces it, so
+/// this is only a well-formed address string.
+struct TestLogosAccount(crypto::Ed25519SigningKey);
+
+impl TestLogosAccount {
+    fn new() -> Self {
+        Self(crypto::Ed25519SigningKey::generate())
+    }
+
+    fn address(&self) -> String {
+        hex::encode(self.0.verifying_key().as_ref())
+    }
 }

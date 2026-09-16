@@ -3,7 +3,7 @@ use std::fmt;
 
 /// Who signed: the Ed25519 key a message's signatures verify under.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Signer(Ed25519VerifyingKey);
+pub struct Signer(Vec<u8>);
 pub type SignerRef<'a> = &'a Signer;
 
 impl Signer {
@@ -12,15 +12,11 @@ impl Signer {
         self.0.as_ref()
     }
 
-    /// The key itself, for verifying a signature under it.
-    pub fn verifying_key(&self) -> &Ed25519VerifyingKey {
-        &self.0
-    }
 }
 
 impl From<Ed25519VerifyingKey> for Signer {
     fn from(key: Ed25519VerifyingKey) -> Self {
-        Self(key)
+        Self(key.as_ref().to_vec())
     }
 }
 
@@ -32,7 +28,7 @@ impl TryFrom<&[u8]> for Signer {
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
         let bytes: [u8; 32] = value.try_into().map_err(|_| SignerError::NotAKey)?;
         Ed25519VerifyingKey::from_bytes(&bytes)
-            .map(Self)
+            .map(|v| v.into())
             .map_err(|_| SignerError::NotAKey)
     }
 }

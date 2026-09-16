@@ -9,28 +9,17 @@ use components::EphemeralRegistry;
 use crossbeam_channel::{Receiver, Sender};
 use crypto::Ed25519VerifyingKey;
 use logos_account::AccountAddr;
-use logos_account_DELETE::TestLogosAccount;
 use logos_generic_chat::{
     AddressedEnvelope, ChatClient, ChatClientBuilder, ConversationClass, DelegateSigner,
     DeliveryService, Event, InProcessDelivery, MessageBus, Transport,
 };
 
-/// Publish a signed device bundle endorsing `device` as a device of `account`,
-/// so a receiver can verify the sender's account → device mapping.
-fn publish_device_bundle(
-    reg: &mut EphemeralRegistry,
-    account: &TestLogosAccount,
-    device: &Ed25519VerifyingKey,
-) {
-    account.add_delegate_signer(reg, device).unwrap();
-}
-
-/// A client for a fresh account: mints the account and a delegate, publishes
-/// the endorsing bundle, and builds the client on the shared bus/registry.
+/// A client for a fresh account: mints the account and a delegate, then builds
+/// the client on the shared bus/registry.
 #[allow(clippy::type_complexity)]
 fn create_test_client(
     message_bus: MessageBus,
-    mut reg: EphemeralRegistry,
+    reg: EphemeralRegistry,
 ) -> Result<
     (
         ChatClient<InProcessDelivery, EphemeralRegistry, libchat::ChatStorage>,
@@ -40,7 +29,6 @@ fn create_test_client(
 > {
     let account = TestLogosAccount::new();
     let delegate = DelegateSigner::random();
-    publish_device_bundle(&mut reg, &account, delegate.public_key());
     let d = InProcessDelivery::new(message_bus);
     ChatClientBuilder::new(account.address())
         .ident(delegate)
@@ -121,7 +109,6 @@ fn direct_v1_standalone_integration() {
     let saro_account_id = saro_account.address();
     let saro_delegate = DelegateSigner::random();
     let saro_device_id = hex::encode(saro_delegate.public_key().as_ref());
-    publish_device_bundle(&mut reg_service, &saro_account, saro_delegate.public_key());
 
     // Build saro's client with its account so its outbound messages carry a
     // credential the receiver can verify against the published bundle.
@@ -180,7 +167,6 @@ fn direct_v1_by_account_address() {
     let raya_account = TestLogosAccount::new();
     let raya_account_addr = raya_account.address();
     let raya_delegate = DelegateSigner::random();
-    publish_device_bundle(&mut reg_service, &raya_account, raya_delegate.public_key());
 
     let (mut raya, raya_events) = ChatClientBuilder::new(raya_account_addr.clone())
         .ident(raya_delegate)
@@ -491,4 +477,21 @@ fn unpublished_account_address_is_an_error() {
         err,
         logos_generic_chat::ClientError::AccountResolution(_)
     ));
+}
+
+/// A stand-in account address while the account layer is out.
+///
+/// The device-bundle directory that resolved an account to its devices was
+/// removed; nothing publishes or endorses until account-log replaces it, so
+/// this is only a well-formed address string.
+struct TestLogosAccount(crypto::Ed25519SigningKey);
+
+impl TestLogosAccount {
+    fn new() -> Self {
+        Self(crypto::Ed25519SigningKey::generate())
+    }
+
+    fn address(&self) -> String {
+        hex::encode(self.0.verifying_key().as_ref())
+    }
 }

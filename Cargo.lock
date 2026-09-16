@@ -1428,7 +1428,6 @@ dependencies = [
  "clap",
  "crossbeam-channel",
  "crossterm 0.29.0",
- "logos-account",
  "logos-chat",
  "ratatui",
  "serde",
@@ -1576,7 +1575,6 @@ dependencies = [
  "crypto",
  "hex",
  "libchat",
- "logos-account",
  "prost",
  "reqwest 0.12.28",
  "serde",
@@ -3694,24 +3692,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
-name = "logos-account"
-version = "0.1.0"
-dependencies = [
- "crypto",
- "hex",
- "shared-traits",
- "thiserror",
-]
-
-[[package]]
 name = "logos-chat"
 version = "0.1.0"
 dependencies = [
  "components",
  "crossbeam-channel",
+ "crypto",
  "embedded-logos-delivery",
+ "hex",
  "libchat",
- "logos-account",
  "logos-generic-chat",
 ]
 
@@ -3738,7 +3727,6 @@ dependencies = [
  "crypto",
  "hex",
  "libchat",
- "logos-account",
  "parking_lot",
  "shared-traits",
  "storage",

@@ -5,6 +5,7 @@
 use crate::conversation::mls_extensions::{
     ConvoMetaInfo, GROUP_METADATA_EXTENSION_TYPE, capabilities_with_group_metadata,
 };
+use crate::outcomes::AuthenticatedSender;
 use crate::types::{AddressedEncryptedPayload, ConvoMetadata};
 use crate::{Content, WakeupService};
 use alloy::signers::local::PrivateKeySigner;
@@ -25,7 +26,7 @@ use openmls::group::MlsGroupCreateConfig;
 use openmls::prelude::tls_codec::Deserialize as _;
 use openmls::prelude::{KeyPackageIn, OpenMlsProvider as _, ProtocolVersion};
 use prost::Message;
-use shared_traits::{Signer, SignerRef};
+use shared_traits::{ExternalIdentifier, Signer, SignerRef};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -581,11 +582,15 @@ impl GroupV2Convo {
                 let reliable =
                     ReliablePayload::decode(cm.message.as_slice()).map_err(ChatError::generic)?;
                 service_ctx.causal.on_receive(&self.convo_id, &reliable);
+                let cred_bytes = sender.credential.serialized_content().to_vec();
                 Ok(Content {
                     bytes: reliable.content.to_vec(),
                     // `sender` is the MLS-authenticated signer of the frame; its
-                    // credential content is the account identity to attribute to.
-                    encoded_credential: sender.credential.serialized_content().to_vec(),
+                    // credential content is the identity to attribute to.
+                    sender: AuthenticatedSender::with(
+                        sender.signature_key.to_vec(),
+                        ExternalIdentifier::from(&cred_bytes[..]),
+                    ),
                 })
             })
             .transpose()?;

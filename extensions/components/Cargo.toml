@@ -8,7 +8,6 @@ license.workspace = true
 # Workspace dependencies (sorted)
 crypto = { workspace = true }
 libchat = { workspace = true }
-logos-account-DELETE = { workspace = true }
 storage = { workspace = true }
 
 # External dependencies (sorted)

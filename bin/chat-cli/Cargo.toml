@@ -11,7 +11,6 @@ path = "src/main.rs"
 [dependencies]
 # Workspace dependencies (sorted)
 crossbeam-channel = { workspace = true }
-logos-account-DELETE = { workspace = true, features = ["dev"] }
 logos-chat = { workspace = true }
 
 # External dependencies (sorted)

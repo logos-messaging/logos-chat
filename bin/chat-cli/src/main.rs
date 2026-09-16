@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use crossbeam_channel::Receiver;
 use logos_chat::{
-    AccountDirectory, ChatClient, ConversationStore, Event, GroupV2Config, LogosConfig, P2pConfig,
+    ChatClient, ConversationStore, Event, GroupV2Config, LogosConfig, P2pConfig,
     RegistrationService, RegistryPublishMode, Transport,
 };
 
@@ -225,7 +225,7 @@ fn launch_tui<T, R, S>(
 ) -> Result<()>
 where
     T: Transport,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
     S: ConversationStore + Send,
 {
     let mut app = ChatApp::new(client, events, &cli.name, &cli.data)?;
@@ -243,7 +243,7 @@ where
 fn run_app<T, R, S>(terminal: &mut ui::Tui, app: &mut ChatApp<T, R, S>) -> Result<()>
 where
     T: Transport,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
     S: ConversationStore + Send,
 {
     loop {

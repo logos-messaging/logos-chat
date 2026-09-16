@@ -16,7 +16,6 @@ crypto = { workspace = true }
 libchat = { workspace = true }
 storage = { workspace = true }
 logos-account = { workspace = true }
-logos-account-DELETE = { workspace = true, features = ["dev"]}
 shared-traits = { workspace =  true }
 
 # External dependencies (sorted)

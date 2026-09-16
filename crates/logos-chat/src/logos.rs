@@ -19,7 +19,6 @@ use components::{ContactRegistry, RegistryPublishMode};
 use crossbeam_channel::Receiver;
 use embedded_logos_delivery::{EmbeddedLogosDelivery, P2pConfig};
 use libchat::{ChatStorage, StorageConfig};
-use logos_account_DELETE::TestLogosAccount;
 
 use logos_generic_chat::{
     ChatClient, ChatClientBuilder, ClientError, DelegateSigner, Event, GroupV2Config, Transport,
@@ -143,9 +142,6 @@ pub fn open_with_transport<T: Transport + Clone>(
         config.registry_url,
         config.registry_publish_mode,
     );
-    account
-        .add_delegate_signer(&mut registry, delegate.public_key())
-        .map_err(|e| ClientError::BundlePublish(e.to_string()))?;
     let mut builder = ChatClientBuilder::new(account.address())
         .ident(delegate)
         .transport(transport)
@@ -170,3 +166,20 @@ pub fn open_with_transport<T: Transport + Clone>(
 /// [`open_with_transport`].
 pub type LogosChatClient =
     ChatClient<EmbeddedLogosDelivery, ContactRegistry<EmbeddedLogosDelivery>, ChatStorage>;
+
+/// A stand-in account address while the account layer is out.
+///
+/// The device-bundle directory that resolved an account to its devices was
+/// removed; nothing publishes or endorses until account-log replaces it, so
+/// this is only a well-formed address string.
+struct TestLogosAccount(crypto::Ed25519SigningKey);
+
+impl TestLogosAccount {
+    fn new() -> Self {
+        Self(crypto::Ed25519SigningKey::generate())
+    }
+
+    fn address(&self) -> String {
+        hex::encode(self.0.verifying_key().as_ref())
+    }
+}

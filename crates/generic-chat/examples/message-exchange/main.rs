@@ -1,5 +1,4 @@
 use components::EphemeralRegistry;
-use logos_account_DELETE::TestLogosAccount;
 use logos_generic_chat::{ChatClientBuilder, DelegateSigner, Event, InProcessDelivery, MessageBus};
 use std::time::Duration;
 
@@ -11,15 +10,9 @@ fn main() {
     // bundles so a peer can resolve an account address to its device.
     let saro_account = TestLogosAccount::new();
     let saro_delegate = DelegateSigner::random();
-    saro_account
-        .add_delegate_signer(&mut reg, saro_delegate.public_key())
-        .unwrap();
 
     let raya_account = TestLogosAccount::new();
     let raya_delegate = DelegateSigner::random();
-    raya_account
-        .add_delegate_signer(&mut reg, raya_delegate.public_key())
-        .unwrap();
 
     let (mut saro, saro_events) = ChatClientBuilder::new(saro_account.address())
         .ident(saro_delegate)
@@ -66,4 +59,21 @@ fn main() {
     }
 
     println!("Message exchange complete.");
+}
+
+/// A stand-in account address while the account layer is out.
+///
+/// The device-bundle directory that resolved an account to its devices was
+/// removed; nothing publishes or endorses until account-log replaces it, so
+/// this is only a well-formed address string.
+struct TestLogosAccount(crypto::Ed25519SigningKey);
+
+impl TestLogosAccount {
+    fn new() -> Self {
+        Self(crypto::Ed25519SigningKey::generate())
+    }
+
+    fn address(&self) -> String {
+        hex::encode(self.0.verifying_key().as_ref())
+    }
 }
