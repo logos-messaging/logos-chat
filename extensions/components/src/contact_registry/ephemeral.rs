@@ -64,7 +64,7 @@ impl RegistrationService for EphemeralRegistry {
         self.key_packages
             .lock()
             .unwrap()
-            .insert(hex::encode(identity.public_key().as_ref()), key_bundle);
+            .insert(hex::encode(identity.signer().as_bytes()), key_bundle);
         Ok(())
     }
 

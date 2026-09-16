@@ -20,6 +20,7 @@ pub use libchat::{
 };
 // The directory trait bounds ChatClient's registry parameter, so callers
 // writing code generic over ChatClient need it too.
+pub use logos_account::AccountAddr;
 pub use logos_account_DELETE::AccountDirectory;
 
 // Re-export bundled registry implementations so callers can pick one without

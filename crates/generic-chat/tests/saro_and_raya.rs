@@ -1,8 +1,14 @@
+// `expect_event` hands a non-matching event back through `Err`, and an `Event`
+// carrying an `AccountAddr` is 272 bytes — enough to trip `result_large_err`,
+// which is about error paths, not this match-or-return one.
+#![allow(clippy::result_large_err)]
+
 use std::time::Duration;
 
 use components::EphemeralRegistry;
 use crossbeam_channel::{Receiver, Sender};
 use crypto::Ed25519VerifyingKey;
+use logos_account::AccountAddr;
 use logos_account_DELETE::TestLogosAccount;
 use logos_generic_chat::{
     AddressedEnvelope, ChatClient, ChatClientBuilder, ConversationClass, DelegateSigner,
@@ -147,10 +153,14 @@ fn direct_v1_standalone_integration() {
             // saro associated an account and published a matching bundle, so the
             // sender surfaces with a verified account and its device.
             assert_eq!(
-                sender.account.as_ref().map(|a| a.as_str()),
+                sender
+                    .account
+                    .as_ref()
+                    .map(AccountAddr::to_string)
+                    .as_deref(),
                 Some(saro_account_id.as_str())
             );
-            assert_eq!(sender.local_identity.as_str(), saro_device_id.as_str());
+            assert_eq!(sender.local_identity.to_string(), saro_device_id);
             Ok(())
         }
         other => Err(other),
@@ -213,7 +223,11 @@ fn direct_v1_by_account_address() {
             // raya's bundle endorses her delegate, so her sender surfaces with
             // the verified account.
             assert_eq!(
-                sender.account.as_ref().map(|a| a.as_str()),
+                sender
+                    .account
+                    .as_ref()
+                    .map(AccountAddr::to_string)
+                    .as_deref(),
                 Some(raya_account_addr.as_str())
             );
             Ok(())
@@ -256,7 +270,7 @@ fn saro_raya_message_exchange() {
             // saro's account published a bundle endorsing its delegate, so the
             // sender surfaces a verified account.
             assert!(sender.account.is_some());
-            assert!(!sender.local_identity.as_str().is_empty());
+            assert!(!sender.local_identity.as_bytes().is_empty());
             Ok(())
         }
         other => Err(other),
@@ -353,12 +367,12 @@ fn direct_conversation_lists_its_participants() {
         .expect("convo create");
 
     let roster = saro.group_members(&convo_id).expect("group_members");
-    let mut accounts: Vec<Option<&str>> = roster
+    let mut accounts: Vec<Option<String>> = roster
         .iter()
-        .map(|m| m.account.as_ref().map(|a| a.as_str()))
+        .map(|m| m.account.as_ref().map(AccountAddr::to_string))
         .collect();
     accounts.sort();
-    let mut expected = vec![Some(saro_addr.as_str()), Some(raya_addr.as_str())];
+    let mut expected = vec![Some(saro_addr.clone()), Some(raya_addr.clone())];
     expected.sort();
     assert_eq!(accounts, expected);
 

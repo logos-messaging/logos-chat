@@ -6,8 +6,8 @@ use anyhow::Result;
 use arboard::Clipboard;
 use crossbeam_channel::Receiver;
 use logos_chat::{
-    AccountDirectory, ChatClient, ConversationClass, ConversationStore, Event, GroupMetadata,
-    RegistrationService, Transport,
+    AccountAddr, AccountDirectory, ChatClient, ConversationClass, ConversationStore, Event,
+    GroupMetadata, RegistrationService, Transport,
 };
 use serde::{Deserialize, Serialize};
 
@@ -283,11 +283,11 @@ where
             } => {
                 let chat_id = convo_id.to_string();
                 // The client resolved the credential to an account; classify by it.
-                let origin = match sender.account.as_ref().map(|a| a.as_str()) {
+                let origin = match sender.account.as_ref().map(AccountAddr::to_string) {
                     Some(account) if account == self.client.addr() => MessageOrigin::Own,
-                    Some(account) => MessageOrigin::Foreign(account.to_string()),
+                    Some(account) => MessageOrigin::Foreign(account),
                     // Unassociated device — no account claim; fall back to its signer id.
-                    None => MessageOrigin::Foreign(sender.local_identity.as_str().to_string()),
+                    None => MessageOrigin::Foreign(sender.local_identity.to_string()),
                 };
                 let Some(session) = self.state.chats.get_mut(&chat_id) else {
                     return;
@@ -317,8 +317,10 @@ where
                 let peer = acked_by.map_or_else(
                     || "a member".to_string(),
                     |s| {
-                        let id = s.account.unwrap_or(s.local_identity);
-                        format!("{}…", &id.as_str()[..8.min(id.as_str().len())])
+                        let id = s
+                            .account
+                            .map_or_else(|| s.local_identity.to_string(), |a| a.to_string());
+                        format!("{}…", &id[..8.min(id.len())])
                     },
                 );
                 if !message.delivered_to.contains(&peer) {
@@ -338,8 +340,10 @@ where
                 let author = sender_hint.map_or_else(
                     || "a member".to_string(),
                     |s| {
-                        let id = s.account.unwrap_or(s.local_identity);
-                        format!("{}…", &id.as_str()[..8.min(id.as_str().len())])
+                        let id = s
+                            .account
+                            .map_or_else(|| s.local_identity.to_string(), |a| a.to_string());
+                        format!("{}…", &id[..8.min(id.len())])
                     },
                 );
                 self.status = format!(
@@ -505,9 +509,10 @@ where
                     .client
                     .group_members(chat_id)
                     .map(|members| {
-                        members
-                            .iter()
-                            .any(|m| m.account.as_ref().map(|a| a.as_str()) == Some(address))
+                        members.iter().any(|m| {
+                            m.account.as_ref().map(AccountAddr::to_string).as_deref()
+                                == Some(address)
+                        })
                     })
                     .unwrap_or(false);
                 if already_present {
@@ -538,11 +543,12 @@ where
                     let id = m
                         .account
                         .as_ref()
-                        .map(|a| a.as_str())
-                        .unwrap_or_else(|| m.local_identity.as_str());
+                        .map_or_else(|| m.local_identity.to_string(), AccountAddr::to_string);
                     let short = &id[..16.min(id.len())];
                     let mut tags = String::new();
-                    if m.account.as_ref().map(|a| a.as_str()) == Some(my_addr.as_str()) {
+                    if m.account.as_ref().map(AccountAddr::to_string).as_deref()
+                        == Some(my_addr.as_str())
+                    {
                         tags.push_str(" (you)");
                     }
                     if m.pending {

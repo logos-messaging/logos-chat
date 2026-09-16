@@ -16,7 +16,7 @@ use crate::{
     proto::{EncryptedPayload, EnvelopeV1, Message},
 };
 use openmls::group::GroupId;
-use shared_traits::{IdentId, IdentIdRef};
+use shared_traits::SignerRef;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use storage::{ConversationKind, ConversationStore};
@@ -99,11 +99,11 @@ where
         // directory lists and the registries key key-packages under, so it is
         // exactly what an inviter can derive for this installation. The MLS
         // credential below still carries the full `id()`.
-        let ident_id = IdentId::new(hex::encode(ident.public_key().as_ref()));
+        let signer = ident.signer().clone();
         let mls_identity = MlsIdentityProvider::new(ident);
         let mls_provider = MlsEphemeralPqProvider::new().map_err(ChatError::generic)?;
         let causal = CausalHistoryStore::new();
-        let pq_inbox = InboxV2::new(ident_id);
+        let pq_inbox = InboxV2::new(signer);
 
         // Subscribe to the InboxV2 rendezvous address.
         delivery
@@ -139,8 +139,8 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     /// The signer id this core receives InboxV2 invites under — the hex of the
     /// signer's verifying key.
-    pub fn ident_id(&'a self) -> IdentIdRef<'a> {
-        self.pq_inbox.ident_id()
+    pub fn signer(&'a self) -> SignerRef<'a> {
+        self.pq_inbox.signer()
     }
 
     /// Submit the local account's MLS KeyPackage to the registration service.
@@ -150,20 +150,20 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         self.pq_inbox.register(&mut self.services)
     }
 
-    pub fn installation_name(&self) -> &str {
-        self.services.mls_identity.id().as_str()
+    pub fn installation_name(&self) -> String {
+        self.services.mls_identity.signer().to_string()
     }
 
     pub fn create_direct_convo(
         &mut self,
-        members: &[IdentIdRef],
+        members: &[SignerRef],
     ) -> Result<ConversationId, ChatError> {
         self.create_direct_convo_v1(members)
     }
 
     pub fn create_direct_convo_v1(
         &mut self,
-        members: &[IdentIdRef],
+        members: &[SignerRef],
     ) -> Result<ConversationId, ChatError> {
         let convo = DirectV1Convo::new(&mut self.services, members)?;
         let convo_id = convo.id().to_string();
@@ -174,14 +174,14 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     pub fn create_group_convo(
         &mut self,
-        participants: &[IdentIdRef],
+        participants: &[SignerRef],
     ) -> Result<ConversationId, ChatError> {
         self.create_group_convo_v2(participants, "", "")
     }
 
     pub fn create_group_convo_v1(
         &mut self,
-        participants: &[IdentIdRef],
+        participants: &[SignerRef],
     ) -> Result<ConversationId, ChatError> {
         // TODO: (P1) Ensure errors are handled properly. This is a high chance for
         // desynchronized state: MlsGroup persistence, conversation persistence, and
@@ -203,7 +203,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     pub fn create_group_convo_v2(
         &mut self,
-        participants: &[IdentIdRef],
+        participants: &[SignerRef],
         name: &str,
         desc: &str,
     ) -> Result<ConversationId, ChatError> {
@@ -222,7 +222,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
     pub fn group_add_member(
         &mut self,
         convo_id: &str,
-        members: &[IdentIdRef],
+        members: &[SignerRef],
     ) -> Result<(), ChatError> {
         let convo = self
             .cached_convos
@@ -411,7 +411,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
     }
 
     pub fn wakeup(&mut self, convo_id: ConversationIdRef) -> Result<PayloadOutcome, ChatError> {
-        info!(convos = ?self.cached_convos.keys().collect::<Vec<_>>(), id = ?self.services.mls_identity.id(), "Cached Convos");
+        info!(convos = ?self.cached_convos.keys().collect::<Vec<_>>(), id = ?self.services.mls_identity.signer(), "Cached Convos");
 
         match convo_id {
             c if c == self.pq_inbox.id() => todo!(),

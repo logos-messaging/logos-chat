@@ -7,9 +7,10 @@ use crossbeam_channel::{Receiver, Sender, select};
 use crypto::Ed25519VerifyingKey;
 use libchat::{
     ConversationId, ConvoMetadata, ConvoOutcome, Core, DeliveryAck, DeliveryService, GroupV2Config,
-    IdentId, IdentIdRef, InboxOutcome, MessageId, MissingMessage, PayloadOutcome,
-    RegistrationService,
+    InboxOutcome, MessageId, MissingMessage, PayloadOutcome, RegistrationService, Signer,
+    SignerRef,
 };
+use logos_account::AccountAddr;
 use logos_account_DELETE::{AccountDirectory, resolve_device_ids};
 use parking_lot::Mutex;
 use storage::ConversationStore;
@@ -20,7 +21,7 @@ use crate::event::{Event, MessageSender};
 
 type ClientCore<T, R, S> = Core<(DelegateIdentity, T, R, ThreadedWakeupService, S)>;
 type AccountAddressRef<'a> = &'a str;
-type LocalSignerId = IdentId;
+type LocalSigner = Signer;
 
 /// A member of a group conversation's roster.
 ///
@@ -37,8 +38,8 @@ type LocalSignerId = IdentId;
 /// never commits stays pending for the life of the conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupMember {
-    pub account: Option<IdentId>,
-    pub local_identity: IdentId,
+    pub account: Option<AccountAddr>,
+    pub local_identity: Signer,
     pub pending: bool,
 }
 
@@ -183,7 +184,7 @@ where
         account: AccountAddressRef,
     ) -> Result<ConversationId, ClientError> {
         let signers = self.signers_from_account(account)?;
-        let signer_refs: Vec<IdentIdRef> = signers.iter().collect();
+        let signer_refs: Vec<SignerRef> = signers.iter().collect();
 
         self.core
             .lock()
@@ -204,7 +205,7 @@ where
         metadata: GroupMetadata,
     ) -> Result<ConversationId, ClientError> {
         let signers = self.signers_from_accounts(accounts)?;
-        let signer_refs: Vec<IdentIdRef> = signers.iter().collect();
+        let signer_refs: Vec<SignerRef> = signers.iter().collect();
 
         self.core
             .lock()
@@ -222,7 +223,7 @@ where
         accounts: &[AccountAddressRef],
     ) -> Result<(), ClientError> {
         let signers = self.signers_from_accounts(accounts)?;
-        let signer_refs: Vec<IdentIdRef> = signers.iter().collect();
+        let signer_refs: Vec<SignerRef> = signers.iter().collect();
 
         self.core
             .lock()
