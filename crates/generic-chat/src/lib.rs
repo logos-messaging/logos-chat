@@ -4,13 +4,15 @@ mod delegate;
 mod delivery_in_process;
 mod errors;
 mod event;
+mod members;
 
 pub use builder::{ChatClientBuilder, Unset};
-pub use client::{ChatClient, GroupMember, GroupMetadata, Transport};
+pub use client::{ChatClient, GroupMetadata, Transport};
 pub use delegate::{DelegateSigner, PanicAuth, UncheckedAuth};
 pub use delivery_in_process::{InProcessDelivery, MessageBus};
 pub use errors::ClientError;
-pub use event::{Event, MessageSender};
+pub use event::Event;
+pub use members::{AuthenticatedMember, Member};
 
 // Re-export types callers need to interact with ChatClient.
 pub use libchat::{

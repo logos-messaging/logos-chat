@@ -1,10 +1,9 @@
-//! Who is in a conversation, and where each of them stands.
+//! Who is in a conversation.
 //!
 //! ```text
-//! Convo has ──► Member { signer, external_id }                who
+//! Convo has ──► Member { signer, external_id }    one MLS leaf
 //!                │  AuthService
-//!                ├──► AuthenticatedMember                     a delivered message's sender
-//!                └──► Membership { member, state, auth }      one line of a group's membership
+//!                └──► AuthenticatedMember         a member the service vouched for
 //! ```
 
 use shared_traits::{ExternalIdentifier, Signer};
@@ -41,47 +40,17 @@ impl Member {
     pub(crate) fn require_valid<A: AuthService>(self, auth: &A) -> Option<AuthenticatedMember> {
         match self.auth_status(auth) {
             AuthStatus::Valid => Some(AuthenticatedMember(self)),
-            AuthStatus::Revoked => None,
-            AuthStatus::Invalid => None,
-            AuthStatus::Unknown => None,
+            status => {
+                tracing::warn!(signer = %self.signer, ?status, "member failed auth");
+                None
+            }
         }
     }
-
-    pub(crate) fn into_membership<A: AuthService>(
-        self,
-        state: MembershipState,
-        auth: &A,
-    ) -> Membership {
-        let auth_status = self.auth_status(auth);
-        Membership {
-            member: self,
-            state,
-            auth: auth_status,
-        }
-    }
-}
-
-/// One member's standing in one group.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Membership {
-    pub member: Member,
-    pub state: MembershipState,
-    /// Checked when read, never stored, so a revocation shows on the next read.
-    pub auth: AuthStatus,
-}
-
-/// How far a member is into joining a group.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MembershipState {
-    /// In the MLS tree: can read and send.
-    Committed,
-    /// Invited here; the commit admitting them has not landed.
-    Pending,
 }
 
 /// The auth service's verdict on a member, as of when it was asked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AuthStatus {
+pub(crate) enum AuthStatus {
     Valid,
     /// Was valid; withdrawn since.
     Revoked,
@@ -103,7 +72,7 @@ impl From<AuthResult> for AuthStatus {
 
 /// A member the auth service found valid.
 ///
-/// [`authenticate`](Self::authenticate) is the only constructor, so holding one
+/// [`Member::require_valid`] is the only constructor, so holding one
 /// is proof the check passed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthenticatedMember(Member);

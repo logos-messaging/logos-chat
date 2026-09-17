@@ -25,7 +25,7 @@ pub use core::{ConversationId, Core};
 pub use de_mls::ConversationConfig as GroupV2Config;
 pub use de_mls::MockClock;
 pub use errors::ChatError;
-pub use membership::{AuthStatus, AuthenticatedMember, Member, Membership, MembershipState};
+pub use membership::{AuthenticatedMember, Member};
 pub use outcomes::{
     Content, ConversationClass, ConvoOutcome, InboxOutcome, NewConversation, PayloadOutcome,
 };

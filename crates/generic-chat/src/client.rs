@@ -5,45 +5,22 @@ use std::thread::{self, JoinHandle};
 use components::{ThreadedWakeupService, WakeupEvent};
 use crossbeam_channel::{Receiver, Sender, select};
 use libchat::{
-    AuthService, AuthStatus, AuthenticatedMember, ConversationId, ConvoMetadata, ConvoOutcome,
-    Core, DeliveryAck, DeliveryService, ExternalIdentifier, GroupV2Config, InboxOutcome,
-    Membership, MembershipState, MessageId, MissingMessage, PayloadOutcome, RegistrationService,
+    AuthService, ConversationId, ConvoMetadata, ConvoOutcome, Core, DeliveryAck, DeliveryService,
+    GroupV2Config, InboxOutcome, MessageId, MissingMessage, PayloadOutcome, RegistrationService,
     Signer, SignerRef,
 };
 use logos_account::AccountAddr;
 use parking_lot::Mutex;
 use storage::ConversationStore;
 
-use crate::delegate::{DelegateCredential, DelegateIdentity, DelegateSigner};
+use crate::delegate::{DelegateIdentity, DelegateSigner};
 use crate::errors::ClientError;
-use crate::event::{Event, MessageSender};
+use crate::event::Event;
+use crate::members::{AuthenticatedMember, Member};
 
 type ClientCore<T, R, A, S> = Core<(DelegateIdentity, A, T, R, ThreadedWakeupService, S)>;
 type AccountAddressRef<'a> = &'a str;
 type LocalSigner = Signer;
-
-/// A member of a group conversation's roster.
-///
-/// Shares [`MessageSender`]'s field semantics: `account` is set only when the
-/// member's credential claimed an account *and* the directory confirmed this
-/// device belongs to it. Unlike a message sender, an unconfirmable claim does
-/// not hide the member: a committed member is cryptographically in the group,
-/// so it is listed by `local_identity` (its device) with `account: None`.
-///
-/// `pending` marks a member whose add the group has not committed yet, so it
-/// cannot read the conversation. Only invites this client sent are reported;
-/// an add another member proposed is invisible until it commits. The flag
-/// clears when the commit admitting the member lands, and an invite the group
-/// never commits stays pending for the life of the conversation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GroupMember {
-    pub account: Option<AccountAddr>,
-    pub local_identity: Signer,
-    pub pending: bool,
-    /// The core's verdict on this member. A committed member that is not
-    /// `Valid` can still read the conversation.
-    pub auth: AuthStatus,
-}
 
 /// Metadata a caller supplies when creating a group: its shared name and
 /// description. Distinct from [`ConvoMetadata`], the type a conversation
@@ -220,18 +197,31 @@ where
             .map_err(Into::into)
     }
 
-    /// The conversation's roster, one [`GroupMember`] per account (self
-    /// included), for a direct conversation as for a group: committed members
-    /// first and this client's uncommitted invites after them, flagged
-    /// `pending`. An account's several devices collapse to a single entry
-    /// surfacing that account; a member whose account claim the directory can't
-    /// confirm stays on the roster individually, keyed by its device. An account
-    /// that is both committed and pending collapses to its committed entry.
-    /// Costs one directory lookup per member that claims an account, the same
-    /// per-member cost a received message's sender check pays.
-    pub fn group_members(&mut self, convo_id: &str) -> Result<Vec<GroupMember>, ClientError> {
-        let memberships = self.core.lock().memberships(convo_id)?;
-        Ok(dedup_members(memberships.into_iter().map(roster_member)))
+    /// The conversation's committed members that pass auth, one per device,
+    /// for a direct conversation as for a group.
+    pub fn members(&self, convo_id: &str) -> Result<Vec<Member>, ClientError> {
+        let members = self.core.lock().group_members(convo_id)?;
+        Ok(members
+            .into_iter()
+            .filter_map(decode_member::<_, AuthenticatedMember>)
+            .map(Member::from)
+            .collect())
+    }
+
+    /// Devices this client invited whose commit has not landed. A direct
+    /// conversation has none.
+    pub fn pending_members(&self, convo_id: &str) -> Result<Vec<Member>, ClientError> {
+        let pending = self.core.lock().group_pending_members(convo_id)?;
+        Ok(pending.into_iter().filter_map(decode_member).collect())
+    }
+
+    /// The accounts with at least one member in the conversation.
+    pub fn participants(&self, convo_id: &str) -> Result<HashSet<AccountAddr>, ClientError> {
+        Ok(self
+            .members(convo_id)?
+            .into_iter()
+            .map(|member| member.account)
+            .collect())
     }
 
     /// The group's shared metadata (name and description), set at creation and
@@ -456,63 +446,15 @@ fn missing_events(missing: Vec<MissingMessage>) -> Vec<Event> {
         .collect()
 }
 
-/// The account a credential claims, if any. Only meaningful for a member the
-/// core has authenticated: that is what makes the claim trustworthy.
-fn claimed_account(external_id: &ExternalIdentifier) -> Option<AccountAddr> {
-    DelegateCredential::try_from(external_id.as_bytes().to_vec())
-        .ok()?
-        .account_addr()?
-        .parse()
+/// A core member as the client's type. A credential that doesn't decode is
+/// logged and dropped.
+fn decode_member<T, U>(member: T) -> Option<U>
+where
+    U: TryFrom<T, Error = ClientError>,
+{
+    U::try_from(member)
+        .inspect_err(|e| tracing::warn!("dropping a member: {e}"))
         .ok()
-}
-
-/// The app-facing sender of delivered content: its MLS-verified device, and
-/// the account its credential claims.
-fn message_sender(sender: AuthenticatedMember) -> MessageSender {
-    MessageSender {
-        account: claimed_account(sender.external_id()),
-        local_identity: sender.signer().clone(),
-    }
-}
-
-/// A roster entry for one membership. The account is reported only when the
-/// core found the member valid; any other verdict leaves the device alone.
-fn roster_member(membership: Membership) -> GroupMember {
-    let Membership {
-        member,
-        state,
-        auth,
-    } = membership;
-    GroupMember {
-        account: (auth == AuthStatus::Valid)
-            .then(|| claimed_account(&member.external_id))
-            .flatten(),
-        local_identity: member.signer,
-        pending: state == MembershipState::Pending,
-        auth,
-    }
-}
-
-/// The key that decides whether two roster entries are the same member: a
-/// verified account, so an account's several devices count once; or, for a
-/// member with no confirmed account, its device — unique per MLS leaf, so it
-/// never merges with another.
-fn member_key(member: &GroupMember) -> String {
-    match &member.account {
-        Some(account) => account.to_string(),
-        None => member.local_identity.to_string(),
-    }
-}
-
-/// Collapse a roster to one entry per account (keeping the first-seen device as
-/// the account's representative) while leaving account-less members individual,
-/// order preserved.
-fn dedup_members(members: impl IntoIterator<Item = GroupMember>) -> Vec<GroupMember> {
-    let mut seen = HashSet::new();
-    members
-        .into_iter()
-        .filter(|member| seen.insert(member_key(member).to_owned()))
-        .collect()
 }
 
 fn convo_events(outcome: ConvoOutcome) -> Vec<Event> {
@@ -523,11 +465,13 @@ fn convo_events(outcome: ConvoOutcome) -> Vec<Event> {
     } = outcome;
     let convo_id: Arc<str> = Arc::from(convo_id);
     let mut events = Vec::new();
-    if let Some(c) = content {
+    if let Some(c) = content
+        && let Some(sender) = decode_member(c.sender)
+    {
         events.push(Event::MessageReceived {
             convo_id: Arc::clone(&convo_id),
             content: c.bytes,
-            sender: message_sender(c.sender),
+            sender,
         });
     }
     if members_changed {
@@ -547,11 +491,13 @@ fn inbox_events(outcome: InboxOutcome) -> Vec<Event> {
         convo_id: Arc::clone(&id),
         class: new_conversation.class,
     });
-    if let Some(c) = initial.and_then(|co| co.content) {
+    if let Some(c) = initial.and_then(|co| co.content)
+        && let Some(sender) = decode_member(c.sender)
+    {
         events.push(Event::MessageReceived {
             convo_id: Arc::clone(&id),
             content: c.bytes,
-            sender: message_sender(c.sender),
+            sender,
         });
     }
     events
@@ -561,11 +507,8 @@ fn inbox_events(outcome: InboxOutcome) -> Vec<Event> {
 mod sender_check_tests {
     use crypto::{Ed25519SigningKey, Ed25519VerifyingKey};
 
-    use super::{
-        AccountAddr, AuthStatus, Event, GroupMember, Signer, dedup_members, delivery_ack_events,
-        member_key, missing_events,
-    };
-    use libchat::{DeliveryAck, Frontier, MissingMessage};
+    use super::{Event, delivery_ack_events, missing_events};
+    use libchat::{DeliveryAck, Frontier, MissingMessage, Signer};
 
     fn key() -> Ed25519VerifyingKey {
         Ed25519SigningKey::generate().verifying_key()
@@ -573,77 +516,6 @@ mod sender_check_tests {
 
     fn local_id(k: &Ed25519VerifyingKey) -> Signer {
         Signer::from(k.clone())
-    }
-
-    /// The same key an account is known by, as an address.
-    fn addr(k: &Ed25519VerifyingKey) -> AccountAddr {
-        AccountAddr::try_from(k.as_ref()).expect("a generated key is an address")
-    }
-
-    /// The roster collapses an account's several devices into one entry (keeping
-    /// the first device seen) while leaving account-less members individual,
-    /// order preserved.
-    #[test]
-    fn dedup_collapses_account_devices_and_keeps_unknowns() {
-        let (alice, bob) = (addr(&key()), addr(&key()));
-        let (alice_dev_1, alice_dev_2) = (local_id(&key()), local_id(&key()));
-        let bob_dev_1 = local_id(&key());
-        let (orphan_x, orphan_y) = (local_id(&key()), local_id(&key()));
-        let with_account = |account: &AccountAddr, device: &Signer| GroupMember {
-            account: Some(account.clone()),
-            local_identity: device.clone(),
-            pending: false,
-            auth: AuthStatus::Valid,
-        };
-        let device_only = |device: &Signer| GroupMember {
-            account: None,
-            local_identity: device.clone(),
-            pending: false,
-            auth: AuthStatus::Valid,
-        };
-        let roster = dedup_members(vec![
-            with_account(&alice, &alice_dev_1),
-            with_account(&alice, &alice_dev_2),
-            device_only(&orphan_x),
-            with_account(&bob, &bob_dev_1),
-            device_only(&orphan_y),
-        ]);
-        let keys: Vec<String> = roster.iter().map(member_key).collect();
-        assert_eq!(
-            keys,
-            [
-                alice.to_string(),
-                orphan_x.to_string(),
-                bob.to_string(),
-                orphan_y.to_string(),
-            ]
-        );
-        // Alice's collapsed entry keeps her first-seen device.
-        assert_eq!(roster[0].local_identity, alice_dev_1);
-    }
-
-    /// An account that is both committed and pending collapses to its committed
-    /// entry: `group_members` chains committed members first, and dedup keeps
-    /// the first entry per account.
-    #[test]
-    fn dedup_collapses_a_pending_duplicate_into_the_committed_member() {
-        let alice = addr(&key());
-        let committed = GroupMember {
-            account: Some(alice.clone()),
-            local_identity: local_id(&key()),
-            pending: false,
-            auth: AuthStatus::Valid,
-        };
-        let pending = GroupMember {
-            account: Some(alice),
-            local_identity: local_id(&key()),
-            pending: true,
-            auth: AuthStatus::Valid,
-        };
-        assert_eq!(
-            dedup_members(vec![committed.clone(), pending]),
-            vec![committed]
-        );
     }
 
     /// A gap reported by the causal history, as the core hands it over.

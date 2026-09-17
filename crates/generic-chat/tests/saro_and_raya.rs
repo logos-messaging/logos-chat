@@ -140,15 +140,8 @@ fn direct_v1_standalone_integration() {
             assert_eq!(content.as_slice(), b"Hey from saro");
             // saro associated an account and published a matching bundle, so the
             // sender surfaces with a verified account and its device.
-            assert_eq!(
-                sender
-                    .account
-                    .as_ref()
-                    .map(AccountAddr::to_string)
-                    .as_deref(),
-                Some(saro_account_id.as_str())
-            );
-            assert_eq!(sender.local_identity.to_string(), saro_device_id);
+            assert_eq!(sender.account().to_string(), saro_account_id);
+            assert_eq!(sender.signer().to_string(), saro_device_id);
             Ok(())
         }
         other => Err(other),
@@ -210,14 +203,7 @@ fn direct_v1_by_account_address() {
             assert_eq!(content.as_slice(), b"hi saro");
             // raya's bundle endorses her delegate, so her sender surfaces with
             // the verified account.
-            assert_eq!(
-                sender
-                    .account
-                    .as_ref()
-                    .map(AccountAddr::to_string)
-                    .as_deref(),
-                Some(raya_account_addr.as_str())
-            );
+            assert_eq!(sender.account().to_string(), raya_account_addr);
             Ok(())
         }
         other => Err(other),
@@ -255,10 +241,7 @@ fn saro_raya_message_exchange() {
         } => {
             assert_eq!(convo_id, raya_convo_id);
             assert_eq!(content.as_slice(), b"hello raya");
-            // saro's account published a bundle endorsing its delegate, so the
-            // sender surfaces a verified account.
-            assert!(sender.account.is_some());
-            assert!(!sender.local_identity.as_bytes().is_empty());
+            assert!(!sender.signer().as_bytes().is_empty());
             Ok(())
         }
         other => Err(other),
@@ -354,13 +337,10 @@ fn direct_conversation_lists_its_participants() {
         .create_direct_conversation(&raya_addr)
         .expect("convo create");
 
-    let roster = saro.group_members(&convo_id).expect("group_members");
-    let mut accounts: Vec<Option<String>> = roster
-        .iter()
-        .map(|m| m.account.as_ref().map(AccountAddr::to_string))
-        .collect();
+    let participants = saro.participants(&convo_id).expect("participants");
+    let mut accounts: Vec<String> = participants.iter().map(AccountAddr::to_string).collect();
     accounts.sort();
-    let mut expected = vec![Some(saro_addr.clone()), Some(raya_addr.clone())];
+    let mut expected = vec![saro_addr.clone(), raya_addr.clone()];
     expected.sort();
     assert_eq!(accounts, expected);
 
