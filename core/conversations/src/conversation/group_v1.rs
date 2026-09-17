@@ -1,3 +1,4 @@
+use crate::identity::SignerRef;
 /// GroupV1 is a conversationType which provides effecient handling of multiple participants
 /// Properties:
 ///     - Harvest Now Decrypt Later (HNDL) protection provided by XWING
@@ -8,7 +9,6 @@ use chat_proto::logoschat::reliability::ReliablePayload;
 use openmls::prelude::tls_codec::Deserialize;
 use openmls::prelude::*;
 use prost::Message as _;
-use shared_traits::SignerRef;
 use std::collections::VecDeque;
 use tracing::debug;
 

@@ -3146,7 +3146,6 @@ dependencies = [
  "crypto",
  "hex",
  "libchat",
- "shared-traits",
  "storage",
  "tempfile",
  "tracing",
@@ -3358,7 +3357,6 @@ dependencies = [
  "rand 0.9.4",
  "rand_core 0.6.4",
  "serde",
- "shared-traits",
  "storage",
  "tempfile",
  "thiserror",
@@ -3692,7 +3690,6 @@ version = "0.1.0"
 dependencies = [
  "crypto",
  "hex",
- "shared-traits",
  "thiserror",
 ]
 
@@ -3733,7 +3730,6 @@ dependencies = [
  "libchat",
  "logos-account",
  "parking_lot",
- "shared-traits",
  "storage",
  "tempfile",
  "thiserror",
@@ -5542,15 +5538,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
-]
-
-[[package]]
-name = "shared-traits"
-version = "0.1.0"
-dependencies = [
- "crypto",
- "hex",
- "thiserror",
 ]
 
 [[package]]
