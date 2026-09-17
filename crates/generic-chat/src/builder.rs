@@ -2,7 +2,7 @@ use chat_sqlite::{SqliteStore, StorageConfig};
 use components::EphemeralRegistry;
 use crossbeam_channel::Receiver;
 use libchat::{ChatError, ConversationStore, GroupV2Config, RegistrationService};
-use logos_account::AccountDirectory;
+use logos_account_legacy::AccountDirectory;
 
 use crate::Transport;
 use crate::client::ChatClient;

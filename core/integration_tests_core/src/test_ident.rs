@@ -1,38 +1,42 @@
-use crypto::{Ed25519SigningKey, Ed25519VerifyingKey};
+use crypto::Ed25519SigningKey;
 use libchat::IdentityProvider;
-use shared_traits::{IdentId, IdentIdRef};
+use shared_traits::{Signer, SignerRef};
 
-/// Test identity with a fixed, human-readable id ("saro"). Stands in for a
-/// device signer so core tests can address peers by name.
+/// Test identity with a human-readable name ("saro"). Stands in for a device
+/// signer so core tests can address peers by name.
+///
+/// The name is a label, not the signer: a signer is an Ed25519 key, so the
+/// name travels as the credential and in [`display_name`] while the signer is
+/// generated.
 pub struct TestIdent {
-    id: IdentId,
+    name: String,
+    signer: Signer,
     signing_key: Ed25519SigningKey,
-    verifying_key: Ed25519VerifyingKey,
 }
 
 impl TestIdent {
-    pub fn new(explicit_id: impl Into<String>) -> Self {
+    pub fn new(name: impl Into<String>) -> Self {
         let signing_key = Ed25519SigningKey::generate();
-        let verifying_key = signing_key.verifying_key();
+        let signer = Signer::from(signing_key.verifying_key());
         Self {
-            id: IdentId::new(explicit_id.into()),
+            name: name.into(),
+            signer,
             signing_key,
-            verifying_key,
         }
     }
 }
 
 impl IdentityProvider for TestIdent {
-    fn id(&self) -> IdentIdRef<'_> {
-        &self.id
+    fn signer(&self) -> SignerRef<'_> {
+        &self.signer
+    }
+
+    fn participant_id(&self) -> shared_traits::ParticipantId {
+        self.name.as_bytes().into()
     }
 
     fn display_name(&self) -> String {
-        self.id.to_string()
-    }
-
-    fn public_key(&self) -> &Ed25519VerifyingKey {
-        &self.verifying_key
+        self.name.clone()
     }
 
     fn sign(&self, payload: &[u8]) -> crypto::Ed25519Signature {

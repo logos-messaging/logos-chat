@@ -477,6 +477,7 @@ fn missing_group_v2_message_is_detected() {
         .expect("saro send m3");
     harness.process_until_label("raya gets m3", |h| h.raya().check(&convo_id, b"third"));
 
+    let saro_signer = harness.saro().addr();
     let missing: Vec<MissingMessage> = harness.raya().take_missing_messages();
     assert_eq!(missing.len(), 1, "exactly one message should be missing");
     assert_eq!(missing[0].conversation_id, convo_id);
@@ -484,12 +485,10 @@ fn missing_group_v2_message_is_detected() {
         !missing[0].frontier.message_id().is_empty(),
         "the missing message must be identified"
     );
-    // The causal sender hint carries the MLS identity id ("saro") — the same
-    // value de-mls stamps as the message's authenticated member id — not the
-    // signer id the inbox and registry key on.
+    // The hint names the sender by its signer, recorded as text.
     assert_eq!(
         missing[0].frontier.sender_id(),
-        "saro",
+        saro_signer.to_string(),
         "missing-message sender hint should attribute to Saro"
     );
 
@@ -541,6 +540,8 @@ fn replies_acknowledge_the_message_they_were_sent_after() {
         h.saro().check(&convo_id, b"raya here") && h.saro().check(&convo_id, b"pax here")
     });
 
+    let raya_signer = harness.raya().addr();
+    let pax_signer = harness.pax().addr();
     let acks: Vec<DeliveryAck> = harness.saro().take_acks();
     let mut holders: Vec<&str> = acks
         .iter()
@@ -548,9 +549,10 @@ fn replies_acknowledge_the_message_they_were_sent_after() {
         .map(|a| a.acked_by.as_str())
         .collect();
     holders.sort_unstable();
+    let mut expected = [pax_signer.to_string(), raya_signer.to_string()];
+    expected.sort_unstable();
     assert_eq!(
-        holders,
-        vec!["pax", "raya"],
+        holders, expected,
         "both peers that replied should be reported as holding the message"
     );
 
