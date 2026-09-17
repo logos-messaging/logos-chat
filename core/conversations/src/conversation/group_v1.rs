@@ -8,7 +8,7 @@ use chat_proto::logoschat::reliability::ReliablePayload;
 use openmls::prelude::tls_codec::Deserialize;
 use openmls::prelude::*;
 use prost::Message as _;
-use shared_traits::IdentIdRef;
+use shared_traits::SignerRef;
 use std::collections::VecDeque;
 use tracing::debug;
 
@@ -142,12 +142,12 @@ impl GroupV1Convo {
     /// concern, above the core.
     fn key_package_for_signer(
         &self,
-        signer: IdentIdRef,
+        signer: SignerRef,
         provider: &impl MlsProvider,
         registry: &impl KeyPackageProvider,
     ) -> Result<KeyPackage, ChatError> {
         let retrieved = registry
-            .retrieve(signer.as_str())
+            .retrieve(&signer.to_string())
             .map_err(|e| ChatError::Generic(e.to_string()))?;
         let Some(keypkg_bytes) = retrieved else {
             return Err(ChatError::Protocol(format!(
@@ -164,10 +164,11 @@ impl GroupV1Convo {
         // registry cannot insert an attacker's leaf under a victim's identity
         // (confidentiality break + sender-attribution spoof). Bind to the key, not the
         // spoofable credential bytes.
-        let leaf_key = hex::encode(keypkg.leaf_node().signature_key().as_slice());
-        if leaf_key != signer.as_str() {
+        let leaf_key = keypkg.leaf_node().signature_key();
+        if leaf_key.as_slice() != signer.as_bytes() {
             return Err(ChatError::Protocol(format!(
-                "keypackage for signer {signer} is bound to a different signing key ({leaf_key})"
+                "keypackage for signer {signer} is bound to a different signing key ({})",
+                hex::encode(leaf_key.as_slice())
             )));
         }
         Ok(keypkg)
@@ -178,8 +179,9 @@ impl GroupV1Convo {
         content: &[u8],
         cx: &mut ServiceContext<S>,
     ) -> Result<MessageId, ChatError> {
-        let sender_id = cx.mls_identity.id().as_str();
-        let reliable = cx.causal.on_send(&self.convo_id, sender_id, content);
+        let reliable = cx
+            .causal
+            .on_send(&self.convo_id, cx.mls_identity.signer(), content);
         let wire = reliable.encode_to_vec();
 
         let mls_message_out = self
@@ -333,7 +335,7 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
     fn add_member(
         &mut self,
         cx: &mut ServiceContext<S>,
-        members: &[IdentIdRef],
+        members: &[SignerRef],
     ) -> Result<(), ChatError> {
         if members.len() > 50 {
             // This is a temporary limit that originates from the De-MLS epoch time.
@@ -364,9 +366,8 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
             .unwrap();
 
         // TODO: (P3) Evaluate privacy/performance implications of an aggregated Welcome for multiple users
-        for signer_id in members {
-            cx.mls_provider
-                .invite_user(&mut cx.ds, signer_id, &welcome)?;
+        for signer in members {
+            cx.mls_provider.invite_user(&mut cx.ds, signer, &welcome)?;
         }
 
         self.send_payload(cx, commit.to_bytes()?)

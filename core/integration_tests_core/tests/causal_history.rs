@@ -106,7 +106,7 @@ fn missing_group_message_is_detected() {
     let mut raya = Client::init(raya_ctx);
 
     // Saro creates a group with Raya.
-    let raya_id = raya.ident_id().clone();
+    let raya_id = raya.signer().clone();
     let convo_id = saro.create_group_convo_v1(&[&raya_id]).unwrap().to_string();
 
     // Raya joins (processes the Welcome + commit).
@@ -135,11 +135,10 @@ fn missing_group_message_is_detected() {
         !missing[0].frontier.message_id().is_empty(),
         "the missing message must be identified"
     );
-    // The causal sender hint carries the sender's identity id ("saro"), not
-    // the signer id the inbox and registry key on.
+    // The hint names the sender by its signer, recorded as text.
     assert_eq!(
         missing[0].frontier.sender_id(),
-        "saro",
+        saro.signer().to_string(),
         "missing-message sender hint should attribute to Saro"
     );
 

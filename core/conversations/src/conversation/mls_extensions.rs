@@ -72,7 +72,7 @@ impl ConvoMetaInfo {
     }
 }
 
-// Each field is encoded as a variable-length opaque (`opaque <V>`); `IdentId`
+// Each field is encoded as a variable-length opaque (`opaque <V>`); `Signer`
 // and `String` aren't `tls_codec` types, so we encode/decode their UTF-8 bytes.
 impl Size for ConvoMetaInfo {
     fn tls_serialized_len(&self) -> usize {

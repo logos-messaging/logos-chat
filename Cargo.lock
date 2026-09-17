@@ -3144,6 +3144,7 @@ dependencies = [
  "chat-sqlite",
  "components",
  "crypto",
+ "hex",
  "libchat",
  "shared-traits",
  "storage",
@@ -3723,6 +3724,7 @@ dependencies = [
 name = "logos-generic-chat"
 version = "0.1.0"
 dependencies = [
+ "account",
  "chat-sqlite",
  "components",
  "crossbeam-channel",
@@ -5547,6 +5549,8 @@ name = "shared-traits"
 version = "0.1.0"
 dependencies = [
  "crypto",
+ "hex",
+ "thiserror",
 ]
 
 [[package]]

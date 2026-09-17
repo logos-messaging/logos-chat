@@ -17,7 +17,7 @@
 use std::fmt::{Debug, Display};
 
 use crypto::{Ed25519Signature, Ed25519VerifyingKey};
-use shared_traits::IdentIdRef;
+use shared_traits::SignerRef;
 use thiserror::Error;
 
 /// A device (LocalIdentity) verifying key, hex-encoded — the same shape as the
@@ -186,8 +186,6 @@ pub fn verify_bundle(
 /// Failures resolving an account address to its device ids.
 #[derive(Debug, Error)]
 pub enum ResolveError {
-    #[error("address is not an account key")]
-    NotAnAccountKey,
     #[error("account has published no device bundle")]
     NoDeviceBundle,
     #[error("directory: {0}")]
@@ -196,33 +194,25 @@ pub enum ResolveError {
 
 /// Resolve an account to the device ids whose KeyPackages must be fetched.
 ///
-/// The directory is keyed by the account verifying key: `account` must be the
-/// hex of such a key, and a reachable account has published a bundle endorsing
-/// at least one device. Anything else is an error — the distinct variants tell
-/// a malformed address, an unpublished account, and a directory outage apart.
+/// The directory is keyed by the account verifying key, which a [`Signer`]
+/// already holds — so the only failures left are an unpublished account and a
+/// directory outage, which the variants tell apart.
 pub fn resolve_device_ids<D: AccountDirectory + ?Sized>(
     directory: &D,
-    account: IdentIdRef,
+    account: SignerRef,
 ) -> Result<Vec<DeviceId>, ResolveError> {
-    let account_key = account_key_from_id(account).ok_or(ResolveError::NotAnAccountKey)?;
     let set = directory
-        .fetch(&account_key)
+        .fetch(account.verifying_key())
         .map_err(|e| ResolveError::Directory(e.to_string()))?
         .ok_or(ResolveError::NoDeviceBundle)?;
     Ok(set.devices)
-}
-
-/// Interpret an identity id as the hex of an account verifying key, if it is one.
-fn account_key_from_id(id: IdentIdRef) -> Option<Ed25519VerifyingKey> {
-    let bytes: [u8; 32] = hex::decode(id.as_str()).ok()?.try_into().ok()?;
-    Ed25519VerifyingKey::from_bytes(&bytes).ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crypto::Ed25519SigningKey;
-    use shared_traits::IdentId;
+    use shared_traits::Signer;
 
     /// encode → decode round-trips, including zero and many devices.
     #[test]
@@ -348,21 +338,11 @@ mod tests {
         }
     }
 
-    /// An address that is not the hex of an account key cannot be resolved.
-    #[test]
-    fn resolve_rejects_non_key_address() {
-        let account = IdentId::new("pax");
-        assert!(matches!(
-            resolve_device_ids(&FakeDir(None), &account),
-            Err(ResolveError::NotAnAccountKey)
-        ));
-    }
-
     /// An account that never published a bundle is unreachable.
     #[test]
     fn resolve_rejects_unpublished_account() {
         let account_pub = Ed25519SigningKey::generate().verifying_key();
-        let account_id = IdentId::new(hex::encode(account_pub.as_ref()));
+        let account_id = Signer::from(account_pub.clone());
         assert!(matches!(
             resolve_device_ids(&FakeDir(None), &account_id),
             Err(ResolveError::NoDeviceBundle)
@@ -387,7 +367,7 @@ mod tests {
 
         // The identifier is the hex of the account key, so resolution consults the
         // directory rather than falling back.
-        let account_id = IdentId::new(hex::encode(account_pub.as_ref()));
+        let account_id = Signer::from(account_pub.clone());
         let resolved = resolve_device_ids(&FakeDir(Some(bundle)), &account_id).unwrap();
         let want: Vec<String> = devices.iter().map(|d| hex::encode(d.as_ref())).collect();
         assert_eq!(resolved, want);
