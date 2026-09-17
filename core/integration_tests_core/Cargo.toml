@@ -13,7 +13,6 @@ chat-sqlite = { workspace = true }
 components = { workspace = true }
 crypto = { workspace = true }
 libchat = { workspace = true, features = ["test-support"] }
-shared-traits = { workspace = true }
 
 # External dependencies (sorted)
 tracing = "0.1"

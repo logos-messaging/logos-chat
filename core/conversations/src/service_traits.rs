@@ -1,13 +1,26 @@
 /// Service traits define the functionality which must be externally supplied by
 /// platform clients. Platforms can alter the behaviour of the chat core by supplying
 /// different implementations.
-use shared_traits::{IdentityProvider, ParticipantId, SignerKey};
 use std::{
     fmt::{Debug, Display},
     time::Duration,
 };
 
+use crypto::Ed25519Signature;
+
+use crate::identity::{ParticipantId, SignerKey, SignerRef};
 use crate::{ConversationId, types::AddressedEnvelope};
+
+/// What chat needs from whatever holds this installation's own identity.
+pub trait IdentityProvider {
+    fn signer_key(&self) -> SignerRef<'_>;
+    fn participant_id(&self) -> ParticipantId;
+
+    // Display name is not garenteed to be consistent. It should only be used to
+    // provded a more readable identifier for the account.
+    fn display_name(&self) -> String;
+    fn sign(&self, payload: &[u8]) -> Ed25519Signature;
+}
 
 /// A Delivery service is responsible for payload transport.
 /// This interface allows Conversations to send payloads on the wire as well as

@@ -15,7 +15,6 @@ test-support = []
 # Workspace dependencies (sorted)
 blake2 = { workspace = true }
 crypto = { workspace = true }
-shared-traits = { workspace = true }
 
 # External dependencies (sorted)
 alloy = "2.0"

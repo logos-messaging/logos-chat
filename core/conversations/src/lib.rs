@@ -2,6 +2,7 @@ mod causal_history;
 mod conversation;
 mod core;
 mod errors;
+mod identity;
 mod inbox_v2;
 mod kv;
 mod outcomes;
@@ -26,15 +27,15 @@ pub use core::{ConversationId, Core};
 pub use de_mls::ConversationConfig as GroupV2Config;
 pub use de_mls::MockClock;
 pub use errors::ChatError;
+pub use identity::{ParticipantId, SignerError, SignerKey, SignerRef};
 pub use kv::{KvTransaction, ScopedKvStore};
 pub use outcomes::{
     Content, ConversationClass, ConvoOutcome, InboxOutcome, NewConversation, PayloadOutcome,
 };
 pub use service_context::ExternalServices;
 pub use service_traits::{
-    AuthResult, AuthService, DeliveryService, RegistrationService, WakeupService,
+    AuthResult, AuthService, DeliveryService, IdentityProvider, RegistrationService, WakeupService,
 };
-pub use shared_traits::{IdentityProvider, ParticipantId, SignerKey, SignerRef};
 pub use storage::{
     ConversationKind, ConversationMeta, ConversationStore, KvPair, KvStore, KvTx, Namespace, Scope,
     StorageError,

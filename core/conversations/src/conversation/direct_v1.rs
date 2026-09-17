@@ -1,5 +1,5 @@
+use crate::identity::SignerRef;
 use chat_proto::logoschat::encryption::EncryptedPayload;
-use shared_traits::SignerRef;
 
 use crate::{
     ChatError, ExternalServices, MessageId,

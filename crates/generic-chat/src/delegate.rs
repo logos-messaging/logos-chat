@@ -61,8 +61,8 @@ impl IdentityProvider for DelegateIdentity {
         &self.identity
     }
 
-    fn participant_id(&self) -> shared_traits::ParticipantId {
-        shared_traits::ParticipantId::from(self.credential.as_slice())
+    fn participant_id(&self) -> libchat::ParticipantId {
+        libchat::ParticipantId::from(self.credential.as_slice())
     }
 
     fn display_name(&self) -> String {

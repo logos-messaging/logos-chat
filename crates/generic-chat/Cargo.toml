@@ -16,7 +16,6 @@ crypto = { workspace = true }
 libchat = { workspace = true }
 logos-account = { workspace = true }
 logos-account-legacy = { workspace = true, features = ["dev"]}
-shared-traits = { workspace =  true }
 
 # External dependencies (sorted)
 hex = "0.4.3"

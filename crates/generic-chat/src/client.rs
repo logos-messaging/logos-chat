@@ -366,9 +366,9 @@ where
         let account: AccountAddr = account
             .parse()
             .map_err(|_| ClientError::AccountResolution("not an account address".to_owned()))?;
-        let account_signer = SignerKey::try_from(account.to_bytes())
-            .map_err(|_| ClientError::AccountResolution("not an account key".to_owned()))?;
-        let device_ids = resolve_device_ids(&self.directory, &account_signer)
+        let account_key = account_key_from_hex(&account.to_string())
+            .ok_or_else(|| ClientError::AccountResolution("not an account key".to_owned()))?;
+        let device_ids = resolve_device_ids(&self.directory, &account_key)
             .map_err(|e| ClientError::AccountResolution(e.to_string()))?;
         device_ids
             .into_iter()

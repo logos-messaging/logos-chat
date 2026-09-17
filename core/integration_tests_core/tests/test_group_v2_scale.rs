@@ -42,7 +42,7 @@
 //!   it just belongs to another branch of the group.
 
 use integration_tests_core::TestHarness;
-use shared_traits::SignerKey;
+use libchat::SignerKey;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 

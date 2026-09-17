@@ -1,11 +1,11 @@
 use std::ops::Deref;
 
+use crate::identity::SignerRef;
 use openmls::credentials::{BasicCredential, CredentialWithKey};
 use openmls_traits::{
     signatures::{Signer, SignerError},
     types::SignatureScheme,
 };
-use shared_traits::SignerRef;
 
 use crate::IdentityProvider;
 
@@ -42,7 +42,7 @@ impl<T: IdentityProvider> IdentityProvider for MlsIdentityProvider<T> {
         self.0.signer_key()
     }
 
-    fn participant_id(&self) -> shared_traits::ParticipantId {
+    fn participant_id(&self) -> crate::identity::ParticipantId {
         self.0.participant_id()
     }
 

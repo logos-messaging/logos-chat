@@ -1,5 +1,15 @@
-use crypto::{Ed25519Signature, Ed25519VerifyingKey};
+//! Who is who.
+//!
+//! ```text
+//! SignerKey       an installation: the key it signs under
+//! ParticipantId   a participant: the user an installation acts for
+//! ```
+//!
+//! The model and the reasoning behind it: `docs/adr/0003-identity-model.md`.
+
 use std::fmt;
+
+use crypto::Ed25519VerifyingKey;
 
 /// Who signed: the Ed25519 key a message's signatures verify under.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -7,7 +17,7 @@ pub struct SignerKey(Ed25519VerifyingKey);
 pub type SignerRef<'a> = &'a SignerKey;
 
 impl SignerKey {
-    /// The key's bytes — the device id the registries and directory are keyed on.
+    /// The key's bytes — the id the registries are keyed on.
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_ref()
     }
@@ -51,17 +61,20 @@ impl fmt::Debug for SignerKey {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum SignerError {
+    #[error("not an Ed25519 verifying key")]
+    NotAKey,
+}
+
+/// The participant an installation acts for. Opaque to the core; the client decides
+/// what it encodes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ParticipantId(Vec<u8>);
 
 impl ParticipantId {
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_ref()
-    }
-
-    /// The key's bytes — the device id the registries and directory are keyed on.
-    pub fn to_bytes(&self) -> Vec<u8> {
-        self.0.to_vec()
     }
 }
 
@@ -75,22 +88,4 @@ impl fmt::Display for ParticipantId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&hex::encode(self.as_bytes()))
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum SignerError {
-    #[error("not an Ed25519 verifying key")]
-    NotAKey,
-}
-
-/// Represents an external Identity
-/// Implement this to provide an Authentication model for users/installations
-pub trait IdentityProvider {
-    fn signer_key(&self) -> SignerRef<'_>;
-    fn participant_id(&self) -> ParticipantId;
-
-    // Display name is not garenteed to be consistent. It should only be used to
-    // provded a more readable identifier for the account.
-    fn display_name(&self) -> String;
-    fn sign(&self, payload: &[u8]) -> Ed25519Signature;
 }
