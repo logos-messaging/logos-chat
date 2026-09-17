@@ -22,7 +22,7 @@ use logos_account_legacy::TestLogosAccount;
 
 use logos_generic_chat::{
     ChatClient, ChatClientBuilder, ClientError, DelegateSigner, Event, GroupV2Config, SqliteStore,
-    StorageConfig, Transport,
+    StorageConfig, Transport, UncheckedAuth,
 };
 
 /// The endpoint for the account and keypackage registration service.
@@ -127,7 +127,7 @@ pub fn open_with_transport<T: Transport + Clone>(
     transport: T,
 ) -> Result<
     (
-        ChatClient<T, ContactRegistry<T>, SqliteStore>,
+        ChatClient<T, ContactRegistry<T>, UncheckedAuth, SqliteStore>,
         Receiver<Event>,
     ),
     ClientError,
@@ -150,6 +150,7 @@ pub fn open_with_transport<T: Transport + Clone>(
         .ident(delegate)
         .transport(transport)
         .registration(registry)
+        .auth(UncheckedAuth)
         .storage_config(StorageConfig::Encrypted {
             path: config.db_path,
             key: config.db_key,
@@ -168,5 +169,9 @@ pub fn open_with_transport<T: Transport + Clone>(
 /// and encrypted [`SqliteStore`] — running an embedded logos-delivery node as
 /// its transport. Open one with [`open`], or swap the transport via
 /// [`open_with_transport`].
-pub type LogosChatClient =
-    ChatClient<EmbeddedLogosDelivery, ContactRegistry<EmbeddedLogosDelivery>, SqliteStore>;
+pub type LogosChatClient = ChatClient<
+    EmbeddedLogosDelivery,
+    ContactRegistry<EmbeddedLogosDelivery>,
+    UncheckedAuth,
+    SqliteStore,
+>;
