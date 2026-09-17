@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -6,8 +6,8 @@ use anyhow::Result;
 use arboard::Clipboard;
 use crossbeam_channel::Receiver;
 use logos_chat::{
-    AccountAddr, AccountDirectory, ChatClient, ConversationClass, ConversationStore, Event,
-    GroupMetadata, RegistrationService, Transport, UncheckedAuth,
+    AccountAddr, AuthService, ChatClient, ConversationClass, ConversationStore, Event,
+    GroupMetadata, RegistrationService, Transport,
 };
 use serde::{Deserialize, Serialize};
 
@@ -74,13 +74,14 @@ pub struct AppState {
     pub active_chat: Option<String>,
 }
 
-pub struct ChatApp<T, R, S>
+pub struct ChatApp<T, R, A, S>
 where
     T: Transport,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
-    pub client: ChatClient<T, R, UncheckedAuth, S>,
+    pub client: ChatClient<T, R, A, S>,
     events: Receiver<Event>,
     pub state: AppState,
     /// Whether the active chat can accept outbound content this session. Mirrors
@@ -95,14 +96,15 @@ where
     state_path: PathBuf,
 }
 
-impl<T, R, S> ChatApp<T, R, S>
+impl<T, R, A, S> ChatApp<T, R, A, S>
 where
     T: Transport,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send,
 {
     pub fn new(
-        client: ChatClient<T, R, UncheckedAuth, S>,
+        client: ChatClient<T, R, A, S>,
         events: Receiver<Event>,
         user_name: &str,
         data_dir: &Path,
@@ -283,11 +285,11 @@ where
             } => {
                 let chat_id = convo_id.to_string();
                 // The client resolved the credential to an account; classify by it.
-                let origin = match sender.account.as_ref().map(AccountAddr::to_string) {
-                    Some(account) if account == self.client.addr() => MessageOrigin::Own,
-                    Some(account) => MessageOrigin::Foreign(account),
-                    // Unassociated device — no account claim; fall back to its signer id.
-                    None => MessageOrigin::Foreign(sender.local_identity.to_string()),
+                let account = sender.account().to_string();
+                let origin = if account == self.client.addr() {
+                    MessageOrigin::Own
+                } else {
+                    MessageOrigin::Foreign(account)
                 };
                 let Some(session) = self.state.chats.get_mut(&chat_id) else {
                     return;
@@ -499,14 +501,11 @@ where
                 }
                 let already_present = self
                     .client
-                    .group_members(chat_id)
-                    .map(|members| {
-                        members.iter().any(|m| {
-                            m.account.as_ref().map(AccountAddr::to_string).as_deref()
-                                == Some(address)
-                        })
-                    })
-                    .unwrap_or(false);
+                    .members(chat_id)
+                    .into_iter()
+                    .chain(self.client.pending_members(chat_id))
+                    .flatten()
+                    .any(|m| m.account.to_string() == address);
                 if already_present {
                     return Ok(Some(
                         "That account is already in the group (or its invite is pending)."
@@ -544,30 +543,42 @@ where
                     .active_chat
                     .clone()
                     .ok_or_else(|| anyhow::anyhow!("No active conversation."))?;
-                let members = self
+                let participants = self
                     .client
-                    .group_members(&chat_id)
+                    .participants(&chat_id)
                     .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                let pending = self
+                    .client
+                    .pending_members(&chat_id)
+                    .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                // One row per account; an account with a committed device is not
+                // also listed as pending.
+                let joined: BTreeSet<String> =
+                    participants.iter().map(AccountAddr::to_string).collect();
+                let invited: BTreeSet<String> = pending
+                    .iter()
+                    .map(|m| m.account.to_string())
+                    .filter(|account| !joined.contains(account))
+                    .collect();
+                let total = joined.len() + invited.len();
                 let my_addr = self.client.addr().to_string();
-                self.add_system_message(&format!("── Members ({}) ──", members.len()));
-                for m in &members {
-                    let id = m
-                        .account
-                        .as_ref()
-                        .map_or_else(|| m.local_identity.to_string(), AccountAddr::to_string);
+                self.add_system_message(&format!("── Members ({total}) ──"));
+                let rows = joined
+                    .iter()
+                    .map(|account| (account, false))
+                    .chain(invited.iter().map(|account| (account, true)));
+                for (id, is_pending) in rows {
                     let short = &id[..16.min(id.len())];
                     let mut tags = String::new();
-                    if m.account.as_ref().map(AccountAddr::to_string).as_deref()
-                        == Some(my_addr.as_str())
-                    {
+                    if *id == my_addr {
                         tags.push_str(" (you)");
                     }
-                    if m.pending {
+                    if is_pending {
                         tags.push_str(" (pending)");
                     }
                     self.add_system_message(&format!("  • {short}…{tags}"));
                 }
-                Ok(Some(format!("{} member(s)", members.len())))
+                Ok(Some(format!("{total} member(s)")))
             }
             "/nickname" => {
                 if args.is_empty() {

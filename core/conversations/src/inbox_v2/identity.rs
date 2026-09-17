@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-use crate::identity::SignerRef;
+use crate::identity::{ParticipantId, SignerRef};
 use openmls::credentials::{BasicCredential, CredentialWithKey};
 use openmls_traits::{
     signatures::{Signer, SignerError},
@@ -12,7 +12,7 @@ use crate::IdentityProvider;
 /// A Wrapper for an IdentityProvider which provides MLS specific functionality
 ///
 /// This type stops OpenMLS internal from leaking outside the crate.
-/// Developers provider a simple IdentityProvider, and Signer and Credential generation
+/// Developers provider a simple IdentityProvider, and SignerKey and Credential generation
 /// is provided
 pub struct MlsIdentityProvider<T: IdentityProvider>(T);
 
@@ -42,7 +42,7 @@ impl<T: IdentityProvider> IdentityProvider for MlsIdentityProvider<T> {
         self.0.signer_key()
     }
 
-    fn participant_id(&self) -> crate::identity::ParticipantId {
+    fn participant_id(&self) -> ParticipantId {
         self.0.participant_id()
     }
 

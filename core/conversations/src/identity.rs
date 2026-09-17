@@ -1,8 +1,11 @@
 //! Who is who.
 //!
 //! ```text
-//! SignerKey       an installation: the key it signs under
-//! ParticipantId   a participant: the user an installation acts for
+//! SignerKey                           an installation: the key it signs under
+//! ParticipantId                       a participant: the user an installation acts for
+//! Member { signer, participant_id }   one installation of one participant, in a conversation
+//!   │  AuthService
+//!   └──► AuthenticatedMember          a member the service vouched for
 //! ```
 //!
 //! The model and the reasoning behind it: `docs/adr/0003-identity-model.md`.
@@ -11,9 +14,13 @@ use std::fmt;
 
 use crypto::Ed25519VerifyingKey;
 
-/// Who signed: the Ed25519 key a message's signatures verify under.
+use crate::service_traits::{AuthResult, AuthService};
+
+/// Who signed: the signature key the group's ciphersuite verifies under.
+///
+/// Always public — never secret key material.
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub struct SignerKey(Ed25519VerifyingKey);
+pub struct SignerKey(Vec<u8>);
 pub type SignerRef<'a> = &'a SignerKey;
 
 impl SignerKey {
@@ -21,29 +28,19 @@ impl SignerKey {
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_ref()
     }
-
-    /// The key itself, for verifying a signature under it.
-    pub fn verifying_key(&self) -> &Ed25519VerifyingKey {
-        &self.0
-    }
 }
 
 impl From<Ed25519VerifyingKey> for SignerKey {
     fn from(key: Ed25519VerifyingKey) -> Self {
-        Self(key)
+        Self(key.as_ref().to_vec())
     }
 }
 
-/// Not every byte string names a signer: exactly 32 bytes forming a valid
-/// Ed25519 key.
-impl TryFrom<&[u8]> for SignerKey {
-    type Error = SignerError;
-
-    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        let bytes: [u8; 32] = value.try_into().map_err(|_| SignerError::NotAKey)?;
-        Ed25519VerifyingKey::from_bytes(&bytes)
-            .map(Self)
-            .map_err(|_| SignerError::NotAKey)
+/// Any bytes: which signature scheme they belong to is the ciphersuite's
+/// business, and MLS checks the key itself.
+impl From<&[u8]> for SignerKey {
+    fn from(value: &[u8]) -> Self {
+        Self(value.to_vec())
     }
 }
 
@@ -52,8 +49,9 @@ impl TryFrom<&str> for SignerKey {
     type Error = SignerError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        let bytes = hex::decode(value).map_err(|_| SignerError::NotHex)?;
-        Self::try_from(bytes.as_slice())
+        hex::decode(value)
+            .map(Self)
+            .map_err(|_| SignerError::NotHex)
     }
 }
 
@@ -99,5 +97,82 @@ impl From<&[u8]> for ParticipantId {
 impl fmt::Display for ParticipantId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&hex::encode(self.as_bytes()))
+    }
+}
+
+/// Identity of a entity in a conversation.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Member {
+    /// Installation specific signing key
+    pub signer: SignerKey,
+    /// The participant this signer acts for.
+    pub participant_id: ParticipantId,
+}
+
+impl Member {
+    pub(crate) fn from_leaf(signature_key: &[u8], credential: &[u8]) -> Self {
+        Self {
+            signer: SignerKey::from(signature_key),
+            participant_id: ParticipantId::from(credential),
+        }
+    }
+
+    pub(crate) fn auth_status<A: AuthService>(&self, auth: &A) -> AuthStatus {
+        match auth.validate_signer(self.signer.clone(), self.participant_id.clone()) {
+            Ok(result) => result.into(),
+            Err(error) => {
+                tracing::warn!(signer = %self.signer, %error, "auth service could not decide");
+                AuthStatus::Unknown
+            }
+        }
+    }
+
+    pub(crate) fn require_valid<A: AuthService>(self, auth: &A) -> Option<AuthenticatedMember> {
+        match self.auth_status(auth) {
+            AuthStatus::Valid => Some(AuthenticatedMember(self)),
+            status => {
+                tracing::warn!(signer = %self.signer, ?status, "member failed auth");
+                None
+            }
+        }
+    }
+}
+
+/// The auth service's verdict on a member, as of when it was asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AuthStatus {
+    Valid,
+    /// Was valid; withdrawn since.
+    Revoked,
+    /// Never valid for this signer.
+    Invalid,
+    /// The service could not decide. Not a verdict.
+    Unknown,
+}
+
+impl From<AuthResult> for AuthStatus {
+    fn from(result: AuthResult) -> Self {
+        match result {
+            AuthResult::Valid => Self::Valid,
+            AuthResult::Revoked => Self::Revoked,
+            AuthResult::Invalid => Self::Invalid,
+        }
+    }
+}
+
+/// A member the auth service found valid.
+///
+/// [`Member::require_valid`] is the only constructor, so holding one
+/// is proof the check passed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthenticatedMember(Member);
+
+impl AuthenticatedMember {
+    pub fn signer(&self) -> &SignerKey {
+        &self.0.signer
+    }
+
+    pub fn participant_id(&self) -> &ParticipantId {
+        &self.0.participant_id
     }
 }

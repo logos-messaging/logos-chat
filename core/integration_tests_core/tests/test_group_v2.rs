@@ -16,7 +16,7 @@ fn groupv2_2way_roundtrip() {
     let mut harness = TestHarness::<2>::new(|_, _| {});
 
     //Saro Create Convo
-    let particpants = &[&harness.raya().addr()];
+    let particpants = &[harness.raya().account()];
     let convo_id = harness
         .saro()
         .create_group_convo_v2(particpants, "", "")
@@ -54,7 +54,7 @@ fn core_client() {
 
     let mut harness = TestHarness::<3>::new(|_, _| {});
 
-    let particpants = &[&harness.raya().addr()];
+    let particpants = &[harness.raya().account()];
     let convo_id = harness
         .saro()
         .create_group_convo_v2(particpants, "", "")
@@ -83,7 +83,7 @@ fn core_client() {
     harness.process_until_label("Recv R_M1", |h| h.saro().check(&convo_id, R_M1));
 
     // Raya (a non-creator) invites Pax; settle until Pax has joined.
-    let particpants = &[&harness.pax().addr()];
+    let particpants = &[harness.pax().addr()];
     harness
         .raya()
         .group_add_member(&convo_id, particpants)
@@ -112,7 +112,7 @@ fn core_client_batch_add() {
 
     let mut harness = TestHarness::<3>::new(|_, _| {});
 
-    let particpants = &[&harness.raya().addr(), &harness.pax().addr()];
+    let particpants = &[harness.raya().account(), harness.pax().account()];
     harness
         .saro()
         .create_group_convo_v2(particpants, "", "")
@@ -142,7 +142,7 @@ fn core_client_four_members_two_epochs() {
 
     let mut harness = TestHarness::<4>::new(|_, _| {});
 
-    let particpants = &[&harness.raya().addr(), &harness.pax().addr()];
+    let particpants = &[harness.raya().account(), harness.pax().account()];
     let convo_id = harness
         .saro()
         .create_group_convo_v2(particpants, "", "")
@@ -156,7 +156,7 @@ fn core_client_four_members_two_epochs() {
 
     // Epoch 2: Raya adds the 4th member; settle until Mira has joined and the
     // >sn_max election has returned everyone to Working.
-    let members = &[&harness.mira().addr()];
+    let members = &[harness.mira().addr()];
     harness
         .raya()
         .group_add_member(&convo_id, members)
@@ -193,7 +193,7 @@ fn core_client_remove_member() {
     let mut harness = TestHarness::<3>::new(|_, _| {});
 
     let pax_addr = harness.pax().addr();
-    let particpants = &[&harness.raya().addr(), &pax_addr];
+    let particpants = &[harness.raya().account(), harness.pax().account()];
     let convo_id = harness
         .saro()
         .create_group_convo_v2(particpants, "", "")
@@ -244,7 +244,7 @@ fn remove_member_refuses_to_target_self() {
     let mut harness = TestHarness::<2>::new(|_, _| {});
 
     let saro_addr = harness.saro().addr();
-    let particpants = &[&harness.raya().addr()];
+    let particpants = &[harness.raya().account()];
     let convo_id = harness
         .saro()
         .create_group_convo_v2(particpants, "", "")
@@ -282,7 +282,7 @@ fn remove_member_rejects_a_non_member() {
     let mut harness = TestHarness::<3>::new(|_, _| {});
 
     let pax_addr = harness.pax().addr();
-    let particpants = &[&harness.raya().addr()];
+    let particpants = &[harness.raya().account()];
     let convo_id = harness
         .saro()
         .create_group_convo_v2(particpants, "", "")
@@ -309,7 +309,7 @@ fn group_name_propagation() {
 
     let mut harness = TestHarness::<4>::new(|_, _| {});
 
-    let members = &[&harness.raya().addr()];
+    let members = &[harness.raya().account()];
     let convo_id = harness
         .saro()
         .create_group_convo_v2(members, name, desc)
@@ -340,7 +340,7 @@ fn group_name_propagation() {
     );
 
     // Epoch 2: Raya adds the 3rd member; settle until Pax has joined
-    let members = &[&harness.pax().addr()];
+    let members = &[harness.pax().addr()];
     harness
         .raya()
         .group_add_member(&convo_id, members)
@@ -372,19 +372,19 @@ fn member_joins_two_groups() {
         .try_init();
 
     let mut harness = TestHarness::<2>::new(|_, _| {});
-    let raya_addr = harness.raya().addr();
+    let raya_account = harness.raya().account();
 
     // Group 1: Saro invites Raya.
     harness
         .saro()
-        .create_group_convo_v2(&[&raya_addr], "", "")
+        .create_group_convo_v2(std::slice::from_ref(&raya_account), "", "")
         .expect("saro create group 1");
     harness.process_until_label("raya joins group 1", |h| h.raya().convo_count() == 1);
 
     // Group 2: Saro invites Raya again, into a fresh group.
     harness
         .saro()
-        .create_group_convo_v2(&[&raya_addr], "", "")
+        .create_group_convo_v2(&[raya_account], "", "")
         .expect("saro create group 2");
     harness.process_until_label("raya joins group 2", |h| h.raya().convo_count() == 2);
 
@@ -408,19 +408,19 @@ fn direct_v1_then_group_v2_reuses_key_package() {
         .try_init();
 
     let mut harness = TestHarness::<2>::new(|_, _| {});
-    let raya_addr = harness.raya().addr();
+    let raya_account = harness.raya().account();
 
     // 1. DirectV1 with Raya.
     harness
         .saro()
-        .create_direct_convo_v1(&[&raya_addr])
+        .create_direct_convo_v1(raya_account.clone())
         .expect("saro create direct");
     harness.process_until_label("raya joins direct", |h| h.raya().convo_count() == 1);
 
     // 2. GroupV2 inviting the same Raya.
     harness
         .saro()
-        .create_group_convo_v2(&[&raya_addr], "", "")
+        .create_group_convo_v2(&[raya_account], "", "")
         .expect("saro create group");
     harness.process_until_label("raya joins group", |h| h.raya().convo_count() == 2);
 
@@ -440,7 +440,7 @@ fn direct_v1_then_group_v2_reuses_key_package() {
 fn missing_group_v2_message_is_detected() {
     let mut harness = TestHarness::<2>::new(|_, _| {});
 
-    let participants = &[&harness.raya().addr()];
+    let participants = &[harness.raya().account()];
     let convo_id = harness
         .saro()
         .create_group_convo_v2(participants, "", "")
@@ -505,7 +505,7 @@ fn missing_group_v2_message_is_detected() {
 fn replies_acknowledge_the_message_they_were_sent_after() {
     let mut harness = TestHarness::<3>::new(|_, _| {});
 
-    let participants = &[&harness.raya().addr(), &harness.pax().addr()];
+    let participants = &[harness.raya().account(), harness.pax().account()];
     let convo_id = harness
         .saro()
         .create_group_convo_v2(participants, "", "")

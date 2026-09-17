@@ -4,12 +4,14 @@ use libchat::ChatError;
 pub enum ClientError {
     #[error(transparent)]
     Chat(#[from] ChatError),
-    #[error("received credential could not be parsed")]
-    BadlyFormedCredential,
+    #[error("participant id is not an account address")]
+    InvalidAccount,
     #[error("failed to start the transport: {0}")]
     Transport(String),
-    #[error("account resolution failed: {0}")]
-    AccountResolution(String),
+    #[error("not an account address: {0}")]
+    InvalidAccountAddress(String),
+    #[error("installation is not endorsed by its account: {0}")]
+    NotEndorsed(String),
     #[error("device bundle publish failed: {0}")]
     BundlePublish(String),
 }

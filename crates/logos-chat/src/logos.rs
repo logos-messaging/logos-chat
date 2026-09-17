@@ -2,7 +2,7 @@
 //!
 //! [`open`] commits to the Logos service stack so independently built clients
 //! share the same production services instead of each re-deriving them: a
-//! delegate identity, the keypackage + account registry (queried over HTTP,
+//! installation identity, the keypackage + account registry (queried over HTTP,
 //! with submissions over HTTP or the delivery network), and encrypted
 //! on-disk storage. The stack is generic over the transport — any
 //! [`Transport`] can be injected via [`open_with_transport`] — and the
@@ -18,11 +18,9 @@
 use components::{ContactRegistry, RegistryPublishMode};
 use crossbeam_channel::Receiver;
 use embedded_logos_delivery::{EmbeddedLogosDelivery, P2pConfig};
-use logos_account_legacy::TestLogosAccount;
-
 use logos_generic_chat::{
-    ChatClient, ChatClientBuilder, ClientError, DelegateSigner, Event, GroupV2Config, SqliteStore,
-    StorageConfig, Transport, UncheckedAuth,
+    AccountAddr, ChatClient, ChatClientBuilder, ClientError, Event, GroupV2Config, PanicAuth,
+    PendingInstallation, SqliteStore, StorageConfig, Transport,
 };
 
 /// The endpoint for the account and keypackage registration service.
@@ -127,42 +125,37 @@ pub fn open_with_transport<T: Transport + Clone>(
     transport: T,
 ) -> Result<
     (
-        ChatClient<T, ContactRegistry<T>, UncheckedAuth, SqliteStore>,
+        ChatClient<T, ContactRegistry<T>, PanicAuth, SqliteStore>,
         Receiver<Event>,
     ),
     ClientError,
 > {
-    // A fresh account endorsing a fresh delegate each open: the account
-    // key is dropped after publishing the bundle, so devices cannot be
-    // added later. A caller-supplied, custody-holding account replaces
+    // A fresh account and installation each open: the account key is dropped,
+    // so devices cannot be added later. A caller-supplied, custody-holding account replaces
     // this once the platform provides one.
-    let account = TestLogosAccount::new();
-    let delegate = DelegateSigner::random();
-    let mut registry = ContactRegistry::new(
+    let registry = ContactRegistry::new(
         transport.clone(),
         config.registry_url,
         config.registry_publish_mode,
     );
-    account
-        .add_delegate_signer(&mut registry, delegate.public_key())
-        .map_err(|e| ClientError::BundlePublish(e.to_string()))?;
-    let mut builder = ChatClientBuilder::new(account.address())
-        .ident(delegate)
-        .transport(transport)
-        .registration(registry)
-        .auth(UncheckedAuth)
-        .storage_config(StorageConfig::Encrypted {
-            path: config.db_path,
-            key: config.db_key,
-        });
+    let mut builder = ChatClientBuilder::new(
+        PendingInstallation::generate().complete(TestLogosAccount::new().addr()),
+    )
+    .transport(transport)
+    .registration(registry)
+    .auth(PanicAuth)
+    .storage_config(StorageConfig::Encrypted {
+        path: config.db_path,
+        key: config.db_key,
+    });
     if let Some(group_v2) = config.group_v2_config {
         builder = builder.group_v2_config(group_v2);
     }
     builder.build()
 }
 
-/// The Logos client: a [`ChatClient`] wired to the Logos service stack — a
-/// [`DelegateSigner`] identity acting for a fresh dev account, the keypackage +
+/// The Logos client: a [`ChatClient`] wired to the Logos service stack —
+/// an [`Installation`](logos_generic_chat::Installation) of a fresh dev account, the keypackage +
 /// account registry ([`ContactRegistry`], which is both the keypackage store
 /// and the account → device directory; it queries over HTTP and submits over
 /// HTTP or the delivery network per [`LogosConfig::set_registry_publish_mode`]),
@@ -172,6 +165,22 @@ pub fn open_with_transport<T: Transport + Clone>(
 pub type LogosChatClient = ChatClient<
     EmbeddedLogosDelivery,
     ContactRegistry<EmbeddedLogosDelivery>,
-    UncheckedAuth,
+    PanicAuth,
     SqliteStore,
 >;
+
+/// A stand-in account while the account layer is out: only a well-formed
+/// address.
+struct TestLogosAccount(crypto::Ed25519SigningKey);
+
+impl TestLogosAccount {
+    fn new() -> Self {
+        Self(crypto::Ed25519SigningKey::generate())
+    }
+
+    /// This account's address.
+    fn addr(&self) -> AccountAddr {
+        AccountAddr::try_from(self.0.verifying_key().as_ref())
+            .expect("a generated key is an address")
+    }
+}
