@@ -8,14 +8,15 @@ use chat_proto::logoschat::reliability::ReliablePayload;
 use openmls::prelude::tls_codec::Deserialize;
 use openmls::prelude::*;
 use prost::Message as _;
-use shared_traits::{ExternalIdentifier, Signer, SignerRef};
+use shared_traits::SignerRef;
 use std::collections::VecDeque;
 use tracing::debug;
 
 use crate::conversation::{ConversationIdRef, MessageId};
 use crate::inbox_v2::MlsProvider;
-use crate::outcomes::AuthenticatedSender;
+use crate::membership::Member;
 use crate::service_context::{ExternalServices, ServiceContext};
+use crate::service_traits::AuthService;
 
 use crate::types::ConvoMetadata;
 use crate::utils::{blake2b_hex, hash_size};
@@ -146,6 +147,7 @@ impl GroupV1Convo {
         signer: SignerRef,
         provider: &impl MlsProvider,
         registry: &impl KeyPackageProvider,
+        auth: &impl AuthService,
     ) -> Result<KeyPackage, ChatError> {
         let retrieved = registry
             .retrieve(&signer.to_string())
@@ -172,6 +174,14 @@ impl GroupV1Convo {
                 hex::encode(leaf_key.as_slice())
             )));
         }
+
+        // Ensure that a Keypackage contains a valid member
+        Member::from_leaf(
+            leaf_key.as_slice(),
+            keypkg.leaf_node().credential().serialized_content(),
+        )
+        .require_valid(auth)
+        .ok_or(ChatError::BadBundleValue("invalid credential".into()))?;
         Ok(keypkg)
     }
 
@@ -280,25 +290,25 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
             .process_message(&cx.mls_provider, protocol_message)
             .map_err(ChatError::generic)?;
 
-        // Taken before `into_content` consumes the message.
-        let cred_bytes = processed.credential().serialized_content().to_vec();
+        // Resolved before `into_content` consumes the message. An application
+        // message does not change the tree, so its sender's leaf is current.
+        let sender = match processed.sender() {
+            Sender::Member(index) => self.mls_group.member_at(*index),
+            _ => None,
+        };
         let content = match processed.into_content() {
             ProcessedMessageContent::ApplicationMessage(msg) => {
-                // TODO! Must validate credential.
-                // TODO! The sender's signature key is not plumbed through here
-                // yet — `ProcessedMessage` names the sender by leaf index, so
-                // it needs a lookup in the group. Empty until that lands.
-                let authenticated = AuthenticatedSender::with(
-                    Vec::new(),
-                    ExternalIdentifier::from(&cred_bytes[..]),
-                );
-
                 let reliable = ReliablePayload::decode(msg.into_bytes().as_slice())?;
                 cx.causal.on_receive(&self.convo_id, &reliable);
-                Some(Content {
-                    bytes: reliable.content.to_vec(),
-                    sender: authenticated,
-                })
+                sender
+                    .map(|leaf| {
+                        Member::from_leaf(&leaf.signature_key, leaf.credential.serialized_content())
+                    })
+                    .and_then(|member| member.require_valid(&cx.auth))
+                    .map(|sender| Content {
+                        bytes: reliable.content.to_vec(),
+                        sender,
+                    })
             }
             ProcessedMessageContent::StagedCommitMessage(commit) => {
                 self.mls_group
@@ -322,11 +332,11 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
         Ok(ConvoOutcome::empty(self.id().to_string()))
     }
 
-    fn members(&self) -> Result<Vec<Vec<u8>>, ChatError> {
+    fn members(&self) -> Result<Vec<Member>, ChatError> {
         Ok(self
             .mls_group
             .members()
-            .map(|m| m.credential.serialized_content().to_vec())
+            .map(|m| Member::from_leaf(&m.signature_key, m.credential.serialized_content()))
             .collect())
     }
 
@@ -359,7 +369,12 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
         // account's directory bundle lists.
         let mut keypkgs = Vec::with_capacity(members.len());
         for ident in members {
-            keypkgs.push(self.key_package_for_signer(ident, &cx.mls_provider, &cx.registry)?);
+            keypkgs.push(self.key_package_for_signer(
+                ident,
+                &cx.mls_provider,
+                &cx.registry,
+                &cx.auth,
+            )?);
         }
 
         let (commit, welcome, _group_info) = self
@@ -385,7 +400,7 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
 
     /// Always empty: `add_member` merges its own commit, so an added member is
     /// on the roster by the time the call returns.
-    fn pending_members(&self) -> Result<Vec<Vec<u8>>, ChatError> {
+    fn pending_members(&self) -> Result<Vec<Member>, ChatError> {
         Ok(Vec::new())
     }
 

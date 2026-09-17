@@ -7,7 +7,6 @@ use std::time::Duration;
 
 use components::EphemeralRegistry;
 use crossbeam_channel::{Receiver, Sender};
-use crypto::Ed25519VerifyingKey;
 use logos_account::AccountAddr;
 use logos_generic_chat::{
     AddressedEnvelope, ChatClient, ChatClientBuilder, ConversationClass, DelegateSigner,
@@ -101,7 +100,7 @@ fn direct_v1_integration() {
 fn direct_v1_standalone_integration() {
     let bus = MessageBus::default();
 
-    let mut reg_service = EphemeralRegistry::new();
+    let reg_service = EphemeralRegistry::new();
 
     // Create accounts and delegates, and publish device bundles so the
     // receiver can verify the account → device mapping carried in the
@@ -164,7 +163,7 @@ fn direct_v1_standalone_integration() {
 #[test]
 fn direct_v1_by_account_address() {
     let bus = MessageBus::default();
-    let mut reg_service = EphemeralRegistry::new();
+    let reg_service = EphemeralRegistry::new();
 
     let raya_account = TestLogosAccount::new();
     let raya_account_addr = raya_account.address();

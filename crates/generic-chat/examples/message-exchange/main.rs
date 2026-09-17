@@ -6,7 +6,7 @@ use std::time::Duration;
 
 fn main() {
     let bus = MessageBus::default();
-    let mut reg = EphemeralRegistry::new();
+    let reg = EphemeralRegistry::new();
 
     // Mint two accounts, each with a delegate signer, and publish their device
     // bundles so a peer can resolve an account address to its device.

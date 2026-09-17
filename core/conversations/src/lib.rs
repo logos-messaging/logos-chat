@@ -3,6 +3,7 @@ mod conversation;
 mod core;
 mod errors;
 mod inbox_v2;
+mod membership;
 mod outcomes;
 mod proto;
 mod service_context;
@@ -24,6 +25,7 @@ pub use core::{ConversationId, Core};
 pub use de_mls::ConversationConfig as GroupV2Config;
 pub use de_mls::MockClock;
 pub use errors::ChatError;
+pub use membership::{AuthStatus, AuthenticatedMember, Member, Membership, MembershipState};
 pub use outcomes::{
     Content, ConversationClass, ConvoOutcome, InboxOutcome, NewConversation, PayloadOutcome,
 };

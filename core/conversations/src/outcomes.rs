@@ -7,30 +7,15 @@
 //! - [`PayloadOutcome`] — the union of the above, plus `Empty`.
 
 use serde::{Deserialize, Serialize};
-use shared_traits::ExternalIdentifier;
 use storage::ConversationKind;
 
 use crate::conversation::ConversationId;
-
-#[derive(Debug, Clone)]
-pub struct AuthenticatedSender {
-    pub signer: Vec<u8>,
-    pub external_id: ExternalIdentifier,
-}
-
-impl AuthenticatedSender {
-    pub fn with(signer: Vec<u8>, external_id: ExternalIdentifier) -> Self {
-        Self {
-            signer,
-            external_id,
-        }
-    }
-}
+use crate::membership::AuthenticatedMember;
 
 #[derive(Debug, Clone)]
 pub struct Content {
     pub bytes: Vec<u8>,
-    pub sender: AuthenticatedSender,
+    pub sender: AuthenticatedMember,
 }
 
 #[derive(Debug, Clone)]

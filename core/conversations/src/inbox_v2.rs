@@ -13,7 +13,6 @@ use tracing::instrument;
 pub use identity::MlsIdentityProvider;
 pub(crate) use mls_provider::MlsEphemeralPqProvider;
 
-use crate::AuthService;
 use crate::ChatError;
 use crate::DeliveryService;
 use crate::RegistrationService;

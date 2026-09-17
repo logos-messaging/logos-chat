@@ -22,7 +22,7 @@ use libchat::{ChatStorage, StorageConfig};
 
 use logos_generic_chat::{
     ChatClient, ChatClientBuilder, ClientError, DelegateSigner, Event, GroupV2Config, PanicAuth,
-    Transport, UncheckedAuth,
+    Transport,
 };
 
 /// The endpoint for the account and keypackage registration service.
@@ -138,7 +138,7 @@ pub fn open_with_transport<T: Transport + Clone>(
     // this once the platform provides one.
     let account = TestLogosAccount::new();
     let delegate = DelegateSigner::random();
-    let mut registry = ContactRegistry::new(
+    let registry = ContactRegistry::new(
         transport.clone(),
         config.registry_url,
         config.registry_publish_mode,

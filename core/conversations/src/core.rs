@@ -2,6 +2,7 @@ use crate::causal_history::{CausalHistoryStore, DeliveryAck, MissingMessage};
 use crate::conversation::{
     ConversationIdRef, DirectV1Convo, GroupV1Convo, GroupV2Convo, Identified, MessageId,
 };
+use crate::membership::{Member, Membership, MembershipState};
 use crate::service_context::{ExternalServices, ServiceContext};
 use crate::service_traits::AuthService;
 use crate::types::ConvoMetadata;
@@ -43,7 +44,7 @@ pub struct Core<S: ExternalServices> {
 impl<IP, AS, DS, RS, WS, CS> Core<(IP, AS, DS, RS, WS, CS)>
 where
     IP: IdentityProvider + 'static,
-    AS: AuthService + Send +'static,
+    AS: AuthService + Send + 'static,
     DS: DeliveryService + 'static,
     RS: RegistrationService + 'static,
     WS: WakeupService + 'static,
@@ -246,30 +247,36 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         }
     }
 
-    /// Each member's MLS leaf-credential content (hex-encoded), for a direct
-    /// conversation as for a group.
-    pub fn group_members(&mut self, convo_id: &str) -> Result<Vec<Vec<u8>>, ChatError> {
+    /// Every member of the conversation and where each stands: committed members
+    /// first, then invites sent here that have not committed. Auth is checked on
+    /// each call.
+    pub fn memberships(&self, convo_id: &str) -> Result<Vec<Membership>, ChatError> {
         let convo = self
             .cached_convos
             .get(convo_id)
             .ok_or_else(|| ChatError::NoConvo(convo_id.to_string()))?;
 
-        convo.members()
-    }
+        let committed = convo.members()?;
+        let pending = match convo {
+            ConvoTypeOwned::Group(group_convo) => group_convo.pending_members()?,
+            ConvoTypeOwned::Direct(_) => Vec::new(),
+        };
+        // A device whose commit has landed is listed once, as committed.
+        let pending: Vec<_> = pending
+            .into_iter()
+            .filter(|p| !committed.iter().any(|c| c.signer == p.signer))
+            .collect();
 
-    /// Each member invited here and still awaiting the group's commit, in the
-    /// same encoding as [`Self::group_members`]. A direct conversation has no
-    /// pending members and reports none.
-    pub fn group_pending_members(&mut self, convo_id: &str) -> Result<Vec<Vec<u8>>, ChatError> {
-        let convo = self
-            .cached_convos
-            .get(convo_id)
-            .ok_or_else(|| ChatError::NoConvo(convo_id.to_string()))?;
+        let auth = &self.services.auth;
 
-        match convo {
-            ConvoTypeOwned::Group(group_convo) => group_convo.pending_members(),
-            ConvoTypeOwned::Direct(_) => Ok(Vec::new()),
-        }
+        let committed = committed
+            .into_iter()
+            .map(|member| member.into_membership(MembershipState::Committed, auth));
+        let pending = pending
+            .into_iter()
+            .map(|member| member.into_membership(MembershipState::Pending, auth));
+
+        Ok(committed.chain(pending).collect())
     }
 
     /// Every conversation this client knows — persisted or loaded this session.
@@ -549,7 +556,7 @@ impl<S: ExternalServices> Convo<S> for ConvoTypeOwned<S> {
         }
     }
 
-    fn members(&self) -> Result<Vec<Vec<u8>>, ChatError> {
+    fn members(&self) -> Result<Vec<Member>, ChatError> {
         match self {
             ConvoTypeOwned::Group(group_convo) => group_convo.members(),
             ConvoTypeOwned::Direct(convo) => convo.members(),

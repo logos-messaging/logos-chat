@@ -4,17 +4,17 @@ use std::thread::{self, JoinHandle};
 
 use components::{ThreadedWakeupService, WakeupEvent};
 use crossbeam_channel::{Receiver, Sender, select};
-use crypto::Ed25519VerifyingKey;
 use libchat::{
-    AuthService, ConversationId, ConvoMetadata, ConvoOutcome, Core, DeliveryAck, DeliveryService,
-    GroupV2Config, InboxOutcome, MessageId, MissingMessage, PayloadOutcome, RegistrationService,
+    AuthService, AuthStatus, AuthenticatedMember, ConversationId, ConvoMetadata, ConvoOutcome,
+    Core, DeliveryAck, DeliveryService, ExternalIdentifier, GroupV2Config, InboxOutcome,
+    Membership, MembershipState, MessageId, MissingMessage, PayloadOutcome, RegistrationService,
     Signer, SignerRef,
 };
 use logos_account::AccountAddr;
 use parking_lot::Mutex;
 use storage::ConversationStore;
 
-use crate::delegate::{DelegateCredential, DelegateIdentity, DelegateSigner, UncheckedAuth};
+use crate::delegate::{DelegateCredential, DelegateIdentity, DelegateSigner};
 use crate::errors::ClientError;
 use crate::event::{Event, MessageSender};
 
@@ -40,6 +40,9 @@ pub struct GroupMember {
     pub account: Option<AccountAddr>,
     pub local_identity: Signer,
     pub pending: bool,
+    /// The core's verdict on this member. A committed member that is not
+    /// `Valid` can still read the conversation.
+    pub auth: AuthStatus,
 }
 
 /// Metadata a caller supplies when creating a group: its shared name and
@@ -91,7 +94,6 @@ where
 {
     /// `parking_lot::Mutex` for its eventual fairness: an inbound burst can't
     /// starve caller operations of the lock.
-    directory: R,
     core: Arc<Mutex<ClientCore<T, R, A, S>>>,
 
     /// Dropped on `Drop` to wake the worker's `select!` and shut it down.
@@ -121,18 +123,16 @@ where
 
         let (wakeup_tx, wakeup_rx) = crossbeam_channel::unbounded();
         let wakeup_service = ThreadedWakeupService::new(wakeup_tx);
-        let directory = reg.clone();
         let ident = DelegateIdentity::new(ident, &account);
         let mut core = Core::new_with_name(ident, auth, transport, reg, wakeup_service, storage)?;
         if let Some(config) = group_v2 {
             core.set_group_v2_config(config);
         }
-        Ok(Self::spawn(core, directory, account, inbound, wakeup_rx))
+        Ok(Self::spawn(core, account, inbound, wakeup_rx))
     }
 
     fn spawn(
         core: ClientCore<T, R, A, S>,
-        directory: R,
         address: String,
         inbound: Receiver<Vec<u8>>,
         wakeup_events: Receiver<WakeupEvent>,
@@ -143,23 +143,12 @@ where
 
         let worker = thread::spawn({
             let core = Arc::clone(&core);
-            let directory = directory.clone();
-            move || {
-                worker_loop(
-                    core,
-                    directory,
-                    inbound,
-                    wakeup_events,
-                    shutdown_rx,
-                    event_tx,
-                )
-            }
+            move || worker_loop(core, inbound, wakeup_events, shutdown_rx, event_tx)
         });
 
         (
             Self {
                 core,
-                directory,
                 shutdown: Some(shutdown_tx),
                 worker: Some(worker),
                 address,
@@ -241,23 +230,8 @@ where
     /// Costs one directory lookup per member that claims an account, the same
     /// per-member cost a received message's sender check pays.
     pub fn group_members(&mut self, convo_id: &str) -> Result<Vec<GroupMember>, ClientError> {
-        let (committed, pending) = {
-            let mut core = self.core.lock();
-            (
-                core.group_members(convo_id)?,
-                core.group_pending_members(convo_id)?,
-            )
-        };
-        let members = committed
-            .iter()
-            .filter_map(|credential| roster_member(credential))
-            .chain(pending.iter().filter_map(|credential| {
-                roster_member(credential).map(|member| GroupMember {
-                    pending: true,
-                    ..member
-                })
-            }));
-        Ok(dedup_members(members))
+        let memberships = self.core.lock().memberships(convo_id)?;
+        Ok(dedup_members(memberships.into_iter().map(roster_member)))
     }
 
     /// The group's shared metadata (name and description), set at creation and
@@ -326,32 +300,14 @@ where
             .map_err(Into::into)
     }
 
-    /// Resolve an account address to the signer (device) ids its published
-    /// directory bundle endorses. A reachable account has published at least
-    /// one signer; anything else is an error.
+    /// Resolve an account address to its signer (device) ids.
     fn signers_from_account(
         &self,
         account: AccountAddressRef,
     ) -> Result<Vec<LocalSigner>, ClientError> {
-        let account: AccountAddr = account
-            .parse()
-            .map_err(|_| ClientError::AccountResolution("not an account address".to_owned()))?;
-        let _ = account;
-        // TODO: account → device resolution went with the device-bundle
-        // directory; it returns with account-log.
-        let device_ids: Vec<String> = unimplemented!("account resolution awaits account-log");
-        #[allow(unreachable_code)]
-        device_ids
-            .into_iter()
-            .map(|id| {
-                hex::decode(&id)
-                    .ok()
-                    .and_then(|bytes| Signer::try_from(bytes.as_slice()).ok())
-                    .ok_or_else(|| {
-                        ClientError::AccountResolution(format!("malformed device id: {id}"))
-                    })
-            })
-            .collect()
+        // TODO: resolving an account to its devices went with the device-bundle
+        // directory and has no replacement yet.
+        unimplemented!("account resolution for {account}")
     }
 
     /// Resolve each account to its signer ids and flatten them, failing on the
@@ -390,7 +346,6 @@ where
 /// the thread until one of the channels is ready.
 fn worker_loop<T, R, A, S: ConversationStore + 'static>(
     core: Arc<Mutex<ClientCore<T, R, A, S>>>,
-    directory: R,
     inbound: Receiver<Vec<u8>>,
     wakeup_events: Receiver<WakeupEvent>,
     shutdown: Receiver<()>,
@@ -512,105 +467,45 @@ fn sender_hint(encoded: &str) -> Option<MessageSender> {
     let bytes = hex::decode(encoded).ok()?;
     Some(MessageSender {
         account: None,
-        local_identity: Signer::try_from(bytes.as_slice()).ok()?,
+        local_identity: Signer::from(bytes.as_slice()),
     })
 }
 
-/// Interpret a hex account address as an Ed25519 account verifying key.
-fn account_key_from_hex(addr: &str) -> Option<Ed25519VerifyingKey> {
-    let bytes: [u8; 32] = hex::decode(addr).ok()?.try_into().ok()?;
-    Ed25519VerifyingKey::from_bytes(&bytes).ok()
+/// The account a credential claims, if any. Only meaningful for a member the
+/// core has authenticated: that is what makes the claim trustworthy.
+fn claimed_account(external_id: &ExternalIdentifier) -> Option<AccountAddr> {
+    DelegateCredential::try_from(external_id.as_bytes().to_vec())
+        .ok()?
+        .account_addr()?
+        .parse()
+        .ok()
 }
 
-/// Why a message's sender could not be accepted, so the message is dropped.
-#[derive(Debug, PartialEq, Eq)]
-enum SenderError {
-    /// No credential at all, so no sender can be attributed. Every delivered
-    /// message must carry an explicit sender.
-    Missing,
-    /// Credential bytes did not decode to a delegate credential.
-    Malformed,
-    /// The claimed account address is not an Ed25519 verifying key.
-    AccountNotAKey,
-    /// The account → device mapping is wrong or could not be confirmed: the
-    /// device is not in the account's published set, the account published none,
-    /// or the directory lookup failed.
-    Unverified,
-}
-
-/// The resolution of a credential's account claim against the directory.
-enum AccountClaim {
-    /// The credential claimed no account.
-    None,
-    /// Confirmed: the directory lists this device under the claimed account.
-    Verified(AccountAddr),
-    /// An account was claimed but could not be confirmed (see [`SenderError`]).
-    Unverified(SenderError),
-}
-
-/// Parse a wire credential into the device it names and the resolution of any
-/// account claim, checked against the account → device directory. `Err` only
-/// when no device can be attributed at all (missing or unparseable credential).
-///
-/// The account-claim policy is left to the caller: a message drops on an
-/// unconfirmable claim, a roster entry keeps the device and forgoes the account.
-fn parse_credential(encoded: &[u8]) -> Result<(Signer, AccountClaim), SenderError> {
-    // No credential at all: there is no device to attribute.
-    if encoded.is_empty() {
-        return Err(SenderError::Missing);
-    }
-    let Ok(cred) = DelegateCredential::try_from(encoded.to_vec()) else {
-        tracing::warn!("malformed credential");
-        return Err(SenderError::Malformed);
-    };
-    let device = Signer::from(cred.delegate_id().clone());
-    // TODO: the credential may still *claim* an account, but the directory
-    // that confirmed the account → device mapping is gone. Until account-log
-    // replaces it nothing can be verified, so no account is reported rather
-    // than reporting an unverified one as fact.
-    Ok((device, AccountClaim::None))
-}
-
-/// Decode and verify a message's sender from its credential, checked against the
-/// account → device directory (our account store).
-///
-/// `Ok(sender)` — deliver with the sender; its `account` is set only when the
-/// directory confirmed the device, so it is always verified. `Err` — drop the
-/// message (including when no credential is present, since every delivered
-/// message must carry an explicit sender).
-fn decode_sender(encoded: &[u8]) -> Result<MessageSender, SenderError> {
-    let (device, claim) = parse_credential(encoded)?;
-    match claim {
-        AccountClaim::None => Ok(MessageSender {
-            account: None,
-            local_identity: device,
-        }),
-        AccountClaim::Verified(account) => Ok(MessageSender {
-            account: Some(account),
-            local_identity: device,
-        }),
-        // An unconfirmable account claim drops the message: every delivered
-        // message must carry a verified sender.
-        AccountClaim::Unverified(err) => Err(err),
+/// The app-facing sender of delivered content: its MLS-verified device, and
+/// the account its credential claims.
+fn message_sender(sender: AuthenticatedMember) -> MessageSender {
+    MessageSender {
+        account: claimed_account(sender.external_id()),
+        local_identity: sender.signer().clone(),
     }
 }
 
-/// Map a group member's credential (as reported by MLS, in the same hex-encoded
-/// form a message carries as its sender) to a roster entry, tolerating an
-/// unconfirmable account claim by listing the device without an account. `None`
-/// only when the credential cannot be parsed, which does not happen for a real
-/// MLS leaf.
-fn roster_member(encoded: &[u8]) -> Option<GroupMember> {
-    let (device, claim) = parse_credential(encoded).ok()?;
-    let account = match claim {
-        AccountClaim::Verified(account) => Some(account),
-        AccountClaim::None | AccountClaim::Unverified(_) => None,
-    };
-    Some(GroupMember {
-        account,
-        local_identity: device,
-        pending: false,
-    })
+/// A roster entry for one membership. The account is reported only when the
+/// core found the member valid; any other verdict leaves the device alone.
+fn roster_member(membership: Membership) -> GroupMember {
+    let Membership {
+        member,
+        state,
+        auth,
+    } = membership;
+    GroupMember {
+        account: (auth == AuthStatus::Valid)
+            .then(|| claimed_account(&member.external_id))
+            .flatten(),
+        local_identity: member.signer,
+        pending: state == MembershipState::Pending,
+        auth,
+    }
 }
 
 /// The key that decides whether two roster entries are the same member: a
@@ -643,13 +538,11 @@ fn convo_events(outcome: ConvoOutcome) -> Vec<Event> {
     } = outcome;
     let convo_id: Arc<str> = Arc::from(convo_id);
     let mut events = Vec::new();
-    if let Some(c) = content
-        && let Ok(sender) = decode_sender(c.sender.external_id.as_bytes())
-    {
+    if let Some(c) = content {
         events.push(Event::MessageReceived {
             convo_id: Arc::clone(&convo_id),
             content: c.bytes,
-            sender,
+            sender: message_sender(c.sender),
         });
     }
     if members_changed {
@@ -669,13 +562,11 @@ fn inbox_events(outcome: InboxOutcome) -> Vec<Event> {
         convo_id: Arc::clone(&id),
         class: new_conversation.class,
     });
-    if let Some(c) = initial.and_then(|co| co.content)
-        && let Ok(sender) = decode_sender(c.sender.external_id.as_bytes())
-    {
+    if let Some(c) = initial.and_then(|co| co.content) {
         events.push(Event::MessageReceived {
             convo_id: Arc::clone(&id),
             content: c.bytes,
-            sender,
+            sender: message_sender(c.sender),
         });
     }
     events
@@ -683,25 +574,16 @@ fn inbox_events(outcome: InboxOutcome) -> Vec<Event> {
 
 #[cfg(test)]
 mod sender_check_tests {
-    use std::collections::HashMap;
-
     use crypto::{Ed25519SigningKey, Ed25519VerifyingKey};
 
     use super::{
-        AccountAddr, Event, GroupMember, MessageSender, SenderError, Signer, decode_sender,
-        dedup_members, delivery_ack_events, member_key, missing_events, roster_member,
+        AccountAddr, AuthStatus, Event, GroupMember, MessageSender, Signer, dedup_members,
+        delivery_ack_events, member_key, missing_events,
     };
-    use crate::delegate::DelegateCredential;
     use libchat::{DeliveryAck, Frontier, MissingMessage};
 
     fn key() -> Ed25519VerifyingKey {
         Ed25519SigningKey::generate().verifying_key()
-    }
-
-    /// Encode a credential exactly as it travels on the wire: the hex of the
-    /// serialized TLV, matching the MLS leaf credential's content bytes.
-    fn encoded(cred: DelegateCredential) -> Vec<u8> {
-        cred.serialize()
     }
 
     fn local_id(k: &Ed25519VerifyingKey) -> Signer {
@@ -726,11 +608,13 @@ mod sender_check_tests {
             account: Some(account.clone()),
             local_identity: device.clone(),
             pending: false,
+            auth: AuthStatus::Valid,
         };
         let device_only = |device: &Signer| GroupMember {
             account: None,
             local_identity: device.clone(),
             pending: false,
+            auth: AuthStatus::Valid,
         };
         let roster = dedup_members(vec![
             with_account(&alice, &alice_dev_1),
@@ -763,11 +647,13 @@ mod sender_check_tests {
             account: Some(alice.clone()),
             local_identity: local_id(&key()),
             pending: false,
+            auth: AuthStatus::Valid,
         };
         let pending = GroupMember {
             account: Some(alice),
             local_identity: local_id(&key()),
             pending: true,
+            auth: AuthStatus::Valid,
         };
         assert_eq!(
             dedup_members(vec![committed.clone(), pending]),

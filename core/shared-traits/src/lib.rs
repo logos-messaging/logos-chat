@@ -1,7 +1,9 @@
 use crypto::{Ed25519Signature, Ed25519VerifyingKey};
 use std::fmt;
 
-/// Who signed: the Ed25519 key a message's signatures verify under.
+/// Who signed: the signature key the group's ciphersuite verifies under.
+///
+/// Always public — never secret key material.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Signer(Vec<u8>);
 pub type SignerRef<'a> = &'a Signer;
@@ -11,7 +13,6 @@ impl Signer {
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_ref()
     }
-
 }
 
 impl From<Ed25519VerifyingKey> for Signer {
@@ -20,16 +21,11 @@ impl From<Ed25519VerifyingKey> for Signer {
     }
 }
 
-/// Not every byte string names a signer: exactly 32 bytes forming a valid
-/// Ed25519 key.
-impl TryFrom<&[u8]> for Signer {
-    type Error = SignerError;
-
-    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        let bytes: [u8; 32] = value.try_into().map_err(|_| SignerError::NotAKey)?;
-        Ed25519VerifyingKey::from_bytes(&bytes)
-            .map(|v| v.into())
-            .map_err(|_| SignerError::NotAKey)
+/// Any bytes: which signature scheme they belong to is the ciphersuite's
+/// business, and MLS checks the key itself.
+impl From<&[u8]> for Signer {
+    fn from(value: &[u8]) -> Self {
+        Self(value.to_vec())
     }
 }
 

@@ -16,8 +16,6 @@ use serde::{Deserialize, Serialize};
 /// subscribes to the same topic.
 pub const KEYPACKAGE_SUBMIT_ADDRESS: &str = "store-keypackage-v0";
 
-/// Delivery address the store listens on for account device-list bundles.
-
 /// Request timeout for the store's HTTP API (queries, and submissions in
 /// [`RegistryPublishMode::Http`]).
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);

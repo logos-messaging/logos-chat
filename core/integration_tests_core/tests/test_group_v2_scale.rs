@@ -42,6 +42,7 @@
 //!   it just belongs to another branch of the group.
 
 use integration_tests_core::TestHarness;
+use libchat::MembershipState;
 use shared_traits::Signer;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -77,13 +78,19 @@ fn init_tracing() {
         .try_init();
 }
 
-/// The members each client reports, sorted, `None` while it has not joined.
+/// The committed members each client reports, sorted, `None` while it has not
+/// joined.
 fn rosters<const N: usize>(h: &mut TestHarness<N>, convo: &str) -> Vec<Option<Vec<Vec<u8>>>> {
     (0..N)
         .map(|i| {
-            h.client_mut(i).group_members(convo).ok().map(|mut m| {
-                m.sort();
-                m
+            h.client_mut(i).memberships(convo).ok().map(|memberships| {
+                let mut members: Vec<Vec<u8>> = memberships
+                    .into_iter()
+                    .filter(|m| m.state == MembershipState::Committed)
+                    .map(|m| m.member.external_id.as_bytes().to_vec())
+                    .collect();
+                members.sort();
+                members
             })
         })
         .collect()
@@ -231,8 +238,14 @@ fn report<const N: usize>(h: &mut TestHarness<N>, convo: &str) -> String {
     let distinct: BTreeSet<_> = rosters.into_iter().flatten().collect();
     let pending = h
         .client_mut(0)
-        .group_pending_members(convo)
-        .map_or("?".to_string(), |p| p.len().to_string());
+        .memberships(convo)
+        .map_or("?".to_string(), |memberships| {
+            memberships
+                .iter()
+                .filter(|m| m.state == MembershipState::Pending)
+                .count()
+                .to_string()
+        });
     let rejections: usize = (0..N).map(|i| h.client(i).inbound_errors().len()).sum();
     let first = (0..N)
         .find_map(|i| {

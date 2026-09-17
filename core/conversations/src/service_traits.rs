@@ -57,6 +57,7 @@ pub trait WakeupService: Debug {
     fn wakeup_in(&mut self, duration: Duration, convo_id: ConversationId);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthResult {
     Valid,
     Revoked,
