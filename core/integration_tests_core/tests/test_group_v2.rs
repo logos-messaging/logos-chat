@@ -366,10 +366,10 @@ fn missing_group_v2_message_is_detected() {
         !missing[0].frontier.message_id().is_empty(),
         "the missing message must be identified"
     );
-    // The hint names the sender by its signer, recorded as text.
+    // The hint names the sender by its signer.
     assert_eq!(
-        missing[0].frontier.sender_id(),
-        saro_signer.to_string(),
+        missing[0].frontier.sender(),
+        &saro_signer,
         "missing-message sender hint should attribute to Saro"
     );
 
@@ -424,10 +424,10 @@ fn replies_acknowledge_the_message_they_were_sent_after() {
     let raya_signer = harness.raya().addr();
     let pax_signer = harness.pax().addr();
     let acks: Vec<DeliveryAck> = harness.saro().take_acks();
-    let mut holders: Vec<&str> = acks
+    let mut holders: Vec<String> = acks
         .iter()
         .filter(|a| a.conversation_id == convo_id && a.message_id == message_id)
-        .map(|a| a.acked_by.as_str())
+        .map(|a| a.acked_by.to_string())
         .collect();
     holders.sort_unstable();
     let mut expected = [pax_signer.to_string(), raya_signer.to_string()];
