@@ -1,32 +1,37 @@
 use components::EphemeralRegistry;
+use integration_tests_core::AcceptAllAuth;
 use logos_generic_chat::{
     AccountAddr, ChatClientBuilder, Event, InProcessDelivery, MessageBus, PendingInstallation,
-    UncheckedAuth,
 };
 use std::time::Duration;
 
 fn main() {
     let bus = MessageBus::default();
     let reg = EphemeralRegistry::new();
+    // Stands in for account resolution: each account resolves to the
+    // installation registered here.
+    let auth = AcceptAllAuth::default();
 
     // Each client runs as a fresh installation of a fresh account.
-    let (mut saro, saro_events) = ChatClientBuilder::new(
-        PendingInstallation::generate().complete(TestLogosAccount::new().addr()),
-    )
-    .transport(InProcessDelivery::new(bus.clone()))
-    .registration(reg.clone())
-    .auth(UncheckedAuth)
-    .build()
-    .unwrap();
+    let saro_installation =
+        PendingInstallation::generate().complete(TestLogosAccount::new().addr());
+    auth.register(&saro_installation);
+    let (mut saro, saro_events) = ChatClientBuilder::new(saro_installation)
+        .transport(InProcessDelivery::new(bus.clone()))
+        .registration(reg.clone())
+        .auth(auth.clone())
+        .build()
+        .unwrap();
 
-    let (mut raya, raya_events) = ChatClientBuilder::new(
-        PendingInstallation::generate().complete(TestLogosAccount::new().addr()),
-    )
-    .transport(InProcessDelivery::new(bus))
-    .registration(reg)
-    .auth(UncheckedAuth)
-    .build()
-    .unwrap();
+    let raya_installation =
+        PendingInstallation::generate().complete(TestLogosAccount::new().addr());
+    auth.register(&raya_installation);
+    let (mut raya, raya_events) = ChatClientBuilder::new(raya_installation)
+        .transport(InProcessDelivery::new(bus))
+        .registration(reg)
+        .auth(auth)
+        .build()
+        .unwrap();
 
     // Saro opens a direct conversation with Raya by her account address.
     let saro_convo_id = saro.create_direct_conversation(raya.addr()).unwrap();

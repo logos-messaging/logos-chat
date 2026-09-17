@@ -91,7 +91,7 @@ mod tests {
     use std::convert::Infallible;
 
     use super::*;
-    use crate::UncheckedAuth;
+    use integration_tests_core::AcceptAllAuth;
 
     #[derive(Debug)]
     struct RejectAll;
@@ -135,7 +135,7 @@ mod tests {
     fn validation_follows_the_auth_service() {
         let installation = PendingInstallation::generate().complete(account());
 
-        assert!(installation.validate(&UncheckedAuth).is_ok());
+        assert!(installation.validate(&AcceptAllAuth::default()).is_ok());
         assert!(matches!(
             installation.validate(&RejectAll),
             Err(ClientError::NotEndorsed(_))

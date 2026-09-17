@@ -25,5 +25,8 @@ thiserror = "2"
 tracing = "0.1"
 
 [dev-dependencies]
+# Workspace dependencies (sorted)
+integration_tests_core = { workspace = true }
+
 # External dependencies (sorted)
 tempfile = "3"

@@ -8,11 +8,12 @@ use std::time::Duration;
 
 use components::EphemeralRegistry;
 use crossbeam_channel::Receiver;
-use libchat::ChatStorage;
+use integration_tests_core::AcceptAllAuth;
+use libchat::{ChatError, ChatStorage};
 use logos_account::AccountAddr;
 use logos_generic_chat::{
     ChatClient, ChatClientBuilder, ConversationClass, Event, GroupMetadata, GroupV2Config,
-    InProcessDelivery, Member, MessageBus, PendingInstallation, UncheckedAuth,
+    InProcessDelivery, Member, MessageBus, PendingInstallation,
 };
 
 /// Metadata for a group these tests create without a name or description.
@@ -38,7 +39,7 @@ fn fast_group_v2_config() -> GroupV2Config {
     }
 }
 
-type TestClient = ChatClient<InProcessDelivery, EphemeralRegistry, UncheckedAuth, ChatStorage>;
+type TestClient = ChatClient<InProcessDelivery, EphemeralRegistry, AcceptAllAuth, ChatStorage>;
 
 /// A client for a fresh account: mints the account and an installation, publishes
 /// the endorsing bundle, and builds the client on the shared bus/registry with
@@ -46,8 +47,9 @@ type TestClient = ChatClient<InProcessDelivery, EphemeralRegistry, UncheckedAuth
 fn create_test_client(
     message_bus: MessageBus,
     reg: EphemeralRegistry,
+    auth: &AcceptAllAuth,
 ) -> (TestClient, Receiver<Event>, String) {
-    create_test_client_with(message_bus, reg, fast_group_v2_config())
+    create_test_client_with(message_bus, reg, auth, fast_group_v2_config())
 }
 
 /// [`create_test_client`] with explicit GroupV2 timers, for a test that needs
@@ -55,17 +57,18 @@ fn create_test_client(
 fn create_test_client_with(
     message_bus: MessageBus,
     reg: EphemeralRegistry,
+    auth: &AcceptAllAuth,
     config: GroupV2Config,
 ) -> (TestClient, Receiver<Event>, String) {
-    let (client, events) = ChatClientBuilder::new(
-        PendingInstallation::generate().complete(TestLogosAccount::new().addr()),
-    )
-    .transport(InProcessDelivery::new(message_bus))
-    .registration(reg)
-    .auth(UncheckedAuth)
-    .group_v2_config(config)
-    .build()
-    .expect("client create");
+    let installation = PendingInstallation::generate().complete(TestLogosAccount::new().addr());
+    auth.register(&installation);
+    let (client, events) = ChatClientBuilder::new(installation)
+        .transport(InProcessDelivery::new(message_bus))
+        .registration(reg)
+        .auth(auth.clone())
+        .group_v2_config(config)
+        .build()
+        .expect("client create");
     let addr = client.addr().to_string();
     (client, events, addr)
 }
@@ -145,10 +148,11 @@ fn wait_for_message(events: &Receiver<Event>, content: &[u8]) -> String {
 fn group_v2_three_members() {
     let bus = MessageBus::default();
     let reg = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
-    let (mut saro, saro_events, saro_addr) = create_test_client(bus.clone(), reg.clone());
-    let (mut raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone());
-    let (mut pax, pax_events, pax_addr) = create_test_client(bus.clone(), reg.clone());
+    let (mut saro, saro_events, saro_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
+    let (mut raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
+    let (mut pax, pax_events, pax_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
 
     let convo_id = saro
         .create_group_conversation(&[&raya_addr], unnamed_group())
@@ -213,10 +217,11 @@ fn peers_invited_to_many_groups() {
 
     let bus = MessageBus::default();
     let reg = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
-    let (mut saro, _saro_events, saro_addr) = create_test_client(bus.clone(), reg.clone());
-    let (_raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone());
-    let (_pax, pax_events, pax_addr) = create_test_client(bus.clone(), reg.clone());
+    let (mut saro, _saro_events, saro_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
+    let (_raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
+    let (_pax, pax_events, pax_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
 
     // Saro opens several groups, each inviting both Raya and Pax; every group
     // reuses Raya's and Pax's one key package.
@@ -252,8 +257,9 @@ fn peers_invited_to_many_groups() {
 fn group_creator_is_in_own_roster() {
     let bus = MessageBus::default();
     let reg = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
-    let (mut saro, _saro_events, saro_addr) = create_test_client(bus.clone(), reg.clone());
+    let (mut saro, _saro_events, saro_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
 
     let convo_id = saro
         .create_group_conversation(&[], unnamed_group())
@@ -269,6 +275,7 @@ fn group_creator_is_in_own_roster() {
 fn invited_member_is_pending_until_the_group_commits() {
     let bus = MessageBus::default();
     let reg = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
     // A commit window far longer than the assertions below, so the add provably
     // cannot merge while they run.
@@ -277,8 +284,8 @@ fn invited_member_is_pending_until_the_group_commits() {
         ..fast_group_v2_config()
     };
     let (mut saro, _saro_events, saro_addr) =
-        create_test_client_with(bus.clone(), reg.clone(), deferred_commit);
-    let (_raya, _raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone());
+        create_test_client_with(bus.clone(), reg.clone(), &auth, deferred_commit);
+    let (_raya, _raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
 
     let convo_id = saro
         .create_group_conversation(&[], unnamed_group())
@@ -307,9 +314,10 @@ fn invited_member_is_pending_until_the_group_commits() {
 fn pending_clears_once_the_add_commits() {
     let bus = MessageBus::default();
     let reg = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
-    let (mut saro, _saro_events, saro_addr) = create_test_client(bus.clone(), reg.clone());
-    let (raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone());
+    let (mut saro, _saro_events, saro_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
+    let (raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
 
     let convo_id = saro
         .create_group_conversation(&[], unnamed_group())
@@ -343,22 +351,27 @@ fn pending_clears_once_the_add_commits() {
 fn add_batch_with_missing_key_package_invites_no_one() {
     let bus = MessageBus::default();
     let reg = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
-    let (mut saro, _saro_events, _saro_addr) = create_test_client(bus.clone(), reg.clone());
-    let (_raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone());
-    let (_pax, pax_events, pax_addr) = create_test_client(bus.clone(), reg.clone());
+    let (mut saro, _saro_events, _saro_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
+    let (_raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
+    let (_pax, pax_events, pax_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
 
-    // Ghost: its account endorses a device in the directory, but that device
-    // never registered a key package (no client was built for it).
-    let ghost_account = TestLogosAccount::new();
+    // An account that resolves to an installation, but no client was ever
+    // built for that installation, so it registered no key package.
+    let account_without_key_package = TestLogosAccount::new();
+    auth.register(&PendingInstallation::generate().complete(account_without_key_package.addr()));
 
     let convo_id = saro
         .create_group_conversation(&[&raya_addr], unnamed_group())
         .expect("saro create group");
     wait_for_group_started(&raya_events, "raya ConversationStarted");
 
-    saro.add_group_members(&convo_id, &[&ghost_account.address(), &pax_addr])
-        .expect_err("ghost has no key package");
+    saro.add_group_members(
+        &convo_id,
+        &[&account_without_key_package.address(), &pax_addr],
+    )
+    .expect_err("the account's installation has no key package");
 
     // Pax was in the failed batch and must not have been invited.
     assert!(
@@ -371,23 +384,23 @@ fn add_batch_with_missing_key_package_invites_no_one() {
     wait_for_message(&raya_events, b"still alive");
 }
 
-/// Group membership is resolved through the account directory, so inviting an
-/// address whose account never published a bundle fails at resolution — on
-/// create and on add alike.
+/// Group membership is resolved through the auth service, so inviting an
+/// account it doesn't know fails at resolution — on create and on add alike.
 #[test]
 fn group_invite_of_unpublished_account_is_an_error() {
     let bus = MessageBus::default();
     let reg = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
-    let (mut saro, _saro_events, _saro_addr) = create_test_client(bus.clone(), reg.clone());
+    let (mut saro, _saro_events, _saro_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
     let unpublished = TestLogosAccount::new();
 
     let err = saro
         .create_group_conversation(&[&unpublished.address()], unnamed_group())
-        .expect_err("no bundle published for the account");
+        .expect_err("the account is unknown");
     assert!(matches!(
         err,
-        logos_generic_chat::ClientError::AccountResolution(_)
+        logos_generic_chat::ClientError::Chat(ChatError::AccountResolution(_))
     ));
 
     let convo_id = saro
@@ -395,10 +408,10 @@ fn group_invite_of_unpublished_account_is_an_error() {
         .expect("empty group");
     let err = saro
         .add_group_members(&convo_id, &[&unpublished.address()])
-        .expect_err("no bundle published for the account");
+        .expect_err("the account is unknown");
     assert!(matches!(
         err,
-        logos_generic_chat::ClientError::AccountResolution(_)
+        logos_generic_chat::ClientError::Chat(ChatError::AccountResolution(_))
     ));
 }
 
@@ -409,9 +422,10 @@ fn group_invite_of_unpublished_account_is_an_error() {
 fn group_metadata_reaches_joiners() {
     let bus = MessageBus::default();
     let reg = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
-    let (mut saro, _saro_events, _saro_addr) = create_test_client(bus.clone(), reg.clone());
-    let (raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone());
+    let (mut saro, _saro_events, _saro_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
+    let (raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
 
     let convo_id = saro
         .create_group_conversation(
@@ -438,8 +452,9 @@ fn group_metadata_reaches_joiners() {
 fn group_metadata_defaults_to_empty() {
     let bus = MessageBus::default();
     let reg = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
-    let (mut saro, _saro_events, _saro_addr) = create_test_client(bus.clone(), reg.clone());
+    let (mut saro, _saro_events, _saro_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
 
     let convo_id = saro
         .create_group_conversation(&[], unnamed_group())
@@ -457,10 +472,11 @@ fn group_metadata_defaults_to_empty() {
 fn a_sent_message_is_acknowledged_by_the_peers_that_reply() {
     let bus = MessageBus::default();
     let reg = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
-    let (mut saro, saro_events, saro_addr) = create_test_client(bus.clone(), reg.clone());
-    let (mut raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone());
-    let (mut pax, pax_events, pax_addr) = create_test_client(bus.clone(), reg.clone());
+    let (mut saro, saro_events, saro_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
+    let (mut raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
+    let (mut pax, pax_events, pax_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
 
     let convo_id = saro
         .create_group_conversation(&[&raya_addr, &pax_addr], unnamed_group())

@@ -40,6 +40,7 @@ chat-sqlite = { path = "core/sqlite" }
 components = { path = "extensions/components" }
 crypto = { path = "core/crypto" }
 embedded-logos-delivery = { path = "extensions/embedded-logos-delivery" }
+integration_tests_core = { path = "core/integration_tests_core" }
 libchat = { path = "core/conversations" }
 logos-chat = { path = "crates/logos-chat" }
 logos-delivery = { path = "extensions/logos-delivery-rust"}

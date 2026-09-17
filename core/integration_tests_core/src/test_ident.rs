@@ -48,7 +48,8 @@ impl IdentityProvider for TestIdent {
 }
 
 /// Accepts every identifier without checking it, and resolves an account to
-/// the signers [registered](Self::register) under it.
+/// the signers [registered](Self::register) under it. An account nobody
+/// registered does not resolve.
 ///
 /// Test-only: this asserts nothing about a sender, and must never stand in for
 /// a real [`AuthService`](libchat::AuthService). Clones share one registry.
@@ -70,7 +71,7 @@ impl AcceptAllAuth {
 }
 
 impl libchat::AuthService for AcceptAllAuth {
-    type Error = std::convert::Infallible;
+    type Error = String;
 
     fn validate_external_identifier(
         &self,
@@ -81,12 +82,11 @@ impl libchat::AuthService for AcceptAllAuth {
     }
 
     fn signers_for_account(&self, ident: &ExternalIdentifier) -> Result<Vec<Signer>, Self::Error> {
-        Ok(self
-            .signers
+        self.signers
             .lock()
             .unwrap()
             .get(ident)
             .cloned()
-            .unwrap_or_default())
+            .ok_or_else(|| format!("no signers registered for {ident}"))
     }
 }

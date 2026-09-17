@@ -3726,6 +3726,7 @@ dependencies = [
  "crossbeam-channel",
  "crypto",
  "hex",
+ "integration_tests_core",
  "libchat",
  "parking_lot",
  "shared-traits",
