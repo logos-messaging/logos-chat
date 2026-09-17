@@ -10,6 +10,8 @@ pub enum ClientError {
     Transport(String),
     #[error("account resolution failed: {0}")]
     AccountResolution(String),
+    #[error("installation is not endorsed by its account: {0}")]
+    NotEndorsed(String),
     #[error("device bundle publish failed: {0}")]
     BundlePublish(String),
 }

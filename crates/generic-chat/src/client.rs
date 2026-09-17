@@ -13,12 +13,12 @@ use logos_account::AccountAddr;
 use parking_lot::Mutex;
 use storage::ConversationStore;
 
-use crate::delegate::{DelegateIdentity, DelegateSigner};
 use crate::errors::ClientError;
 use crate::event::Event;
+use crate::installation::Installation;
 use crate::members::{AuthenticatedMember, Member, account_id};
 
-type ClientCore<T, R, A, S> = Core<(DelegateIdentity, A, T, R, ThreadedWakeupService, S)>;
+type ClientCore<T, R, A, S> = Core<(Installation, A, T, R, ThreadedWakeupService, S)>;
 type AccountAddressRef<'a> = &'a str;
 
 /// Metadata a caller supplies when creating a group: its shared name and
@@ -87,20 +87,21 @@ where
     S: ConversationStore + Send + 'static,
 {
     pub fn new(
-        ident: DelegateSigner,
-        account: String,
+        installation: Installation,
         mut transport: T,
         reg: R,
         auth: A,
         storage: S,
         group_v2: Option<GroupV2Config>,
     ) -> Result<(Self, Receiver<Event>), ClientError> {
+        installation.validate(&auth)?;
         let inbound = transport.inbound();
 
         let (wakeup_tx, wakeup_rx) = crossbeam_channel::unbounded();
         let wakeup_service = ThreadedWakeupService::new(wakeup_tx);
-        let ident = DelegateIdentity::new(ident, &account)?;
-        let mut core = Core::new_with_name(ident, auth, transport, reg, wakeup_service, storage)?;
+        let account = installation.account().to_string();
+        let mut core =
+            Core::new_with_name(installation, auth, transport, reg, wakeup_service, storage)?;
         if let Some(config) = group_v2 {
             core.set_group_v2_config(config);
         }
@@ -148,7 +149,7 @@ where
         &mut self,
         account: AccountAddressRef,
     ) -> Result<ConversationId, ClientError> {
-        let account = account_id(account)?;
+        let account = account_id(&parse_account(account)?);
 
         self.core
             .lock()
@@ -421,7 +422,16 @@ fn missing_events(missing: Vec<MissingMessage>) -> Vec<Event> {
 
 /// Each account address as the core's external id.
 fn account_ids(accounts: &[AccountAddressRef]) -> Result<Vec<ExternalIdentifier>, ClientError> {
-    accounts.iter().map(|account| account_id(account)).collect()
+    accounts
+        .iter()
+        .map(|account| parse_account(account).map(|addr| account_id(&addr)))
+        .collect()
+}
+
+fn parse_account(account: AccountAddressRef) -> Result<AccountAddr, ClientError> {
+    account
+        .parse()
+        .map_err(|e| ClientError::AccountResolution(format!("{account}: {e}")))
 }
 
 /// A core member as the client's type. A credential that doesn't decode is

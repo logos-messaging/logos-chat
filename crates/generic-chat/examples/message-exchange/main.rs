@@ -1,6 +1,7 @@
 use components::EphemeralRegistry;
 use logos_generic_chat::{
-    ChatClientBuilder, DelegateSigner, Event, InProcessDelivery, MessageBus, UncheckedAuth,
+    AccountAddr, ChatClientBuilder, Event, InProcessDelivery, MessageBus, PendingInstallation,
+    UncheckedAuth,
 };
 use std::time::Duration;
 
@@ -8,29 +9,24 @@ fn main() {
     let bus = MessageBus::default();
     let reg = EphemeralRegistry::new();
 
-    // Mint two accounts, each with a delegate signer, and publish their device
-    // bundles so a peer can resolve an account address to its device.
-    let saro_account = TestLogosAccount::new();
-    let saro_delegate = DelegateSigner::random();
+    // Each client runs as a fresh installation of a fresh account.
+    let (mut saro, saro_events) = ChatClientBuilder::new(
+        PendingInstallation::generate().complete(TestLogosAccount::new().addr()),
+    )
+    .transport(InProcessDelivery::new(bus.clone()))
+    .registration(reg.clone())
+    .auth(UncheckedAuth)
+    .build()
+    .unwrap();
 
-    let raya_account = TestLogosAccount::new();
-    let raya_delegate = DelegateSigner::random();
-
-    let (mut saro, saro_events) = ChatClientBuilder::new(saro_account.address())
-        .ident(saro_delegate)
-        .transport(InProcessDelivery::new(bus.clone()))
-        .registration(reg.clone())
-        .auth(UncheckedAuth)
-        .build()
-        .unwrap();
-
-    let (mut raya, raya_events) = ChatClientBuilder::new(raya_account.address())
-        .ident(raya_delegate)
-        .transport(InProcessDelivery::new(bus))
-        .registration(reg)
-        .auth(UncheckedAuth)
-        .build()
-        .unwrap();
+    let (mut raya, raya_events) = ChatClientBuilder::new(
+        PendingInstallation::generate().complete(TestLogosAccount::new().addr()),
+    )
+    .transport(InProcessDelivery::new(bus))
+    .registration(reg)
+    .auth(UncheckedAuth)
+    .build()
+    .unwrap();
 
     // Saro opens a direct conversation with Raya by her account address.
     let saro_convo_id = saro.create_direct_conversation(raya.addr()).unwrap();
@@ -65,11 +61,8 @@ fn main() {
     println!("Message exchange complete.");
 }
 
-/// A stand-in account address while the account layer is out.
-///
-/// The device-bundle directory that resolved an account to its devices was
-/// removed; nothing publishes or endorses until account-log replaces it, so
-/// this is only a well-formed address string.
+/// A stand-in account while the account layer is out: only a well-formed
+/// address.
 struct TestLogosAccount(crypto::Ed25519SigningKey);
 
 impl TestLogosAccount {
@@ -77,7 +70,9 @@ impl TestLogosAccount {
         Self(crypto::Ed25519SigningKey::generate())
     }
 
-    fn address(&self) -> String {
-        hex::encode(self.0.verifying_key().as_ref())
+    /// This account's address.
+    fn addr(&self) -> AccountAddr {
+        AccountAddr::try_from(self.0.verifying_key().as_ref())
+            .expect("a generated key is an address")
     }
 }

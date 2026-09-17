@@ -11,8 +11,8 @@ use crossbeam_channel::Receiver;
 use libchat::ChatStorage;
 use logos_account::AccountAddr;
 use logos_generic_chat::{
-    ChatClient, ChatClientBuilder, ConversationClass, DelegateSigner, Event, GroupMetadata,
-    GroupV2Config, InProcessDelivery, Member, MessageBus, UncheckedAuth,
+    ChatClient, ChatClientBuilder, ConversationClass, Event, GroupMetadata, GroupV2Config,
+    InProcessDelivery, Member, MessageBus, PendingInstallation, UncheckedAuth,
 };
 
 /// Metadata for a group these tests create without a name or description.
@@ -40,7 +40,7 @@ fn fast_group_v2_config() -> GroupV2Config {
 
 type TestClient = ChatClient<InProcessDelivery, EphemeralRegistry, UncheckedAuth, ChatStorage>;
 
-/// A client for a fresh account: mints the account and a delegate, publishes
+/// A client for a fresh account: mints the account and an installation, publishes
 /// the endorsing bundle, and builds the client on the shared bus/registry with
 /// the fast GroupV2 timers. Returns the account address peers invite by.
 fn create_test_client(
@@ -57,16 +57,15 @@ fn create_test_client_with(
     reg: EphemeralRegistry,
     config: GroupV2Config,
 ) -> (TestClient, Receiver<Event>, String) {
-    let account = TestLogosAccount::new();
-    let delegate = DelegateSigner::random();
-    let (client, events) = ChatClientBuilder::new(account.address())
-        .ident(delegate)
-        .transport(InProcessDelivery::new(message_bus))
-        .registration(reg)
-        .auth(UncheckedAuth)
-        .group_v2_config(config)
-        .build()
-        .expect("client create");
+    let (client, events) = ChatClientBuilder::new(
+        PendingInstallation::generate().complete(TestLogosAccount::new().addr()),
+    )
+    .transport(InProcessDelivery::new(message_bus))
+    .registration(reg)
+    .auth(UncheckedAuth)
+    .group_v2_config(config)
+    .build()
+    .expect("client create");
     let addr = client.addr().to_string();
     (client, events, addr)
 }
@@ -508,11 +507,8 @@ fn a_sent_message_is_acknowledged_by_the_peers_that_reply() {
     assert_eq!(holders, expected, "both replying peers should be listed");
 }
 
-/// A stand-in account address while the account layer is out.
-///
-/// The device-bundle directory that resolved an account to its devices was
-/// removed; nothing publishes or endorses until account-log replaces it, so
-/// this is only a well-formed address string.
+/// A stand-in account while the account layer is out: only a well-formed
+/// address.
 struct TestLogosAccount(crypto::Ed25519SigningKey);
 
 impl TestLogosAccount {
@@ -522,5 +518,11 @@ impl TestLogosAccount {
 
     fn address(&self) -> String {
         hex::encode(self.0.verifying_key().as_ref())
+    }
+
+    /// This account's address.
+    fn addr(&self) -> AccountAddr {
+        AccountAddr::try_from(self.0.verifying_key().as_ref())
+            .expect("a generated key is an address")
     }
 }

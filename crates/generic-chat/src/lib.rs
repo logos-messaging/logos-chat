@@ -1,17 +1,19 @@
+mod auth;
 mod builder;
 mod client;
-mod delegate;
 mod delivery_in_process;
 mod errors;
 mod event;
+mod installation;
 mod members;
 
+pub use auth::{PanicAuth, UncheckedAuth};
 pub use builder::{ChatClientBuilder, Unset};
 pub use client::{ChatClient, GroupMetadata, Transport};
-pub use delegate::{DelegateSigner, PanicAuth, UncheckedAuth};
 pub use delivery_in_process::{InProcessDelivery, MessageBus};
 pub use errors::ClientError;
 pub use event::Event;
+pub use installation::{Installation, PendingInstallation};
 pub use members::{AuthenticatedMember, Member};
 
 // Re-export types callers need to interact with ChatClient.

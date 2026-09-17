@@ -53,11 +53,8 @@ impl From<AuthenticatedMember> for Member {
 }
 
 /// An account address as the core's external id.
-pub(crate) fn account_id(account: &str) -> Result<ExternalIdentifier, ClientError> {
-    let addr: AccountAddr = account
-        .parse()
-        .map_err(|e| ClientError::AccountResolution(format!("{account}: {e}")))?;
-    Ok(ExternalIdentifier::from(addr.to_bytes()))
+pub(crate) fn account_id(account: &AccountAddr) -> ExternalIdentifier {
+    ExternalIdentifier::from(account.to_bytes())
 }
 
 /// The account an external id names.
@@ -78,14 +75,15 @@ mod tests {
     #[test]
     fn an_external_id_yields_its_account() {
         let signer = signer();
-        let account = hex::encode(Ed25519SigningKey::generate().verifying_key().as_ref());
+        let account = AccountAddr::try_from(Ed25519SigningKey::generate().verifying_key().as_ref())
+            .expect("a generated key is an address");
         let member = libchat::Member {
             signer: signer.clone(),
-            external_id: account_id(&account).expect("a generated key is an address"),
+            external_id: account_id(&account),
         };
 
         let decoded = Member::try_from(member).expect("decodes");
-        assert_eq!(decoded.account.to_string(), account);
+        assert_eq!(decoded.account, account);
         assert_eq!(decoded.signer, signer);
     }
 

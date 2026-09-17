@@ -9,11 +9,11 @@ use components::EphemeralRegistry;
 use crossbeam_channel::{Receiver, Sender};
 use logos_account::AccountAddr;
 use logos_generic_chat::{
-    AddressedEnvelope, ChatClient, ChatClientBuilder, ConversationClass, DelegateSigner,
-    DeliveryService, Event, InProcessDelivery, MessageBus, Transport, UncheckedAuth,
+    AddressedEnvelope, ChatClient, ChatClientBuilder, ConversationClass, DeliveryService, Event,
+    InProcessDelivery, MessageBus, PendingInstallation, Transport, UncheckedAuth,
 };
 
-/// A client for a fresh account: mints the account and a delegate, then builds
+/// A client for a fresh account: mints the account and an installation, then builds
 /// the client on the shared bus/registry.
 #[allow(clippy::type_complexity)]
 fn create_test_client(
@@ -26,11 +26,8 @@ fn create_test_client(
     ),
     logos_generic_chat::ClientError,
 > {
-    let account = TestLogosAccount::new();
-    let delegate = DelegateSigner::random();
     let d = InProcessDelivery::new(message_bus);
-    ChatClientBuilder::new(account.address())
-        .ident(delegate)
+    ChatClientBuilder::new(PendingInstallation::generate().complete(TestLogosAccount::new().addr()))
         .transport(d)
         .registration(reg)
         .auth(UncheckedAuth {})
@@ -107,18 +104,18 @@ fn direct_v1_standalone_integration() {
     // sender's credential.
     let saro_account = TestLogosAccount::new();
     let saro_account_id = saro_account.address();
-    let saro_delegate = DelegateSigner::random();
-    let saro_device_id = hex::encode(saro_delegate.public_key().as_ref());
+    let saro_pending = PendingInstallation::generate();
+    let saro_device_id = saro_pending.endorsement_request().to_string();
 
     // Build saro's client with its account so its outbound messages carry a
     // credential the receiver can verify against the published bundle.
-    let (mut saro, _saro_events) = ChatClientBuilder::new(saro_account_id.clone())
-        .ident(saro_delegate)
-        .transport(InProcessDelivery::new(bus.clone()))
-        .registration(reg_service.clone())
-        .auth(UncheckedAuth {})
-        .build()
-        .expect("client create");
+    let (mut saro, _saro_events) =
+        ChatClientBuilder::new(saro_pending.complete(saro_account.addr()))
+            .transport(InProcessDelivery::new(bus.clone()))
+            .registration(reg_service.clone())
+            .auth(UncheckedAuth {})
+            .build()
+            .expect("client create");
     let (raya, raya_events) =
         create_test_client(bus.clone(), reg_service.clone()).expect("client create");
 
@@ -160,15 +157,14 @@ fn direct_v1_by_account_address() {
 
     let raya_account = TestLogosAccount::new();
     let raya_account_addr = raya_account.address();
-    let raya_delegate = DelegateSigner::random();
 
-    let (mut raya, raya_events) = ChatClientBuilder::new(raya_account_addr.clone())
-        .ident(raya_delegate)
-        .transport(InProcessDelivery::new(bus.clone()))
-        .registration(reg_service.clone())
-        .auth(UncheckedAuth {})
-        .build()
-        .expect("client create");
+    let (mut raya, raya_events) =
+        ChatClientBuilder::new(PendingInstallation::generate().complete(raya_account.addr()))
+            .transport(InProcessDelivery::new(bus.clone()))
+            .registration(reg_service.clone())
+            .auth(UncheckedAuth {})
+            .build()
+            .expect("client create");
     let (mut saro, saro_events) =
         create_test_client(bus.clone(), reg_service.clone()).expect("client create");
 
@@ -417,11 +413,13 @@ fn malformed_inbound_surfaces_as_error_event() {
     let delivery = FailingDelivery::new();
     let inbound_tx = delivery.inbound_sender();
 
-    let (_client, events) = ChatClientBuilder::new(TestLogosAccount::new().address())
-        .transport(delivery)
-        .auth(UncheckedAuth)
-        .build()
-        .expect("client create");
+    let (_client, events) = ChatClientBuilder::new(
+        PendingInstallation::generate().complete(TestLogosAccount::new().addr()),
+    )
+    .transport(delivery)
+    .auth(UncheckedAuth)
+    .build()
+    .expect("client create");
 
     inbound_tx.send(b"not a valid payload".to_vec()).unwrap();
 
@@ -462,11 +460,8 @@ fn unpublished_account_address_is_an_error() {
     ));
 }
 
-/// A stand-in account address while the account layer is out.
-///
-/// The device-bundle directory that resolved an account to its devices was
-/// removed; nothing publishes or endorses until account-log replaces it, so
-/// this is only a well-formed address string.
+/// A stand-in account while the account layer is out: only a well-formed
+/// address.
 struct TestLogosAccount(crypto::Ed25519SigningKey);
 
 impl TestLogosAccount {
@@ -476,5 +471,11 @@ impl TestLogosAccount {
 
     fn address(&self) -> String {
         hex::encode(self.0.verifying_key().as_ref())
+    }
+
+    /// This account's address.
+    fn addr(&self) -> AccountAddr {
+        AccountAddr::try_from(self.0.verifying_key().as_ref())
+            .expect("a generated key is an address")
     }
 }
