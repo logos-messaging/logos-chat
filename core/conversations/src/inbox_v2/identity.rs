@@ -23,7 +23,7 @@ impl<T: IdentityProvider> MlsIdentityProvider<T> {
 
     pub fn get_credential(&self) -> CredentialWithKey {
         CredentialWithKey {
-            credential: BasicCredential::new(self.participant_id().as_bytes().to_vec()).into(),
+            credential: BasicCredential::new(self.participant_id().to_bytes()).into(),
             signature_key: self.signer().as_bytes().into(),
         }
     }

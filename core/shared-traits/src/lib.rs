@@ -50,6 +50,11 @@ impl ParticipantId {
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_ref()
     }
+
+    /// The key's bytes — the device id the registries and directory are keyed on.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.0.to_vec()
+    }
 }
 
 impl From<&[u8]> for ParticipantId {
