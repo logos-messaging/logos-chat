@@ -1,6 +1,9 @@
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
 use crypto::Ed25519SigningKey;
 use libchat::IdentityProvider;
-use libchat::{Signer, SignerRef};
+use libchat::{ParticipantId, Signer, SignerRef};
 
 /// Test identity with a human-readable name ("saro"). Stands in for a device
 /// signer so core tests can address peers by name.
@@ -31,7 +34,7 @@ impl IdentityProvider for TestIdent {
         &self.signer
     }
 
-    fn participant_id(&self) -> libchat::ParticipantId {
+    fn participant_id(&self) -> ParticipantId {
         self.name.as_bytes().into()
     }
 
@@ -44,17 +47,31 @@ impl IdentityProvider for TestIdent {
     }
 }
 
-/// Accepts every identifier without checking it.
+/// Accepts every identifier without checking it, and resolves an account to
+/// the signers [registered](Self::register) under it. An account nobody
+/// registered does not resolve.
 ///
-/// A `TestIdent`'s external id is the name it was built from, so there is
-/// nothing to resolve it against. Test-only: this asserts nothing about a
-/// sender, and must never stand in for a real [`AuthService`] once the core
-/// gates on the result.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct AcceptAllAuth;
+/// Test-only: this asserts nothing about a sender, and must never stand in for
+/// a real [`AuthService`](libchat::AuthService). Clones share one registry.
+#[derive(Debug, Clone, Default)]
+pub struct AcceptAllAuth {
+    signers: Arc<Mutex<HashMap<ParticipantId, Vec<Signer>>>>,
+}
+
+impl AcceptAllAuth {
+    /// Makes `ident`'s signer resolvable from its participant id.
+    pub fn register(&self, ident: &impl IdentityProvider) {
+        self.signers
+            .lock()
+            .unwrap()
+            .entry(ident.participant_id())
+            .or_default()
+            .push(ident.signer().clone());
+    }
+}
 
 impl libchat::AuthService for AcceptAllAuth {
-    type Error = std::convert::Infallible;
+    type Error = String;
 
     fn validate_member(
         &self,
@@ -62,5 +79,14 @@ impl libchat::AuthService for AcceptAllAuth {
         _participant_id: libchat::ParticipantId,
     ) -> Result<libchat::AuthResult, Self::Error> {
         Ok(libchat::AuthResult::Valid)
+    }
+
+    fn signers_for_participant(&self, ident: &ParticipantId) -> Result<Vec<Signer>, Self::Error> {
+        self.signers
+            .lock()
+            .unwrap()
+            .get(ident)
+            .cloned()
+            .ok_or_else(|| format!("no signers registered for {ident}"))
     }
 }

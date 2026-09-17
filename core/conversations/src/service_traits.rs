@@ -77,6 +77,7 @@ pub enum AuthResult {
     Invalid,
 }
 
+/// Checks other participants' identities.
 pub trait AuthService: Debug {
     type Error: Display + Debug;
     fn validate_member(
@@ -84,4 +85,6 @@ pub trait AuthService: Debug {
         signer: Signer,
         participant_id: ParticipantId,
     ) -> Result<AuthResult, Self::Error>;
+
+    fn signers_for_participant(&self, ident: &ParticipantId) -> Result<Vec<Signer>, Self::Error>;
 }

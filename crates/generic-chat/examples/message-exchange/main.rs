@@ -1,41 +1,35 @@
 use components::EphemeralRegistry;
-use logos_account_legacy::TestLogosAccount;
+use integration_tests_core::AcceptAllAuth;
 use logos_generic_chat::{
-    ChatClientBuilder, DelegateSigner, Event, InProcessDelivery, MessageBus, UncheckedAuth,
+    AccountAddr, ChatClientBuilder, Event, InProcessDelivery, MessageBus, PendingInstallation,
 };
 use std::time::Duration;
 
 fn main() {
     let bus = MessageBus::default();
-    let mut reg = EphemeralRegistry::new();
+    let reg = EphemeralRegistry::new();
+    // Stands in for account resolution: each account resolves to the
+    // installation registered here.
+    let auth = AcceptAllAuth::default();
 
-    // Mint two accounts, each with a delegate signer, and publish their device
-    // bundles so a peer can resolve an account address to its device.
-    let saro_account = TestLogosAccount::new();
-    let saro_delegate = DelegateSigner::random();
-    saro_account
-        .add_delegate_signer(&mut reg, saro_delegate.public_key())
-        .unwrap();
-
-    let raya_account = TestLogosAccount::new();
-    let raya_delegate = DelegateSigner::random();
-    raya_account
-        .add_delegate_signer(&mut reg, raya_delegate.public_key())
-        .unwrap();
-
-    let (mut saro, saro_events) = ChatClientBuilder::new(saro_account.address())
-        .ident(saro_delegate)
+    // Each client runs as a fresh installation of a fresh account.
+    let saro_installation =
+        PendingInstallation::generate().complete(TestLogosAccount::new().addr());
+    auth.register(&saro_installation);
+    let (mut saro, saro_events) = ChatClientBuilder::new(saro_installation)
         .transport(InProcessDelivery::new(bus.clone()))
         .registration(reg.clone())
-        .auth(UncheckedAuth)
+        .auth(auth.clone())
         .build()
         .unwrap();
 
-    let (mut raya, raya_events) = ChatClientBuilder::new(raya_account.address())
-        .ident(raya_delegate)
+    let raya_installation =
+        PendingInstallation::generate().complete(TestLogosAccount::new().addr());
+    auth.register(&raya_installation);
+    let (mut raya, raya_events) = ChatClientBuilder::new(raya_installation)
         .transport(InProcessDelivery::new(bus))
         .registration(reg)
-        .auth(UncheckedAuth)
+        .auth(auth)
         .build()
         .unwrap();
 
@@ -70,4 +64,20 @@ fn main() {
     }
 
     println!("Message exchange complete.");
+}
+
+/// A stand-in account while the account layer is out: only a well-formed
+/// address.
+struct TestLogosAccount(crypto::Ed25519SigningKey);
+
+impl TestLogosAccount {
+    fn new() -> Self {
+        Self(crypto::Ed25519SigningKey::generate())
+    }
+
+    /// This account's address.
+    fn addr(&self) -> AccountAddr {
+        AccountAddr::try_from(self.0.verifying_key().as_ref())
+            .expect("a generated key is an address")
+    }
 }

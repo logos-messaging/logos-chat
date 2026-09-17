@@ -10,13 +10,12 @@ use serde::{Deserialize, Serialize};
 use storage::ConversationKind;
 
 use crate::conversation::ConversationId;
+use crate::identity::AuthenticatedMember;
 
 #[derive(Debug, Clone)]
 pub struct Content {
     pub bytes: Vec<u8>,
-    /// Hex-encoded [`DelegateCredential`] of the sender, if present in the message.
-    /// Empty when the sender did not attach a credential.
-    pub encoded_credential: Vec<u8>,
+    pub sender: AuthenticatedMember,
 }
 
 #[derive(Debug, Clone)]
