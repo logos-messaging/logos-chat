@@ -43,3 +43,24 @@ impl IdentityProvider for TestIdent {
         self.signing_key.sign(payload)
     }
 }
+
+/// Accepts every identifier without checking it.
+///
+/// A `TestIdent`'s external id is the name it was built from, so there is
+/// nothing to resolve it against. Test-only: this asserts nothing about a
+/// sender, and must never stand in for a real [`AuthService`] once the core
+/// gates on the result.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AcceptAllAuth;
+
+impl libchat::AuthService for AcceptAllAuth {
+    type Error = std::convert::Infallible;
+
+    fn validate_member(
+        &self,
+        _signer: SignerKey,
+        _participant_id: libchat::ParticipantId,
+    ) -> Result<libchat::AuthResult, Self::Error> {
+        Ok(libchat::AuthResult::Valid)
+    }
+}
