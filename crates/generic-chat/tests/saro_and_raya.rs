@@ -27,7 +27,7 @@ fn create_test_client(
     mut reg: EphemeralRegistry,
 ) -> Result<
     (
-        ChatClient<InProcessDelivery, EphemeralRegistry, libchat::ChatStorage>,
+        ChatClient<InProcessDelivery, EphemeralRegistry, chat_sqlite::SqliteStore>,
         Receiver<Event>,
     ),
     logos_generic_chat::ClientError,

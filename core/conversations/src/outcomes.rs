@@ -6,8 +6,8 @@
 //!   initial [`ConvoOutcome`].
 //! - [`PayloadOutcome`] — the union of the above, plus `Empty`.
 
+use crate::storage::ConversationKind;
 use serde::{Deserialize, Serialize};
-use storage::ConversationKind;
 
 use crate::conversation::ConversationId;
 

@@ -2,7 +2,7 @@ use de_mls::{ConversationError, mls_crypto::MlsError};
 use openmls::{framing::errors::MlsMessageError, prelude::tls_codec};
 pub use thiserror::Error;
 
-use storage::StorageError;
+use crate::storage::StorageError;
 
 use crate::ConversationId;
 

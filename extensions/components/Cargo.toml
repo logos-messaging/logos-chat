@@ -9,7 +9,6 @@ license.workspace = true
 crypto = { workspace = true }
 libchat = { workspace = true }
 logos-account = { workspace = true }
-storage = { workspace = true }
 
 # External dependencies (sorted)
 base64 = "0.22"
