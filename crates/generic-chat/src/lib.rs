@@ -22,8 +22,7 @@ pub use libchat::{
     ConvoMetadata, DeliveryService, GroupV2Config, IdentityProvider, MessageId,
     RegistrationService, StorageConfig,
 };
-// The directory trait bounds ChatClient's registry parameter, so callers
-// writing code generic over ChatClient need it too.
+// A participant is an account, so callers name peers by their address.
 pub use logos_account::AccountAddr;
 
 // Re-export bundled registry implementations so callers can pick one without

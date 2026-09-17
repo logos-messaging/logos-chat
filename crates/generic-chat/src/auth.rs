@@ -3,7 +3,11 @@
 
 use libchat::Signer;
 
-/// Temp mock: panics so tests will not pass
+/// Refuses to answer, loudly: every method panics.
+///
+/// A placeholder for a platform that has not wired an auth service yet. It is
+/// deliberately not a permissive default — a client built with it fails on
+/// first use rather than silently accepting every member.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PanicAuth;
 

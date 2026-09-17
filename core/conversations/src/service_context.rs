@@ -44,10 +44,6 @@ pub(crate) struct ServiceContext<S: ExternalServices> {
     pub(crate) registry: S::RS,
     pub(crate) store: S::CS,
     pub(crate) mls_identity: MlsIdentityProvider<S::IP>,
-    #[allow(
-        dead_code,
-        reason = "wired ahead of the call sites that will gate on it"
-    )]
     pub(crate) auth: S::AS,
     pub(crate) mls_provider: MlsEphemeralPqProvider,
     pub(crate) causal: CausalHistoryStore,

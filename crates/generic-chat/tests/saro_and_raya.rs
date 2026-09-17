@@ -105,9 +105,8 @@ fn direct_v1_standalone_integration() {
     let reg_service = EphemeralRegistry::new();
     let auth = AcceptAllAuth::default();
 
-    // Create accounts and delegates, and publish device bundles so the
-    // receiver can verify the account → device mapping carried in the
-    // sender's credential.
+    // Create accounts and their installations, and register each installation
+    // with the auth service so a peer can resolve the account to it.
     let saro_account = TestLogosAccount::new();
     let saro_account_id = saro_account.address();
     let saro_pending = PendingInstallation::generate();
@@ -143,7 +142,7 @@ fn direct_v1_standalone_integration() {
         } => {
             assert_eq!(content.as_slice(), b"Hey from saro");
             // saro associated an account and published a matching bundle, so the
-            // sender surfaces with a verified account and its device.
+            // sender surfaces with a verified account and its installation.
             assert_eq!(sender.account().to_string(), saro_account_id);
             assert_eq!(sender.signer().to_string(), saro_device_id);
             Ok(())
@@ -450,8 +449,8 @@ fn malformed_inbound_surfaces_as_error_event() {
     });
 }
 
-/// Opening a conversation by an address whose account never published a
-/// device bundle fails at resolution, not with a late key-package miss.
+/// Opening a conversation by an address the auth service cannot resolve to
+/// any installation fails at resolution, not with a late key-package miss.
 #[test]
 fn unpublished_account_address_is_an_error() {
     let bus = MessageBus::default();

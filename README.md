@@ -116,10 +116,13 @@ reaches it as an injected service.
 ## Repository map
 
 ```
+account/       account identity, shared with the rest of Logos
+  account-log/     append-only signed account log: entries, invariants, encoding
+  account/         crate `account`: accounts and the resolver over published logs
+
 core/          protocol and storage components. All code is synchronous.
   conversations/   crate `libchat`: the synchronous core, conversation types, causal history
   crypto/          key types, HKDF, XEdDSA
-  account/         accounts, delegate signers, the device directory
   storage/         store traits
   sqlite/          SQLCipher-backed store
   integration_tests_core/  multi-client test harness
