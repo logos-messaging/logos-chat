@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use storage::ConversationKind;
 
 use crate::conversation::ConversationId;
-use crate::membership::AuthenticatedMember;
+use crate::identity::AuthenticatedMember;
 
 #[derive(Debug, Clone)]
 pub struct Content {

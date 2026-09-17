@@ -8,13 +8,12 @@ use chat_proto::logoschat::reliability::ReliablePayload;
 use openmls::prelude::tls_codec::Deserialize;
 use openmls::prelude::*;
 use prost::Message as _;
-use shared_traits::{Signer, SignerRef};
 use std::collections::VecDeque;
 use tracing::debug;
 
 use crate::conversation::{ConversationIdRef, MessageId};
+use crate::identity::{Member, Signer, SignerRef};
 use crate::inbox_v2::MlsProvider;
-use crate::membership::Member;
 use crate::service_context::{ExternalServices, ServiceContext};
 use crate::service_traits::AuthService;
 

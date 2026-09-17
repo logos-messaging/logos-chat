@@ -1,7 +1,7 @@
 use crate::test_ident::{AcceptAllAuth, TestIdent};
 use libchat::{ConversationId, Core, IdentityProvider, PayloadOutcome};
+use libchat::{ExternalIdentifier, Signer};
 use libchat::{GroupV2Clock, GroupV2Config};
-use shared_traits::{ExternalIdentifier, Signer};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};

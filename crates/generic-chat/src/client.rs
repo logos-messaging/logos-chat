@@ -157,8 +157,9 @@ where
             .map_err(Into::into)
     }
 
-    /// Create a GroupV2 conversation with the given accounts' devices. The
-    /// core resolves each account to its signers through the auth service; the
+    /// Create a GroupV2 conversation with every installation of the given
+    /// accounts. The core resolves each account to its signers through the
+    /// auth service; the
     /// group invite goes to every one of them. An empty slice creates a group
     /// with only this client, to grow via [`Self::add_group_members`].
     /// `metadata` becomes the group's shared name and description, carried to
@@ -177,7 +178,8 @@ where
             .map_err(Into::into)
     }
 
-    /// Add accounts' devices to an existing group conversation. The add is
+    /// Add every installation of the given accounts to an existing group
+    /// conversation. The add is
     /// staged as an MLS proposal and merged by the group's next commit (driven
     /// asynchronously by the wakeup loop); each joiner's welcome is sent when
     /// that commit lands, not when this call returns.
@@ -194,7 +196,7 @@ where
             .map_err(Into::into)
     }
 
-    /// The conversation's committed members that pass auth, one per device,
+    /// The conversation's committed members that pass auth, one per installation,
     /// for a direct conversation as for a group.
     pub fn members(&self, convo_id: &str) -> Result<Vec<Member>, ClientError> {
         let members = self.core.lock().group_members(convo_id)?;
@@ -205,7 +207,7 @@ where
             .collect())
     }
 
-    /// Devices this client invited whose commit has not landed. A direct
+    /// Installations this client invited whose commit has not landed. A direct
     /// conversation has none.
     pub fn pending_members(&self, convo_id: &str) -> Result<Vec<Member>, ClientError> {
         let pending = self.core.lock().group_pending_members(convo_id)?;
@@ -514,12 +516,12 @@ mod sender_check_tests {
         }
     }
 
-    /// The gap is reported with the device the causal history names.
+    /// The gap is reported with the signer the causal history names.
     #[test]
-    fn missing_message_hint_names_the_device() {
-        let device = local_id(&key());
+    fn missing_message_hint_names_the_signer() {
+        let signer = local_id(&key());
 
-        match <[Event; 1]>::try_from(missing_events(vec![gap(&device)]))
+        match <[Event; 1]>::try_from(missing_events(vec![gap(&signer)]))
             .expect("one gap produces one event")
             .into_iter()
             .next()
@@ -532,7 +534,7 @@ mod sender_check_tests {
             } => {
                 assert_eq!(&*convo_id, "convo");
                 assert_eq!(message_id, "msg-id");
-                assert_eq!(sender_hint, device);
+                assert_eq!(sender_hint, signer);
             }
             other => panic!("expected MessageMissing, got {other:?}"),
         }
@@ -542,12 +544,12 @@ mod sender_check_tests {
     /// application would list against the message.
     #[test]
     fn acks_name_the_peers_that_hold_the_message() {
-        let device = local_id(&key());
+        let signer = local_id(&key());
 
         let events = delivery_ack_events(vec![DeliveryAck {
             conversation_id: "convo".to_owned(),
             message_id: "msg-id".to_owned(),
-            acked_by: device.clone(),
+            acked_by: signer.clone(),
         }]);
 
         match <[Event; 1]>::try_from(events)
@@ -563,7 +565,7 @@ mod sender_check_tests {
             } => {
                 assert_eq!(&*convo_id, "convo");
                 assert_eq!(message_id, "msg-id");
-                assert_eq!(acked_by, device);
+                assert_eq!(acked_by, signer);
             }
             other => panic!("expected MessageAcked, got {other:?}"),
         }

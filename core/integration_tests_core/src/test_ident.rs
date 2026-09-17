@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use crypto::Ed25519SigningKey;
 use libchat::IdentityProvider;
-use shared_traits::{ExternalIdentifier, Signer, SignerRef};
+use libchat::{ExternalIdentifier, Signer, SignerRef};
 
 /// Test identity with a human-readable name ("saro"). Stands in for a device
 /// signer so core tests can address peers by name.
@@ -34,7 +34,7 @@ impl IdentityProvider for TestIdent {
         &self.signer
     }
 
-    fn external_id(&self) -> shared_traits::ExternalIdentifier {
+    fn external_id(&self) -> ExternalIdentifier {
         self.name.as_bytes().into()
     }
 

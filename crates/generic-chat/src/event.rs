@@ -37,7 +37,7 @@ pub enum Event {
     /// one that did arrive. Detection only — nothing is fetched or replayed,
     /// and the gap is reported once.
     ///
-    /// `sender_hint` is self-asserted, so it names a device, not an
+    /// `sender_hint` is self-asserted, so it names a signer, not an
     /// [`AuthenticatedMember`].
     MessageMissing {
         convo_id: Arc<str>,

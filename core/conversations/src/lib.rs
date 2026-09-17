@@ -2,8 +2,8 @@ mod causal_history;
 mod conversation;
 mod core;
 mod errors;
+mod identity;
 mod inbox_v2;
-mod membership;
 mod outcomes;
 mod proto;
 mod service_context;
@@ -25,15 +25,16 @@ pub use core::{ConversationId, Core};
 pub use de_mls::ConversationConfig as GroupV2Config;
 pub use de_mls::MockClock;
 pub use errors::ChatError;
-pub use membership::{AuthenticatedMember, Member};
+pub use identity::{
+    AuthenticatedMember, ExternalIdentifier, Member, Signer, SignerError, SignerRef,
+};
 pub use outcomes::{
     Content, ConversationClass, ConvoOutcome, InboxOutcome, NewConversation, PayloadOutcome,
 };
 pub use service_context::ExternalServices;
 pub use service_traits::{
-    AuthResult, AuthService, DeliveryService, RegistrationService, WakeupService,
+    AuthResult, AuthService, DeliveryService, IdentityProvider, RegistrationService, WakeupService,
 };
-pub use shared_traits::{ExternalIdentifier, IdentityProvider, Signer, SignerRef};
 pub use storage::{ConversationKind, ConversationStore};
 pub use types::{AddressedEnvelope, ConvoMetadata};
 pub use utils::{hex_trunc, trunc};

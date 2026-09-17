@@ -4,7 +4,7 @@ mod group_v2;
 pub mod mls_extensions;
 
 pub use crate::errors::ChatError;
-use crate::membership::Member;
+use crate::identity::{Member, Signer};
 use crate::outcomes::ConvoOutcome;
 use crate::proto::EncryptedPayload;
 use crate::service_context::{ExternalServices, ServiceContext};
@@ -12,7 +12,6 @@ use crate::types::ConvoMetadata;
 pub use direct_v1::DirectV1Convo;
 pub use group_v1::GroupV1Convo;
 pub use group_v2::{GroupV2Clock, GroupV2Convo};
-use shared_traits::Signer;
 
 pub type ConversationId = String;
 pub type ConversationIdRef<'a> = &'a str;

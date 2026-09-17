@@ -3,7 +3,7 @@ use logos_account::AccountAddr;
 
 use crate::errors::ClientError;
 
-/// One device in a conversation, and the account it acts for.
+/// One installation in a conversation, and the account it acts for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Member {
     pub signer: Signer,

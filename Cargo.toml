@@ -10,7 +10,6 @@ members = [
     "core/conversations",
     "core/crypto",
     "core/integration_tests_core",
-    "core/shared-traits",
     "core/sqlite",
     "core/storage",
     "crates/logos-chat",
@@ -24,7 +23,6 @@ default-members = [
     "core/conversations",
     "core/crypto",
     "core/integration_tests_core",
-    "core/shared-traits",
     "core/sqlite",
     "core/storage",
     "crates/generic-chat",
@@ -45,7 +43,6 @@ libchat = { path = "core/conversations" }
 logos-chat = { path = "crates/logos-chat" }
 logos-delivery = { path = "extensions/logos-delivery-rust"}
 logos-generic-chat = { path = "crates/generic-chat" }
-shared-traits = { path = "core/shared-traits" }
 storage = { path = "core/storage" }
 chat-proto = { git = "https://github.com/logos-messaging/chat_proto", rev = "948f4ad6dedb01b44e279204d8eb30a1eda5a330" }
 
