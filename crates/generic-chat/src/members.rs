@@ -1,7 +1,6 @@
 use libchat::{ExternalIdentifier, Signer};
 use logos_account::AccountAddr;
 
-use crate::delegate::DelegateCredential;
 use crate::errors::ClientError;
 
 /// One device in a conversation, and the account it acts for.
@@ -61,12 +60,9 @@ pub(crate) fn account_id(account: &str) -> Result<ExternalIdentifier, ClientErro
     Ok(ExternalIdentifier::from(addr.to_bytes()))
 }
 
-/// The account a delegate credential names.
+/// The account an external id names.
 fn account_of(external_id: &ExternalIdentifier) -> Result<AccountAddr, ClientError> {
-    DelegateCredential::try_from(external_id.to_bytes())?
-        .account_addr()
-        .and_then(|addr| addr.parse().ok())
-        .ok_or(ClientError::BadlyFormedCredential)
+    AccountAddr::try_from(external_id.as_bytes()).map_err(|_| ClientError::InvalidExternalId)
 }
 
 #[cfg(test)]
@@ -75,30 +71,31 @@ mod tests {
 
     use super::*;
 
-    fn member(credential: DelegateCredential) -> libchat::Member {
-        libchat::Member {
-            signer: Signer::from(credential.delegate_id().clone()),
-            external_id: ExternalIdentifier::from(credential.serialize().as_slice()),
-        }
+    fn signer() -> Signer {
+        Signer::from(Ed25519SigningKey::generate().verifying_key())
     }
 
     #[test]
-    fn a_credential_yields_its_account() {
-        let device = Ed25519SigningKey::generate().verifying_key();
-        let account = AccountAddr::try_from(Ed25519SigningKey::generate().verifying_key().as_ref())
-            .expect("a generated key is an address");
-        let credential = DelegateCredential::associated(&device, &account.to_string());
+    fn an_external_id_yields_its_account() {
+        let signer = signer();
+        let account = hex::encode(Ed25519SigningKey::generate().verifying_key().as_ref());
+        let member = libchat::Member {
+            signer: signer.clone(),
+            external_id: account_id(&account).expect("a generated key is an address"),
+        };
 
-        let decoded = Member::try_from(member(credential)).expect("decodes");
-        assert_eq!(decoded.account, account);
-        assert_eq!(decoded.signer, Signer::from(device));
+        let decoded = Member::try_from(member).expect("decodes");
+        assert_eq!(decoded.account.to_string(), account);
+        assert_eq!(decoded.signer, signer);
     }
 
     #[test]
-    fn a_credential_without_an_account_is_rejected() {
-        let device = Ed25519SigningKey::generate().verifying_key();
-        let credential = DelegateCredential::unassociated(&device);
+    fn an_external_id_that_is_not_an_account_is_rejected() {
+        let member = libchat::Member {
+            signer: signer(),
+            external_id: ExternalIdentifier::from(b"saro".as_slice()),
+        };
 
-        assert!(Member::try_from(member(credential)).is_err());
+        assert!(Member::try_from(member).is_err());
     }
 }

@@ -4,8 +4,8 @@ use libchat::ChatError;
 pub enum ClientError {
     #[error(transparent)]
     Chat(#[from] ChatError),
-    #[error("received credential could not be parsed")]
-    BadlyFormedCredential,
+    #[error("external id is not an account address")]
+    InvalidExternalId,
     #[error("failed to start the transport: {0}")]
     Transport(String),
     #[error("account resolution failed: {0}")]

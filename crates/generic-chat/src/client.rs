@@ -99,7 +99,7 @@ where
 
         let (wakeup_tx, wakeup_rx) = crossbeam_channel::unbounded();
         let wakeup_service = ThreadedWakeupService::new(wakeup_tx);
-        let ident = DelegateIdentity::new(ident, &account);
+        let ident = DelegateIdentity::new(ident, &account)?;
         let mut core = Core::new_with_name(ident, auth, transport, reg, wakeup_service, storage)?;
         if let Some(config) = group_v2 {
             core.set_group_v2_config(config);
