@@ -53,6 +53,14 @@ impl From<AuthenticatedMember> for Member {
     }
 }
 
+/// An account address as the core's external id.
+pub(crate) fn account_id(account: &str) -> Result<ExternalIdentifier, ClientError> {
+    let addr: AccountAddr = account
+        .parse()
+        .map_err(|e| ClientError::AccountResolution(format!("{account}: {e}")))?;
+    Ok(ExternalIdentifier::from(addr.to_bytes()))
+}
+
 /// The account a delegate credential names.
 fn account_of(external_id: &ExternalIdentifier) -> Result<AccountAddr, ClientError> {
     DelegateCredential::try_from(external_id.to_bytes())?

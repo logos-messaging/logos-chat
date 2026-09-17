@@ -300,6 +300,15 @@ impl libchat::AuthService for UncheckedAuth {
     ) -> Result<libchat::AuthResult, Self::Error> {
         Ok(libchat::AuthResult::Valid)
     }
+
+    fn signers_for_account(
+        &self,
+        ident: &libchat::ExternalIdentifier,
+    ) -> Result<Vec<Signer>, Self::Error> {
+        // TODO: resolving an account to its devices went with the device-bundle
+        // directory and has no replacement yet.
+        unimplemented!("account resolution for {ident}")
+    }
 }
 
 /// Temp mock: panics so tests will not pass
@@ -314,6 +323,13 @@ impl libchat::AuthService for PanicAuth {
         _signer: Signer,
         _external_id: libchat::ExternalIdentifier,
     ) -> Result<libchat::AuthResult, Self::Error> {
+        panic!("DANGER")
+    }
+
+    fn signers_for_account(
+        &self,
+        _ident: &libchat::ExternalIdentifier,
+    ) -> Result<Vec<Signer>, Self::Error> {
         panic!("DANGER")
     }
 }

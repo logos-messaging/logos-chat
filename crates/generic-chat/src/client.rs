@@ -6,8 +6,8 @@ use components::{ThreadedWakeupService, WakeupEvent};
 use crossbeam_channel::{Receiver, Sender, select};
 use libchat::{
     AuthService, ConversationId, ConvoMetadata, ConvoOutcome, Core, DeliveryAck, DeliveryService,
-    GroupV2Config, InboxOutcome, MessageId, MissingMessage, PayloadOutcome, RegistrationService,
-    Signer, SignerRef,
+    ExternalIdentifier, GroupV2Config, InboxOutcome, MessageId, MissingMessage, PayloadOutcome,
+    RegistrationService,
 };
 use logos_account::AccountAddr;
 use parking_lot::Mutex;
@@ -16,11 +16,10 @@ use storage::ConversationStore;
 use crate::delegate::{DelegateIdentity, DelegateSigner};
 use crate::errors::ClientError;
 use crate::event::Event;
-use crate::members::{AuthenticatedMember, Member};
+use crate::members::{AuthenticatedMember, Member, account_id};
 
 type ClientCore<T, R, A, S> = Core<(DelegateIdentity, A, T, R, ThreadedWakeupService, S)>;
 type AccountAddressRef<'a> = &'a str;
-type LocalSigner = Signer;
 
 /// Metadata a caller supplies when creating a group: its shared name and
 /// description. Distinct from [`ConvoMetadata`], the type a conversation
@@ -149,17 +148,16 @@ where
         &mut self,
         account: AccountAddressRef,
     ) -> Result<ConversationId, ClientError> {
-        let signers = self.signers_from_account(account)?;
-        let signer_refs: Vec<SignerRef> = signers.iter().collect();
+        let account = account_id(account)?;
 
         self.core
             .lock()
-            .create_direct_convo(&signer_refs)
+            .create_direct_convo(account)
             .map_err(Into::into)
     }
 
-    /// Create a GroupV2 conversation with the given accounts' devices. Each
-    /// account resolves to the signer ids its directory bundle endorses; the
+    /// Create a GroupV2 conversation with the given accounts' devices. The
+    /// core resolves each account to its signers through the auth service; the
     /// group invite goes to every one of them. An empty slice creates a group
     /// with only this client, to grow via [`Self::add_group_members`].
     /// `metadata` becomes the group's shared name and description, carried to
@@ -170,12 +168,11 @@ where
         accounts: &[AccountAddressRef],
         metadata: GroupMetadata,
     ) -> Result<ConversationId, ClientError> {
-        let signers = self.signers_from_accounts(accounts)?;
-        let signer_refs: Vec<SignerRef> = signers.iter().collect();
+        let accounts = account_ids(accounts)?;
 
         self.core
             .lock()
-            .create_group_convo_v2(&signer_refs, &metadata.name, &metadata.desc)
+            .create_group_convo_v2(&accounts, &metadata.name, &metadata.desc)
             .map_err(Into::into)
     }
 
@@ -188,12 +185,11 @@ where
         convo_id: &str,
         accounts: &[AccountAddressRef],
     ) -> Result<(), ClientError> {
-        let signers = self.signers_from_accounts(accounts)?;
-        let signer_refs: Vec<SignerRef> = signers.iter().collect();
+        let accounts = account_ids(accounts)?;
 
         self.core
             .lock()
-            .group_add_member(convo_id, &signer_refs)
+            .group_add_participants(convo_id, &accounts)
             .map_err(Into::into)
     }
 
@@ -288,29 +284,6 @@ where
             .lock()
             .send_content(convo_id, content)
             .map_err(Into::into)
-    }
-
-    /// Resolve an account address to its signer (device) ids.
-    fn signers_from_account(
-        &self,
-        account: AccountAddressRef,
-    ) -> Result<Vec<LocalSigner>, ClientError> {
-        // TODO: resolving an account to its devices went with the device-bundle
-        // directory and has no replacement yet.
-        unimplemented!("account resolution for {account}")
-    }
-
-    /// Resolve each account to its signer ids and flatten them, failing on the
-    /// first unresolvable account.
-    fn signers_from_accounts(
-        &self,
-        accounts: &[AccountAddressRef],
-    ) -> Result<Vec<LocalSigner>, ClientError> {
-        let mut signers = Vec::new();
-        for account in accounts {
-            signers.extend(self.signers_from_account(account)?);
-        }
-        Ok(signers)
     }
 }
 
@@ -444,6 +417,11 @@ fn missing_events(missing: Vec<MissingMessage>) -> Vec<Event> {
             sender_hint: m.frontier.sender().clone(),
         })
         .collect()
+}
+
+/// Each account address as the core's external id.
+fn account_ids(accounts: &[AccountAddressRef]) -> Result<Vec<ExternalIdentifier>, ClientError> {
+    accounts.iter().map(|account| account_id(account)).collect()
 }
 
 /// A core member as the client's type. A credential that doesn't decode is

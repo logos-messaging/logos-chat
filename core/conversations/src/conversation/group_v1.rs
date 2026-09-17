@@ -8,7 +8,7 @@ use chat_proto::logoschat::reliability::ReliablePayload;
 use openmls::prelude::tls_codec::Deserialize;
 use openmls::prelude::*;
 use prost::Message as _;
-use shared_traits::SignerRef;
+use shared_traits::{Signer, SignerRef};
 use std::collections::VecDeque;
 use tracing::debug;
 
@@ -355,7 +355,7 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
     fn add_member(
         &mut self,
         cx: &mut ServiceContext<S>,
-        members: &[SignerRef],
+        members: &[Signer],
     ) -> Result<(), ChatError> {
         if members.len() > 50 {
             // This is a temporary limit that originates from the De-MLS epoch time.

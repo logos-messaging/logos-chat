@@ -1,6 +1,9 @@
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
 use crypto::Ed25519SigningKey;
 use libchat::IdentityProvider;
-use shared_traits::{Signer, SignerRef};
+use shared_traits::{ExternalIdentifier, Signer, SignerRef};
 
 /// Test identity with a human-readable name ("saro"). Stands in for a device
 /// signer so core tests can address peers by name.
@@ -44,14 +47,27 @@ impl IdentityProvider for TestIdent {
     }
 }
 
-/// Accepts every identifier without checking it.
+/// Accepts every identifier without checking it, and resolves an account to
+/// the signers [registered](Self::register) under it.
 ///
-/// A `TestIdent`'s external id is the name it was built from, so there is
-/// nothing to resolve it against. Test-only: this asserts nothing about a
-/// sender, and must never stand in for a real [`AuthService`] once the core
-/// gates on the result.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct AcceptAllAuth;
+/// Test-only: this asserts nothing about a sender, and must never stand in for
+/// a real [`AuthService`](libchat::AuthService). Clones share one registry.
+#[derive(Debug, Clone, Default)]
+pub struct AcceptAllAuth {
+    signers: Arc<Mutex<HashMap<ExternalIdentifier, Vec<Signer>>>>,
+}
+
+impl AcceptAllAuth {
+    /// Makes `ident`'s signer resolvable from its external id.
+    pub fn register(&self, ident: &impl IdentityProvider) {
+        self.signers
+            .lock()
+            .unwrap()
+            .entry(ident.external_id())
+            .or_default()
+            .push(ident.signer().clone());
+    }
+}
 
 impl libchat::AuthService for AcceptAllAuth {
     type Error = std::convert::Infallible;
@@ -62,5 +78,15 @@ impl libchat::AuthService for AcceptAllAuth {
         _external_id: libchat::ExternalIdentifier,
     ) -> Result<libchat::AuthResult, Self::Error> {
         Ok(libchat::AuthResult::Valid)
+    }
+
+    fn signers_for_account(&self, ident: &ExternalIdentifier) -> Result<Vec<Signer>, Self::Error> {
+        Ok(self
+            .signers
+            .lock()
+            .unwrap()
+            .get(ident)
+            .cloned()
+            .unwrap_or_default())
     }
 }

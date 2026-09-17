@@ -1,5 +1,5 @@
 use chat_proto::logoschat::encryption::EncryptedPayload;
-use shared_traits::SignerRef;
+use shared_traits::Signer;
 
 use crate::{
     ChatError, ExternalServices, Member, MessageId,
@@ -21,7 +21,7 @@ impl DirectV1Convo {
     // have multiple Installations.
     pub fn new<S: ExternalServices>(
         cx: &mut ServiceContext<S>,
-        members: &[SignerRef],
+        members: &[Signer],
     ) -> Result<Self, ChatError> {
         let mut inner_group = DelegateGroup::new(cx)?;
         inner_group.add_member(cx, members)?;

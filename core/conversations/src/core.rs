@@ -18,7 +18,7 @@ use crate::{
     proto::{EncryptedPayload, EnvelopeV1, Message},
 };
 use openmls::group::GroupId;
-use shared_traits::SignerRef;
+use shared_traits::{ExternalIdentifier, Signer, SignerRef};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use storage::{ConversationKind, ConversationStore};
@@ -163,16 +163,18 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     pub fn create_direct_convo(
         &mut self,
-        members: &[SignerRef],
+        participants: ExternalIdentifier,
     ) -> Result<ConversationId, ChatError> {
-        self.create_direct_convo_v1(members)
+        self.create_direct_convo_v1(participants)
     }
 
     pub fn create_direct_convo_v1(
         &mut self,
-        members: &[SignerRef],
+        participant: ExternalIdentifier,
     ) -> Result<ConversationId, ChatError> {
-        let convo = DirectV1Convo::new(&mut self.services, members)?;
+        let members = self.get_signers_for_participants(&[participant])?;
+
+        let convo = DirectV1Convo::new(&mut self.services, &members)?;
         let convo_id = convo.id().to_string();
         self.register_convo(ConvoTypeOwned::Direct(Box::new(convo)))?;
 
@@ -181,18 +183,19 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     pub fn create_group_convo(
         &mut self,
-        participants: &[SignerRef],
+        participants: &[ExternalIdentifier],
     ) -> Result<ConversationId, ChatError> {
         self.create_group_convo_v2(participants, "", "")
     }
 
     pub fn create_group_convo_v1(
         &mut self,
-        participants: &[SignerRef],
+        participants: &[ExternalIdentifier],
     ) -> Result<ConversationId, ChatError> {
         // TODO: (P1) Ensure errors are handled properly. This is a high chance for
         // desynchronized state: MlsGroup persistence, conversation persistence, and
         // invite delivery all happen separately.
+        let signers = self.get_signers_for_participants(participants)?;
         let mut convo = GroupV1Convo::new(&mut self.services)?;
         self.services
             .store
@@ -200,7 +203,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
                 local_convo_id: convo.id().to_string(),
                 kind: ConversationKind::GroupV1,
             })?;
-        convo.add_member(&mut self.services, participants)?;
+        convo.add_member(&mut self.services, &signers)?;
         let convo_id = convo.id().to_string();
 
         self.register_convo(ConvoTypeOwned::Group(Box::new(convo)))?;
@@ -210,14 +213,16 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     pub fn create_group_convo_v2(
         &mut self,
-        participants: &[SignerRef],
+        participants: &[ExternalIdentifier],
         name: &str,
         desc: &str,
     ) -> Result<ConversationId, ChatError> {
         // TODO: (P1) Ensure errors are handled properly. This is a high chance for
         // desynchronized state: MlsGroup persistence, conversation persistence, and
         // invite delivery all happen separately.
-        let convo = GroupV2Convo::new(&mut self.services, name, desc, participants)?;
+
+        let signers = self.get_signers_for_participants(participants)?;
+        let convo = GroupV2Convo::new(&mut self.services, name, desc, &signers)?;
         let convo_id = convo.id().to_string();
 
         self.register_convo(ConvoTypeOwned::Group(Box::new(convo)))?;
@@ -226,10 +231,19 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
     }
 
     /// Add members to an existing group conversation.
+    pub fn group_add_participants(
+        &mut self,
+        convo_id: &str,
+        participants: &[ExternalIdentifier],
+    ) -> Result<(), ChatError> {
+        let signers = self.get_signers_for_participants(participants)?;
+        self.group_add_member(convo_id, &signers)
+    }
+
     pub fn group_add_member(
         &mut self,
         convo_id: &str,
-        members: &[SignerRef],
+        members: &[Signer],
     ) -> Result<(), ChatError> {
         let convo = self
             .cached_convos
@@ -504,6 +518,22 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
             )),
             None => Err(ChatError::NoConvo(convo_id.into())),
         }
+    }
+
+    fn get_signers_for_participants(
+        &self,
+        participants: &[ExternalIdentifier],
+    ) -> Result<Vec<Signer>, ChatError> {
+        let signers = participants
+            .iter()
+            .map(|eid| self.services.auth.signers_for_account(eid))
+            .collect::<Result<Vec<Vec<Signer>>, _>>()
+            .map_err(ChatError::generic)?
+            .into_iter()
+            .flatten()
+            .collect();
+
+        Ok(signers)
     }
 }
 

@@ -26,7 +26,7 @@ use openmls::group::MlsGroupCreateConfig;
 use openmls::prelude::tls_codec::Deserialize as _;
 use openmls::prelude::{KeyPackageIn, OpenMlsProvider as _, ProtocolVersion};
 use prost::Message;
-use shared_traits::{Signer, SignerRef};
+use shared_traits::Signer;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -135,12 +135,11 @@ struct FetchedMember {
 /// Fails if anyone lacks one, before any member is admitted.
 fn fetch_key_packages<S: ExternalServices>(
     service_ctx: &ServiceContext<S>,
-    participants: &[SignerRef],
+    participants: &[Signer],
 ) -> Result<Vec<FetchedMember>, ChatError> {
     let mut seen = HashSet::new();
     participants
         .iter()
-        .copied()
         .filter(|m| seen.insert(m.as_bytes()))
         .map(|member| {
             let key_package = service_ctx
@@ -187,11 +186,11 @@ impl GroupV2Convo {
         service_ctx: &mut ServiceContext<S>,
         name: &str,
         desc: &str,
-        participants: &[SignerRef],
+        signers: &[Signer],
     ) -> Result<Self, ChatError> {
         let convo_id = rand_string(5);
         let group_config = group_config(name, desc);
-        let invites = fetch_key_packages(service_ctx, participants)?;
+        let invites = fetch_key_packages(service_ctx, signers)?;
         let initial_members: Vec<&[u8]> =
             invites.iter().map(|m| m.key_package.as_slice()).collect();
         let conversation = Conversation::create(
@@ -407,7 +406,7 @@ where
     fn add_member(
         &mut self,
         service_ctx: &mut ServiceContext<S>,
-        members: &[SignerRef],
+        members: &[Signer],
     ) -> Result<(), ChatError> {
         // Fetch every signer's key package + joiner credential up front (deduped),
         // failing before any proposal opens if one has no key package.

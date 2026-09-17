@@ -136,7 +136,7 @@ fn settle<const N: usize>(
 fn add_members<const N: usize>(
     h: &mut TestHarness<N>,
     convo: &str,
-    invited: &[&Signer],
+    invited: &[Signer],
 ) -> Result<(), String> {
     let mut elapsed = Duration::ZERO;
     let budget = settle_budget();
@@ -270,10 +270,9 @@ fn run<const N: usize>(batch: usize) {
     let mut joined = 1;
     while joined < N {
         let upto = (joined + batch).min(N);
-        let addresses: Vec<Signer> = (joined..upto)
+        let invited: Vec<Signer> = (joined..upto)
             .map(|i| harness.client_mut(i).addr())
             .collect();
-        let invited: Vec<&Signer> = addresses.iter().collect();
         if let Err(refusal) = add_members(&mut harness, &convo, &invited) {
             panic!(
                 "adding members {joined}..{upto} kept being refused: {refusal} :: {}",

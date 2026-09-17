@@ -71,4 +71,6 @@ pub trait AuthService: Debug {
         signer: Signer,
         external_id: ExternalIdentifier,
     ) -> Result<AuthResult, Self::Error>;
+
+    fn signers_for_account(&self, ident: &ExternalIdentifier) -> Result<Vec<Signer>, Self::Error>;
 }
