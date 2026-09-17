@@ -7,8 +7,8 @@ use crossbeam_channel::{Receiver, Sender, select};
 use crypto::Ed25519VerifyingKey;
 use libchat::{
     ConversationId, ConversationStore, ConvoMetadata, ConvoOutcome, Core, DeliveryAck,
-    DeliveryService, GroupV2Config, IdentId, IdentIdRef, InboxOutcome, MessageId, MissingMessage,
-    PayloadOutcome, RegistrationService,
+    DeliveryService, GroupV2Config, IdentId, IdentIdRef, InboxOutcome, KvStore, MessageId,
+    MissingMessage, PayloadOutcome, RegistrationService,
 };
 use logos_account::{AccountDirectory, resolve_device_ids};
 use parking_lot::Mutex;
@@ -85,7 +85,7 @@ pub struct ChatClient<T, R, S>
 where
     T: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
-    S: ConversationStore + Send + 'static,
+    S: KvStore + ConversationStore + Send + 'static,
 {
     /// `parking_lot::Mutex` for its eventual fairness: an inbound burst can't
     /// starve caller operations of the lock.
@@ -105,7 +105,7 @@ impl<T, R, S> ChatClient<T, R, S>
 where
     T: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
-    S: ConversationStore + Send + 'static,
+    S: KvStore + ConversationStore + Send + 'static,
 {
     pub fn new(
         ident: DelegateSigner,
@@ -121,7 +121,7 @@ where
         let wakeup_service = ThreadedWakeupService::new(wakeup_tx);
         let directory = reg.clone();
         let ident = DelegateIdentity::new(ident, &account);
-        let mut core = Core::new_with_name(ident, transport, reg, wakeup_service, storage)?;
+        let mut core = Core::new_from_store(ident, transport, reg, wakeup_service, storage)?;
         if let Some(config) = group_v2 {
             core.set_group_v2_config(config);
         }
@@ -355,7 +355,7 @@ impl<T, R, S> Drop for ChatClient<T, R, S>
 where
     T: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
-    S: ConversationStore + Send + 'static,
+    S: KvStore + ConversationStore + Send + 'static,
 {
     fn drop(&mut self) {
         // Dropping the sender disconnects the worker's shutdown channel, waking
@@ -370,7 +370,7 @@ where
 /// Background loop: block until an inbound payload or shutdown arrives, drive
 /// the core on each payload, and forward events. No polling — `select!` parks
 /// the thread until one of the channels is ready.
-fn worker_loop<T, R, S: ConversationStore + 'static>(
+fn worker_loop<T, R, S: KvStore + ConversationStore + 'static>(
     core: Arc<Mutex<ClientCore<T, R, S>>>,
     directory: R,
     inbound: Receiver<Vec<u8>>,

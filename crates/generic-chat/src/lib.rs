@@ -16,7 +16,7 @@ pub use event::{Event, MessageSender};
 pub use chat_sqlite::{SqliteStore, StorageConfig};
 pub use libchat::{
     AddressedEnvelope, ConversationClass, ConversationId, ConversationStore, ConvoMetadata,
-    DeliveryService, GroupV2Config, IdentityProvider, MessageId, RegistrationService,
+    DeliveryService, GroupV2Config, IdentityProvider, KvStore, MessageId, RegistrationService,
 };
 // The directory trait bounds ChatClient's registry parameter, so callers
 // writing code generic over ChatClient need it too.

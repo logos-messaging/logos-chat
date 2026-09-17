@@ -1,7 +1,7 @@
 use chat_sqlite::{SqliteStore, StorageConfig};
 use components::EphemeralRegistry;
 use crossbeam_channel::Receiver;
-use libchat::{ChatError, ConversationStore, GroupV2Config, RegistrationService};
+use libchat::{ChatError, ConversationStore, GroupV2Config, KvStore, RegistrationService};
 use logos_account::AccountDirectory;
 
 use crate::Transport;
@@ -118,7 +118,7 @@ impl<T, R, S> ChatClientBuilder<DelegateSigner, T, R, S>
 where
     T: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
-    S: ConversationStore + Send + 'static,
+    S: KvStore + ConversationStore + Send + 'static,
 {
     pub fn build(self) -> Built<T, R, S> {
         ChatClient::new(
@@ -185,7 +185,7 @@ where
 impl<T, S> ChatClientBuilder<Unset, T, Unset, S>
 where
     T: Transport + Send + 'static,
-    S: ConversationStore + Send + 'static,
+    S: KvStore + ConversationStore + Send + 'static,
 {
     pub fn build(self) -> Built<T, EphemeralRegistry, S> {
         ChatClient::new(
@@ -222,7 +222,7 @@ impl<T, R, S> ChatClientBuilder<Unset, T, R, S>
 where
     T: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
-    S: ConversationStore + Send + 'static,
+    S: KvStore + ConversationStore + Send + 'static,
 {
     pub fn build(self) -> Built<T, R, S> {
         ChatClient::new(
@@ -240,7 +240,7 @@ where
 impl<T, S> ChatClientBuilder<DelegateSigner, T, Unset, S>
 where
     T: Transport + Send + 'static,
-    S: ConversationStore + Send + 'static,
+    S: KvStore + ConversationStore + Send + 'static,
 {
     pub fn build(self) -> Built<T, EphemeralRegistry, S> {
         ChatClient::new(

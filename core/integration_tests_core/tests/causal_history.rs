@@ -7,15 +7,9 @@
 use std::ops::{Deref, DerefMut};
 
 use components::{EphemeralRegistry, LocalBroadcaster};
-use integration_tests_core::TestIdent;
+use integration_tests_core::{NoopWakeupService, TestIdent};
 use libchat::test_support::MemStore;
-use libchat::{Core, MissingMessage, WakeupService};
-
-#[derive(Debug)]
-struct NoopWakeupService {}
-impl WakeupService for NoopWakeupService {
-    fn wakeup_in(&mut self, _: std::time::Duration, _: libchat::ConversationId) {}
-}
+use libchat::{Core, MissingMessage};
 
 struct Client {
     inner: Core<(
@@ -84,21 +78,21 @@ fn missing_group_message_is_detected() {
     let rs = EphemeralRegistry::new();
 
     let saro_ident = TestIdent::new("saro");
-    let saro_ctx = Core::new_with_name(
+    let saro_ctx = Core::new_from_store(
         saro_ident,
         ds.new_consumer(),
         rs.clone(),
-        NoopWakeupService {},
+        NoopWakeupService,
         MemStore::new(),
     )
     .unwrap();
 
     let raya_ident = TestIdent::new("raya");
-    let raya_ctx = Core::new_with_name(
+    let raya_ctx = Core::new_from_store(
         raya_ident,
         ds.clone(),
         rs.clone(),
-        NoopWakeupService {},
+        NoopWakeupService,
         MemStore::new(),
     )
     .unwrap();
