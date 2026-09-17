@@ -100,10 +100,10 @@ where
         store: CS,
     ) -> Result<Self, ChatError> {
         // InboxV2 rendezvous is signer-scoped: it subscribes under the hex of
-        // the signer's verifying key — the same string the account → device
-        // directory lists and the registries key key-packages under, so it is
-        // exactly what an inviter can derive for this installation. The MLS
-        // credential below still carries the full `id()`.
+        // the signer's verifying key — the same string the registries key
+        // key-packages under, so it is exactly what an inviter resolving this
+        // participant arrives at. The MLS credential below carries the
+        // participant id.
         let signer = ident.signer_key().clone();
         let mls_identity = MlsIdentityProvider::new(ident);
         let mls_provider = MlsEphemeralPqProvider::new().map_err(ChatError::generic)?;
@@ -328,7 +328,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         let ConvoTypeOwned::Group(group_convo) = convo else {
             return Ok(Vec::new());
         };
-        // A device whose commit has landed is a member, not pending.
+        // An installation whose commit has landed is a member, not pending.
         let committed = convo.members()?;
         Ok(group_convo
             .pending_members()?

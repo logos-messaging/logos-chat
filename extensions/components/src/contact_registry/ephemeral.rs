@@ -10,9 +10,9 @@ use libchat::{IdentityProvider, RegistrationService};
 /// This implementation stores bundle bytes and then returns them when
 /// retrieved.
 ///
-/// A keypackage store ([`RegistrationService`]) keyed by `device_id`. The
-/// account → device directory it also served was removed with the
-/// device-bundle crate; account resolution returns with account-log.
+/// A keypackage store ([`RegistrationService`]) keyed by installation id —
+/// the hex of a signer's verifying key. Resolving a participant to its
+/// installations is the `AuthService`'s job, not this store's.
 #[derive(Clone, Default)]
 pub struct EphemeralRegistry {
     key_packages: Arc<Mutex<HashMap<String, Vec<u8>>>>,

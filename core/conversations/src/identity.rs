@@ -106,7 +106,7 @@ impl fmt::Display for ParticipantId {
     }
 }
 
-/// Identity of a entity in a conversation.
+/// Identity of an entity in a conversation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Signer {
     /// Installation specific signing key
