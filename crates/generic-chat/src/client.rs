@@ -6,27 +6,20 @@ use components::{ThreadedWakeupService, WakeupEvent};
 use crossbeam_channel::{Receiver, Sender, select};
 use crypto::Ed25519VerifyingKey;
 use libchat::{
-    ConversationId, ConvoMetadata, ConvoOutcome, Core, DeliveryAck, DeliveryService, GroupV2Config,
-    InboxOutcome, MessageId, MissingMessage, PayloadOutcome, RegistrationService, Signer,
-    SignerRef,
+    AuthService, ConversationId, ConvoMetadata, ConvoOutcome, Core, DeliveryAck, DeliveryService,
+    GroupV2Config, InboxOutcome, MessageId, MissingMessage, PayloadOutcome, RegistrationService,
+    Signer, SignerRef,
 };
 use logos_account::AccountAddr;
 use logos_account_legacy::{AccountDirectory, resolve_device_ids};
 use parking_lot::Mutex;
 use storage::ConversationStore;
 
-use crate::delegate::{DelegateCredential, DelegateIdentity, DelegateSigner, UncheckedAuth};
+use crate::delegate::{DelegateCredential, DelegateIdentity, DelegateSigner};
 use crate::errors::ClientError;
 use crate::event::{Event, MessageSender};
 
-type ClientCore<T, R, S> = Core<(
-    DelegateIdentity,
-    UncheckedAuth,
-    T,
-    R,
-    ThreadedWakeupService,
-    S,
-)>;
+type ClientCore<T, R, A, S> = Core<(DelegateIdentity, A, T, R, ThreadedWakeupService, S)>;
 type AccountAddressRef<'a> = &'a str;
 type LocalSigner = Signer;
 
@@ -90,15 +83,16 @@ pub trait Transport: DeliveryService + Send + 'static {
 /// caller's thread: they briefly lock the core, invoke it, and return — no
 /// message-passing round-trip. The `Arc`/`Mutex`/threads live entirely here;
 /// the core never mentions threads.
-pub struct ChatClient<T, R, S>
+pub struct ChatClient<T, R, A, S>
 where
     T: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
     /// `parking_lot::Mutex` for its eventual fairness: an inbound burst can't
     /// starve caller operations of the lock.
-    core: Arc<Mutex<ClientCore<T, R, S>>>,
+    core: Arc<Mutex<ClientCore<T, R, A, S>>>,
     /// The account → device directory. On testnet the registration service
     /// doubles as the directory (one deployed registry serves both roles), so
     /// the client keeps its own clone of `R`; the core sees key packages only.
@@ -110,15 +104,17 @@ where
 }
 
 // -- GenericChatClient
-impl<T, R, S> ChatClient<T, R, S>
+impl<T, R, A, S> ChatClient<T, R, A, S>
 where
     T: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
     pub fn new(
         ident: DelegateSigner,
         account: String,
+        auth: A,
         mut transport: T,
         reg: R,
         storage: S,
@@ -130,14 +126,7 @@ where
         let wakeup_service = ThreadedWakeupService::new(wakeup_tx);
         let directory = reg.clone();
         let ident = DelegateIdentity::new(ident, &account);
-        let mut core = Core::new_with_name(
-            ident,
-            UncheckedAuth,
-            transport,
-            reg,
-            wakeup_service,
-            storage,
-        )?;
+        let mut core = Core::new_with_name(ident, auth, transport, reg, wakeup_service, storage)?;
         if let Some(config) = group_v2 {
             core.set_group_v2_config(config);
         }
@@ -145,7 +134,7 @@ where
     }
 
     fn spawn(
-        core: ClientCore<T, R, S>,
+        core: ClientCore<T, R, A, S>,
         directory: R,
         address: String,
         inbound: Receiver<Vec<u8>>,
@@ -381,10 +370,11 @@ where
     }
 }
 
-impl<T, R, S> Drop for ChatClient<T, R, S>
+impl<T, R, A, S> Drop for ChatClient<T, R, A, S>
 where
     T: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
     fn drop(&mut self) {
@@ -400,8 +390,8 @@ where
 /// Background loop: block until an inbound payload or shutdown arrives, drive
 /// the core on each payload, and forward events. No polling — `select!` parks
 /// the thread until one of the channels is ready.
-fn worker_loop<T, R, S: ConversationStore + 'static>(
-    core: Arc<Mutex<ClientCore<T, R, S>>>,
+fn worker_loop<T, R, A, S: ConversationStore + 'static>(
+    core: Arc<Mutex<ClientCore<T, R, A, S>>>,
     directory: R,
     inbound: Receiver<Vec<u8>>,
     wakeup_events: Receiver<WakeupEvent>,
@@ -410,6 +400,7 @@ fn worker_loop<T, R, S: ConversationStore + 'static>(
 ) where
     T: DeliveryService + Send + 'static,
     R: RegistrationService + AccountDirectory + Send + 'static,
+    A: AuthService + Send + 'static,
 {
     loop {
         select! {
