@@ -49,8 +49,8 @@ pub enum ChatError {
     UnsupportedFunction(ConversationId, String),
     #[error("authentication failed: Signer({0}) is not valid for participant_id({1})")]
     Auth(String, String),
-    #[error("account resolution failed: {0}")]
-    AccountResolution(String),
+    #[error("participant resolution failed: {0}")]
+    ParticipantResolution(String),
 }
 
 impl ChatError {

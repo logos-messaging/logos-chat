@@ -7,6 +7,8 @@
 //!   │  AuthService
 //!   └──► AuthenticatedMember          a member the service vouched for
 //! ```
+//!
+//! The model and the reasoning behind it: `docs/adr/0003-identity-model.md`.
 
 use std::fmt;
 

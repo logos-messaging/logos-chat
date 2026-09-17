@@ -467,7 +467,7 @@ fn unpublished_account_address_is_an_error() {
         .expect_err("the account is unknown");
     assert!(matches!(
         err,
-        logos_generic_chat::ClientError::Chat(ChatError::AccountResolution(_))
+        logos_generic_chat::ClientError::Chat(ChatError::ParticipantResolution(_))
     ));
 
     let err = saro

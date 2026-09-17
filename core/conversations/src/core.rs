@@ -527,7 +527,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
             .iter()
             .map(|eid| self.services.auth.signers_for_participant(eid))
             .collect::<Result<Vec<Vec<Signer>>, _>>()
-            .map_err(|e| ChatError::AccountResolution(e.to_string()))?
+            .map_err(|e| ChatError::ParticipantResolution(e.to_string()))?
             .into_iter()
             .flatten()
             .collect();
