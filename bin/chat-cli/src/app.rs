@@ -316,15 +316,8 @@ where
                 else {
                     return; // sent before this session, or not ours
                 };
-                let peer = acked_by.map_or_else(
-                    || "a member".to_string(),
-                    |s| {
-                        let id = s
-                            .account
-                            .map_or_else(|| s.local_identity.to_string(), |a| a.to_string());
-                        format!("{}…", &id[..8.min(id.len())])
-                    },
-                );
+                let id = acked_by.to_string();
+                let peer = format!("{}…", &id[..8.min(id.len())]);
                 if !message.delivered_to.contains(&peer) {
                     message.delivered_to.push(peer);
                 }
@@ -339,15 +332,8 @@ where
                 };
                 // The hint is not authenticated (see `Event::MessageMissing`),
                 // so name the author loosely rather than as an established fact.
-                let author = sender_hint.map_or_else(
-                    || "a member".to_string(),
-                    |s| {
-                        let id = s
-                            .account
-                            .map_or_else(|| s.local_identity.to_string(), |a| a.to_string());
-                        format!("{}…", &id[..8.min(id.len())])
-                    },
-                );
+                let id = sender_hint.to_string();
+                let author = format!("{}…", &id[..8.min(id.len())]);
                 self.status = format!(
                     "A message from {author} never arrived in '{}'.",
                     session.display_name()

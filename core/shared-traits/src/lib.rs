@@ -29,6 +29,17 @@ impl From<&[u8]> for Signer {
     }
 }
 
+/// Parses the hex form `Display` writes. Temporary, for causal history's string ids.
+impl TryFrom<&str> for Signer {
+    type Error = SignerError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        hex::decode(value)
+            .map(Self)
+            .map_err(|_| SignerError::NotHex)
+    }
+}
+
 impl fmt::Display for Signer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&hex::encode(self.as_bytes()))
@@ -65,6 +76,8 @@ impl fmt::Display for ExternalIdentifier {
 pub enum SignerError {
     #[error("not an Ed25519 verifying key")]
     NotAKey,
+    #[error("not a hex-encoded signer")]
+    NotHex,
 }
 
 /// Represents an external Identity

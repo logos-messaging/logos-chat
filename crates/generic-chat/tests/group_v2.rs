@@ -525,13 +525,11 @@ fn a_sent_message_is_acknowledged_by_the_peers_that_reply() {
                     convo_id: id,
                     message_id: acked,
                     acked_by,
-                } if **id == *convo_id && *acked == message_id => {
-                    Some(acked_by.as_ref().map(|a| a.local_identity.to_string()))
-                }
+                } if **id == *convo_id && *acked == message_id => Some(acked_by.to_string()),
                 _ => None,
             },
         );
-        holders.push(peer.expect("an acknowledgement names the device that replied"));
+        holders.push(peer);
     }
     holders.sort();
 

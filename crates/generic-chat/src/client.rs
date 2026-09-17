@@ -433,7 +433,7 @@ fn delivery_ack_events(acks: Vec<DeliveryAck>) -> Vec<Event> {
         .map(|a| Event::MessageAcked {
             convo_id: Arc::from(a.conversation_id),
             message_id: a.message_id,
-            acked_by: sender_hint(&a.acked_by),
+            acked_by: a.acked_by,
         })
         .collect()
 }
@@ -451,24 +451,9 @@ fn missing_events(missing: Vec<MissingMessage>) -> Vec<Event> {
         .map(|m| Event::MessageMissing {
             convo_id: Arc::from(m.conversation_id),
             message_id: m.frontier.message_id().to_owned(),
-            sender_hint: sender_hint(m.frontier.sender_id()),
+            sender_hint: m.frontier.sender().clone(),
         })
         .collect()
-}
-
-/// Resolve a participant a causal-history observation named — the author of a
-/// message we never saw, or the peer acknowledging one of ours.
-///
-/// Same credential decoding as a delivered message's sender, but the claim is
-/// self-asserted rather than authenticated, so an unconfirmable account yields
-/// the device alone rather than dropping the observation. `None` when the value
-/// is not a credential at all.
-fn sender_hint(encoded: &str) -> Option<MessageSender> {
-    let bytes = hex::decode(encoded).ok()?;
-    Some(MessageSender {
-        account: None,
-        local_identity: Signer::from(bytes.as_slice()),
-    })
 }
 
 /// The account a credential claims, if any. Only meaningful for a member the
@@ -577,8 +562,8 @@ mod sender_check_tests {
     use crypto::{Ed25519SigningKey, Ed25519VerifyingKey};
 
     use super::{
-        AccountAddr, AuthStatus, Event, GroupMember, MessageSender, Signer, dedup_members,
-        delivery_ack_events, member_key, missing_events,
+        AccountAddr, AuthStatus, Event, GroupMember, Signer, dedup_members, delivery_ack_events,
+        member_key, missing_events,
     };
     use libchat::{DeliveryAck, Frontier, MissingMessage};
 
@@ -661,18 +646,20 @@ mod sender_check_tests {
         );
     }
 
-    /// A gap reported by the causal history, as the core hands it over: the
-    /// sender hint travels in the same encoding a message's credential does.
-    fn gap(sender_hint: &str) -> MissingMessage {
+    /// A gap reported by the causal history, as the core hands it over.
+    fn gap(sender_hint: &Signer) -> MissingMessage {
         MissingMessage {
             conversation_id: "convo".to_owned(),
-            frontier: Frontier::new(sender_hint.to_owned(), "msg-id".to_owned()),
+            frontier: Frontier::new(sender_hint.clone(), "msg-id".to_owned()),
         }
     }
 
-    /// Unwrap the single `MessageMissing` a one-gap batch produces.
-    fn only_missing(events: Vec<Event>) -> (String, Option<MessageSender>) {
-        match <[Event; 1]>::try_from(events)
+    /// The gap is reported with the device the causal history names.
+    #[test]
+    fn missing_message_hint_names_the_device() {
+        let device = local_id(&key());
+
+        match <[Event; 1]>::try_from(missing_events(vec![gap(&device)]))
             .expect("one gap produces one event")
             .into_iter()
             .next()
@@ -684,49 +671,23 @@ mod sender_check_tests {
                 sender_hint,
             } => {
                 assert_eq!(&*convo_id, "convo");
-                (message_id, sender_hint)
+                assert_eq!(message_id, "msg-id");
+                assert_eq!(sender_hint, device);
             }
             other => panic!("expected MessageMissing, got {other:?}"),
         }
-    }
-
-    /// An account claim the directory contradicts drops a *delivered* message,
-    /// but a gap is still worth reporting: the hint keeps the device and
-    /// forgoes the account: the causal history names a signer, and a signer
-    /// alone does not say which account it acts for.
-    #[test]
-    fn missing_message_hint_names_the_device_without_an_account() {
-        let device = key();
-
-        let (_, sender) = only_missing(missing_events(vec![gap(&hex::encode(device.as_ref()))]));
-        assert_eq!(
-            sender,
-            Some(MessageSender {
-                account: None,
-                local_identity: local_id(&device),
-            })
-        );
-    }
-
-    /// A hint that is not a signer at all still reports the gap — the message
-    /// id is the part the application needs.
-    #[test]
-    fn missing_message_without_a_resolvable_hint_is_still_reported() {
-        let (message_id, sender) = only_missing(missing_events(vec![gap("saro")]));
-        assert_eq!(message_id, "msg-id");
-        assert_eq!(sender, None);
     }
 
     /// One acknowledgement per peer per message, each naming the peer an
     /// application would list against the message.
     #[test]
     fn acks_name_the_peers_that_hold_the_message() {
-        let device = key();
+        let device = local_id(&key());
 
         let events = delivery_ack_events(vec![DeliveryAck {
             conversation_id: "convo".to_owned(),
             message_id: "msg-id".to_owned(),
-            acked_by: hex::encode(device.as_ref()),
+            acked_by: device.clone(),
         }]);
 
         match <[Event; 1]>::try_from(events)
@@ -742,13 +703,7 @@ mod sender_check_tests {
             } => {
                 assert_eq!(&*convo_id, "convo");
                 assert_eq!(message_id, "msg-id");
-                assert_eq!(
-                    acked_by,
-                    Some(MessageSender {
-                        account: None,
-                        local_identity: local_id(&device),
-                    })
-                );
+                assert_eq!(acked_by, device);
             }
             other => panic!("expected MessageAcked, got {other:?}"),
         }
