@@ -141,10 +141,10 @@ fn missing_group_message_is_detected() {
         !missing[0].frontier.message_id().is_empty(),
         "the missing message must be identified"
     );
-    // The hint names the sender by its signer, recorded as text.
+    // The hint names the sender by its signer.
     assert_eq!(
-        missing[0].frontier.sender_id(),
-        saro.signer().to_string(),
+        missing[0].frontier.sender(),
+        saro.signer(),
         "missing-message sender hint should attribute to Saro"
     );
 

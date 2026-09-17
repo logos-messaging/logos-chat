@@ -36,29 +36,26 @@ use crate::utils::{blake2b_hex, hash_size};
 /// Frontier includes the message's metadata which can be referened by other
 /// messages inside a conversation.
 ///
-/// Carries the sender's `account_id` alongside a deterministic
+/// Carries the sender's signer alongside a deterministic
 /// content/Lamport hash, so receivers can attribute referenced-but-unseen
 /// IDs to a peer without consulting local state. The sender component is a
 /// **routing hint, not authoritative**: when a missing message is recovered,
 /// authorship is verified against the MLS leaf credential.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Frontier {
-    sender_id: String,
+    sender: SignerKey,
     message_id: String,
 }
 
 impl Frontier {
     /// Construct a fresh `Frontier` for an outbound message.
-    pub fn new(sender_id: String, message_id: String) -> Self {
-        Self {
-            sender_id,
-            message_id,
-        }
+    pub fn new(sender: SignerKey, message_id: String) -> Self {
+        Self { sender, message_id }
     }
 
-    /// Sender's `account_id`, verbatim. Treat as a routing hint only.
-    pub fn sender_id(&self) -> &str {
-        &self.sender_id
+    /// The sender the message claims. Treat as a routing hint only.
+    pub fn sender(&self) -> &SignerKey {
+        &self.sender
     }
 
     /// Deterministic hash of `(channel, sender, lamport, content)`.
@@ -90,10 +87,10 @@ pub struct DeliveryAck {
     pub conversation_id: String,
     /// The message of ours the peer acknowledged.
     pub message_id: String,
-    /// The acknowledging peer's `sender_id`, verbatim off the wire —
-    /// self-asserted like [`Frontier::sender_id`], not bound to the MLS
+    /// The acknowledging peer, as its payload claims —
+    /// self-asserted like [`Frontier::sender`], not bound to the MLS
     /// identity that sent the payload.
-    pub acked_by: String,
+    pub acked_by: SignerKey,
 }
 
 /// Per-conversation causal state.
@@ -112,7 +109,7 @@ struct ConvoState {
     own: HashSet<String>,
     /// Which peers have acknowledged each of our messages, so each is
     /// surfaced exactly once.
-    acked_by: HashMap<String, HashSet<String>>,
+    acked_by: HashMap<String, HashSet<SignerKey>>,
 }
 
 impl ConvoState {
@@ -167,14 +164,14 @@ impl CausalHistoryStore {
         state.lamport_clock += 1;
         let lamport = state.lamport_clock;
         let message_id = derive_message_id(conversation_id, &sender.to_string(), lamport, content);
-        let frontier = Frontier::new(sender.to_string(), message_id.clone());
+        let frontier = Frontier::new(sender.clone(), message_id.clone());
 
         let causal_history = state
             .frontiers
             .iter()
             .map(|f| HistoryEntry {
                 message_id: f.message_id.clone(),
-                sender_id: f.sender_id.clone(),
+                sender_id: f.sender.to_string(),
                 retrieval_hint: Bytes::new(),
             })
             .collect();
@@ -199,11 +196,18 @@ impl CausalHistoryStore {
     /// Process an inbound reliability envelope. Records the message as seen,
     /// merges the Lamport clock, and returns any referenced message IDs that
     /// were never delivered locally (newly detected gaps).
+    ///
+    /// Sender ids that are not a hex signer are ignored: a whole payload for
+    /// its own id, a single entry for an entry's.
     pub fn on_receive(
         &self,
         conversation_id: &str,
         payload: &ReliablePayload,
     ) -> Vec<MissingMessage> {
+        let Ok(payload_sender) = SignerKey::try_from(payload.sender_id.as_str()) else {
+            tracing::warn!(convo = %conversation_id, "ignoring causal history with a malformed sender id");
+            return Vec::new();
+        };
         let mut inner = self.inner.borrow_mut();
         let Inner {
             convos,
@@ -218,24 +222,29 @@ impl CausalHistoryStore {
 
         let mut detected = Vec::new();
         for entry in &payload.causal_history {
+            let Ok(entry_sender) = SignerKey::try_from(entry.sender_id.as_str()) else {
+                tracing::warn!(convo = %conversation_id, "ignoring a causal history entry with a malformed sender id");
+                continue;
+            };
+
             // The sender named one of ours, so it has it. Reported once per
             // peer per message, and never for the message's own author.
             if state.own.contains(&entry.message_id)
-                && payload.sender_id != entry.sender_id
+                && payload_sender != entry_sender
                 && state
                     .acked_by
                     .entry(entry.message_id.clone())
                     .or_default()
-                    .insert(payload.sender_id.clone())
+                    .insert(payload_sender.clone())
             {
                 acks.push(DeliveryAck {
                     conversation_id: conversation_id.to_owned(),
                     message_id: entry.message_id.clone(),
-                    acked_by: payload.sender_id.clone(),
+                    acked_by: payload_sender.clone(),
                 });
             }
 
-            let frontier = Frontier::new(entry.sender_id.clone(), entry.message_id.clone());
+            let frontier = Frontier::new(entry_sender, entry.message_id.clone());
             if !state.seen.contains(&frontier) && state.reported_missing.insert(frontier.clone()) {
                 let m = MissingMessage {
                     conversation_id: conversation_id.to_owned(),
@@ -246,10 +255,7 @@ impl CausalHistoryStore {
             }
         }
 
-        state.record_seen(Frontier::new(
-            payload.sender_id.clone(),
-            payload.message_id.clone(),
-        ));
+        state.record_seen(Frontier::new(payload_sender, payload.message_id.clone()));
 
         detected
     }
@@ -335,7 +341,7 @@ mod tests {
 
         assert_eq!(missing.len(), 1);
         assert_eq!(missing[0].frontier.message_id(), m2.message_id);
-        assert_eq!(missing[0].frontier.sender_id(), m2.sender_id);
+        assert_eq!(missing[0].frontier.sender().to_string(), m2.sender_id);
         assert_eq!(missing[0].conversation_id, "c");
     }
 
@@ -365,7 +371,7 @@ mod tests {
         let missing = receiver.on_receive("c", &m3);
 
         assert_eq!(missing.len(), 1);
-        assert_eq!(missing[0].frontier.sender_id(), alice.to_string());
+        assert_eq!(missing[0].frontier.sender(), &alice);
     }
 
     /// Bob replies after receiving Alice's message, so his causal history
@@ -386,7 +392,7 @@ mod tests {
             vec![DeliveryAck {
                 conversation_id: "c".to_owned(),
                 message_id: a1.message_id.clone(),
-                acked_by: bob.to_string(),
+                acked_by: bob.clone(),
             }]
         );
         // Draining clears the report.
@@ -408,13 +414,13 @@ mod tests {
         alice_store.on_receive("c", &payload(&bob_store, "c", &bob, b"bob here"));
         alice_store.on_receive("c", &payload(&carol_store, "c", &carol, b"carol here"));
 
-        let holders: Vec<String> = alice_store
+        let holders: Vec<SignerKey> = alice_store
             .take_acks()
             .into_iter()
             .filter(|a| a.message_id == a1.message_id)
             .map(|a| a.acked_by)
             .collect();
-        assert_eq!(holders, vec![bob.to_string(), carol.to_string()]);
+        assert_eq!(holders, vec![bob, carol]);
     }
 
     /// Bob keeps naming the message in later sends; the application is told
@@ -451,6 +457,19 @@ mod tests {
         alice_store.on_receive("c", &payload(&carol_store, "c", &carol, b"carol replies"));
 
         assert!(alice_store.take_acks().is_empty());
+    }
+
+    /// A sender id that is not a hex signer carries no usable history.
+    #[test]
+    fn a_malformed_sender_id_is_ignored() {
+        let alice = new_signer();
+        let sender = CausalHistoryStore::new();
+        let _m1 = payload(&sender, "c", &alice, b"first (dropped)");
+        let mut m2 = payload(&sender, "c", &alice, b"second");
+        m2.sender_id = "saro".to_owned();
+
+        let receiver = CausalHistoryStore::new();
+        assert!(receiver.on_receive("c", &m2).is_empty());
     }
 
     #[test]

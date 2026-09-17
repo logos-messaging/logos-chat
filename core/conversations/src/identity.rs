@@ -47,6 +47,16 @@ impl TryFrom<&[u8]> for SignerKey {
     }
 }
 
+/// Parses the hex form `Display` writes. Temporary, for causal history's string ids.
+impl TryFrom<&str> for SignerKey {
+    type Error = SignerError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let bytes = hex::decode(value).map_err(|_| SignerError::NotHex)?;
+        Self::try_from(bytes.as_slice())
+    }
+}
+
 impl fmt::Display for SignerKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&hex::encode(self.as_bytes()))
@@ -65,6 +75,8 @@ impl fmt::Debug for SignerKey {
 pub enum SignerError {
     #[error("not an Ed25519 verifying key")]
     NotAKey,
+    #[error("not a hex-encoded signer")]
+    NotHex,
 }
 
 /// The participant an installation acts for. Opaque to the core; the client decides
