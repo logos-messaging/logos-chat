@@ -6,7 +6,7 @@ use components::{ThreadedWakeupService, WakeupEvent};
 use crossbeam_channel::{Receiver, Sender, select};
 use libchat::{
     AuthService, ConversationId, ConvoMetadata, ConvoOutcome, Core, DeliveryAck, DeliveryService,
-    ExternalIdentifier, GroupV2Config, InboxOutcome, MessageId, MissingMessage, PayloadOutcome,
+    GroupV2Config, InboxOutcome, MessageId, MissingMessage, ParticipantId, PayloadOutcome,
     RegistrationService,
 };
 use logos_account::AccountAddr;
@@ -422,8 +422,8 @@ fn missing_events(missing: Vec<MissingMessage>) -> Vec<Event> {
         .collect()
 }
 
-/// Each account address as the core's external id.
-fn account_ids(accounts: &[AccountAddressRef]) -> Result<Vec<ExternalIdentifier>, ClientError> {
+/// Each account address as the core's participant id.
+fn account_ids(accounts: &[AccountAddressRef]) -> Result<Vec<ParticipantId>, ClientError> {
     accounts
         .iter()
         .map(|account| parse_account(account).map(|addr| account_id(&addr)))

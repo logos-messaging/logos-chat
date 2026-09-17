@@ -85,7 +85,7 @@ fn rosters<const N: usize>(h: &mut TestHarness<N>, convo: &str) -> Vec<Option<Ve
             h.client_mut(i).group_members(convo).ok().map(|members| {
                 let mut members: Vec<Vec<u8>> = members
                     .iter()
-                    .map(|m| m.external_id().as_bytes().to_vec())
+                    .map(|m| m.participant_id().as_bytes().to_vec())
                     .collect();
                 members.sort();
                 members

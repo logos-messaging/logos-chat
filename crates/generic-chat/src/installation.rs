@@ -1,7 +1,5 @@
 use crypto::{Ed25519SigningKey, Ed25519VerifyingKey};
-use libchat::{
-    AuthResult, AuthService, ExternalIdentifier, IdentityProvider, Signer, SignerRef, trunc,
-};
+use libchat::{AuthResult, AuthService, IdentityProvider, ParticipantId, Signer, SignerRef, trunc};
 use logos_account::AccountAddr;
 
 use crate::errors::ClientError;
@@ -58,7 +56,7 @@ impl Installation {
 
     /// `Ok` only if `auth` confirms the account endorses this installation.
     pub(crate) fn validate(&self, auth: &impl AuthService) -> Result<(), ClientError> {
-        match auth.validate_external_identifier(self.signer.clone(), self.external_id()) {
+        match auth.validate_member(self.signer.clone(), self.participant_id()) {
             Ok(AuthResult::Valid) => Ok(()),
             Ok(verdict) => Err(ClientError::NotEndorsed(format!("{verdict:?}"))),
             Err(e) => Err(ClientError::NotEndorsed(format!(
@@ -73,7 +71,7 @@ impl IdentityProvider for Installation {
         &self.signer
     }
 
-    fn external_id(&self) -> ExternalIdentifier {
+    fn participant_id(&self) -> ParticipantId {
         account_id(&self.account)
     }
 
@@ -99,17 +97,17 @@ mod tests {
     impl AuthService for RejectAll {
         type Error = Infallible;
 
-        fn validate_external_identifier(
+        fn validate_member(
             &self,
             _signer: Signer,
-            _external_id: ExternalIdentifier,
+            _participant_id: ParticipantId,
         ) -> Result<AuthResult, Self::Error> {
             Ok(AuthResult::Invalid)
         }
 
-        fn signers_for_account(
+        fn signers_for_participant(
             &self,
-            _ident: &ExternalIdentifier,
+            _ident: &ParticipantId,
         ) -> Result<Vec<Signer>, Self::Error> {
             Ok(Vec::new())
         }
@@ -128,7 +126,7 @@ mod tests {
 
         let installation = pending.complete(account.clone());
         assert_eq!(installation.signer(), &signer);
-        assert_eq!(installation.external_id(), account_id(&account));
+        assert_eq!(installation.participant_id(), account_id(&account));
     }
 
     #[test]

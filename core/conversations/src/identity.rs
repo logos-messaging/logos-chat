@@ -1,11 +1,11 @@
 //! Who is who.
 //!
 //! ```text
-//! Signer                           an installation: the key it signs under
-//! ExternalIdentifier               a participant: the user an installation acts for
-//! Member { signer, external_id }   one installation of one participant, in a conversation
+//! Signer                              an installation: the key it signs under
+//! ParticipantId                       a participant: the user an installation acts for
+//! Member { signer, participant_id }   one installation of one participant, in a conversation
 //!   │  AuthService
-//!   └──► AuthenticatedMember       a member the service vouched for
+//!   └──► AuthenticatedMember          a member the service vouched for
 //! ```
 
 use std::fmt;
@@ -70,9 +70,9 @@ pub enum SignerError {
 /// The participant an installation acts for. Opaque to the core; the client decides
 /// what it encodes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ExternalIdentifier(Vec<u8>);
+pub struct ParticipantId(Vec<u8>);
 
-impl ExternalIdentifier {
+impl ParticipantId {
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_ref()
     }
@@ -82,13 +82,13 @@ impl ExternalIdentifier {
     }
 }
 
-impl From<&[u8]> for ExternalIdentifier {
+impl From<&[u8]> for ParticipantId {
     fn from(value: &[u8]) -> Self {
         Self(value.into())
     }
 }
 
-impl fmt::Display for ExternalIdentifier {
+impl fmt::Display for ParticipantId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&hex::encode(self.as_bytes()))
     }
@@ -99,20 +99,20 @@ impl fmt::Display for ExternalIdentifier {
 pub struct Member {
     /// Installation specific signing key
     pub signer: Signer,
-    /// The identifier for the external identity.
-    pub external_id: ExternalIdentifier,
+    /// The participant this signer acts for.
+    pub participant_id: ParticipantId,
 }
 
 impl Member {
     pub(crate) fn from_leaf(signature_key: &[u8], credential: &[u8]) -> Self {
         Self {
             signer: Signer::from(signature_key),
-            external_id: ExternalIdentifier::from(credential),
+            participant_id: ParticipantId::from(credential),
         }
     }
 
     pub(crate) fn auth_status<A: AuthService>(&self, auth: &A) -> AuthStatus {
-        match auth.validate_external_identifier(self.signer.clone(), self.external_id.clone()) {
+        match auth.validate_member(self.signer.clone(), self.participant_id.clone()) {
             Ok(result) => result.into(),
             Err(error) => {
                 tracing::warn!(signer = %self.signer, %error, "auth service could not decide");
@@ -166,7 +166,7 @@ impl AuthenticatedMember {
         &self.0.signer
     }
 
-    pub fn external_id(&self) -> &ExternalIdentifier {
-        &self.0.external_id
+    pub fn participant_id(&self) -> &ParticipantId {
+        &self.0.participant_id
     }
 }

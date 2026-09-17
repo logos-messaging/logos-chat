@@ -134,16 +134,16 @@ struct FetchedMember {
 /// Fails if anyone lacks one, before any member is admitted.
 fn fetch_key_packages<S: ExternalServices>(
     service_ctx: &ServiceContext<S>,
-    participants: &[Signer],
+    signers: &[Signer],
 ) -> Result<Vec<FetchedMember>, ChatError> {
     let mut seen = HashSet::new();
-    participants
+    signers
         .iter()
-        .filter(|m| seen.insert(m.as_bytes()))
-        .map(|member| {
+        .filter(|s| seen.insert(s.as_bytes()))
+        .map(|signer| {
             let key_package = service_ctx
                 .registry
-                .retrieve(&member.to_string())
+                .retrieve(&signer.to_string())
                 .map_err(ChatError::generic)?
                 .ok_or_else(|| ChatError::generic("No key package"))?;
             let validated = KeyPackageIn::tls_deserialize(&mut key_package.as_slice())?
@@ -155,9 +155,9 @@ fn fetch_key_packages<S: ExternalServices>(
             // so bind the leaf's signature_key to it; the credential is
             // self-asserted and can't be trusted for this.
             let signature_key = validated.leaf_node().signature_key().as_slice().to_vec();
-            if signature_key != member.as_bytes() {
+            if signature_key != signer.as_bytes() {
                 return Err(ChatError::generic(format!(
-                    "key package for {member} is bound to a different signing key ({})",
+                    "key package for {signer} is bound to a different signing key ({})",
                     hex::encode(&signature_key)
                 )));
             }

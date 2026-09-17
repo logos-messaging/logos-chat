@@ -47,7 +47,7 @@ pub enum ChatError {
     // Used when a core function is called with a convo_id which is unsupported
     #[error("convo:{0} does not support {1}")]
     UnsupportedFunction(ConversationId, String),
-    #[error("authentication failed: Signer({0}) is not valid for external_id({1})")]
+    #[error("authentication failed: Signer({0}) is not valid for participant_id({1})")]
     Auth(String, String),
     #[error("account resolution failed: {0}")]
     AccountResolution(String),

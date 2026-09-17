@@ -25,9 +25,7 @@ pub use core::{ConversationId, Core};
 pub use de_mls::ConversationConfig as GroupV2Config;
 pub use de_mls::MockClock;
 pub use errors::ChatError;
-pub use identity::{
-    AuthenticatedMember, ExternalIdentifier, Member, Signer, SignerError, SignerRef,
-};
+pub use identity::{AuthenticatedMember, Member, ParticipantId, Signer, SignerError, SignerRef};
 pub use outcomes::{
     Content, ConversationClass, ConvoOutcome, InboxOutcome, NewConversation, PayloadOutcome,
 };

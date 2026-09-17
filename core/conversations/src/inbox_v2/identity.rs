@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-use crate::identity::{ExternalIdentifier, SignerRef};
+use crate::identity::{ParticipantId, SignerRef};
 use openmls::credentials::{BasicCredential, CredentialWithKey};
 use openmls_traits::{
     signatures::{Signer, SignerError},
@@ -23,7 +23,7 @@ impl<T: IdentityProvider> MlsIdentityProvider<T> {
 
     pub fn get_credential(&self) -> CredentialWithKey {
         CredentialWithKey {
-            credential: BasicCredential::new(self.external_id().to_bytes()).into(),
+            credential: BasicCredential::new(self.participant_id().to_bytes()).into(),
             signature_key: self.signer().as_bytes().into(),
         }
     }
@@ -42,8 +42,8 @@ impl<T: IdentityProvider> IdentityProvider for MlsIdentityProvider<T> {
         self.0.signer()
     }
 
-    fn external_id(&self) -> ExternalIdentifier {
-        self.0.external_id()
+    fn participant_id(&self) -> ParticipantId {
+        self.0.participant_id()
     }
 
     fn display_name(&self) -> String {

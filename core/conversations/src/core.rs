@@ -2,7 +2,7 @@ use crate::causal_history::{CausalHistoryStore, DeliveryAck, MissingMessage};
 use crate::conversation::{
     ConversationIdRef, DirectV1Convo, GroupV1Convo, GroupV2Convo, Identified, MessageId,
 };
-use crate::identity::{AuthenticatedMember, ExternalIdentifier, Member, Signer, SignerRef};
+use crate::identity::{AuthenticatedMember, Member, ParticipantId, Signer, SignerRef};
 use crate::service_context::{ExternalServices, ServiceContext};
 use crate::service_traits::AuthService;
 use crate::types::ConvoMetadata;
@@ -162,14 +162,14 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     pub fn create_direct_convo(
         &mut self,
-        participants: ExternalIdentifier,
+        participants: ParticipantId,
     ) -> Result<ConversationId, ChatError> {
         self.create_direct_convo_v1(participants)
     }
 
     pub fn create_direct_convo_v1(
         &mut self,
-        participant: ExternalIdentifier,
+        participant: ParticipantId,
     ) -> Result<ConversationId, ChatError> {
         let members = self.get_signers_for_participants(&[participant])?;
 
@@ -182,14 +182,14 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     pub fn create_group_convo(
         &mut self,
-        participants: &[ExternalIdentifier],
+        participants: &[ParticipantId],
     ) -> Result<ConversationId, ChatError> {
         self.create_group_convo_v2(participants, "", "")
     }
 
     pub fn create_group_convo_v1(
         &mut self,
-        participants: &[ExternalIdentifier],
+        participants: &[ParticipantId],
     ) -> Result<ConversationId, ChatError> {
         // TODO: (P1) Ensure errors are handled properly. This is a high chance for
         // desynchronized state: MlsGroup persistence, conversation persistence, and
@@ -212,7 +212,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     pub fn create_group_convo_v2(
         &mut self,
-        participants: &[ExternalIdentifier],
+        participants: &[ParticipantId],
         name: &str,
         desc: &str,
     ) -> Result<ConversationId, ChatError> {
@@ -233,7 +233,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
     pub fn group_add_participants(
         &mut self,
         convo_id: &str,
-        participants: &[ExternalIdentifier],
+        participants: &[ParticipantId],
     ) -> Result<(), ChatError> {
         let signers = self.get_signers_for_participants(participants)?;
         self.group_add_member(convo_id, &signers)
@@ -521,11 +521,11 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     fn get_signers_for_participants(
         &self,
-        participants: &[ExternalIdentifier],
+        participants: &[ParticipantId],
     ) -> Result<Vec<Signer>, ChatError> {
         let signers = participants
             .iter()
-            .map(|eid| self.services.auth.signers_for_account(eid))
+            .map(|eid| self.services.auth.signers_for_participant(eid))
             .collect::<Result<Vec<Vec<Signer>>, _>>()
             .map_err(|e| ChatError::AccountResolution(e.to_string()))?
             .into_iter()

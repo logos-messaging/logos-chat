@@ -1,7 +1,7 @@
 use crate::test_ident::{AcceptAllAuth, TestIdent};
 use libchat::{ConversationId, Core, IdentityProvider, PayloadOutcome};
-use libchat::{ExternalIdentifier, Signer};
 use libchat::{GroupV2Clock, GroupV2Config};
+use libchat::{ParticipantId, Signer};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
@@ -40,14 +40,14 @@ pub struct ReceivedMessage<T> {
 
 pub struct TestClient {
     inner: ClientType,
-    account: ExternalIdentifier,
+    account: ParticipantId,
     received_messages: Vec<ReceivedMessage<Vec<u8>>>,
     inbound_errors: Vec<String>,
     tolerate_inbound_errors: bool,
 }
 
 impl TestClient {
-    fn init(client: ClientType, account: ExternalIdentifier) -> Self {
+    fn init(client: ClientType, account: ParticipantId) -> Self {
         Self {
             inner: client,
             account,
@@ -62,7 +62,7 @@ impl TestClient {
     }
 
     /// The account group creation resolves to this client's signer.
-    pub fn account(&self) -> ExternalIdentifier {
+    pub fn account(&self) -> ParticipantId {
         self.account.clone()
     }
 
@@ -190,7 +190,7 @@ impl<const N: usize> TestHarness<N> {
 
             addresses.insert(i, ident.signer().clone());
             auth.register(&ident);
-            let account = ident.external_id();
+            let account = ident.participant_id();
             let mut core_client = ClientType::new_with_name(
                 ident,
                 auth.clone(),

@@ -8,13 +8,13 @@ use std::{
 
 use crypto::Ed25519Signature;
 
-use crate::identity::{ExternalIdentifier, Signer, SignerRef};
+use crate::identity::{ParticipantId, Signer, SignerRef};
 use crate::{ConversationId, types::AddressedEnvelope};
 
 /// What chat needs from whatever holds this installation's own identity.
 pub trait IdentityProvider {
     fn signer(&self) -> SignerRef<'_>;
-    fn external_id(&self) -> ExternalIdentifier;
+    fn participant_id(&self) -> ParticipantId;
 
     // Display name is not garenteed to be consistent. It should only be used to
     // provded a more readable identifier for the account.
@@ -80,11 +80,11 @@ pub enum AuthResult {
 /// Checks other participants' identities.
 pub trait AuthService: Debug {
     type Error: Display + Debug;
-    fn validate_external_identifier(
+    fn validate_member(
         &self,
         signer: Signer,
-        external_id: ExternalIdentifier,
+        participant_id: ParticipantId,
     ) -> Result<AuthResult, Self::Error>;
 
-    fn signers_for_account(&self, ident: &ExternalIdentifier) -> Result<Vec<Signer>, Self::Error>;
+    fn signers_for_participant(&self, ident: &ParticipantId) -> Result<Vec<Signer>, Self::Error>;
 }

@@ -99,7 +99,7 @@ fn missing_group_message_is_detected() {
     .unwrap();
 
     let raya_ident = TestIdent::new("raya");
-    let raya_account = raya_ident.external_id();
+    let raya_account = raya_ident.participant_id();
     auth.register(&raya_ident);
     let raya_ctx = Core::new_with_name(
         raya_ident,

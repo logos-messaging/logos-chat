@@ -1,4 +1,4 @@
-use libchat::{ExternalIdentifier, Signer};
+use libchat::{ParticipantId, Signer};
 use logos_account::AccountAddr;
 
 use crate::errors::ClientError;
@@ -15,7 +15,7 @@ impl TryFrom<libchat::Member> for Member {
 
     fn try_from(value: libchat::Member) -> Result<Self, Self::Error> {
         Ok(Member {
-            account: account_of(&value.external_id)?,
+            account: account_of(&value.participant_id)?,
             signer: value.signer,
         })
     }
@@ -41,7 +41,7 @@ impl TryFrom<libchat::AuthenticatedMember> for AuthenticatedMember {
     fn try_from(value: libchat::AuthenticatedMember) -> Result<Self, Self::Error> {
         Ok(AuthenticatedMember(Member {
             signer: value.signer().clone(),
-            account: account_of(value.external_id())?,
+            account: account_of(value.participant_id())?,
         }))
     }
 }
@@ -52,14 +52,14 @@ impl From<AuthenticatedMember> for Member {
     }
 }
 
-/// An account address as the core's external id.
-pub(crate) fn account_id(account: &AccountAddr) -> ExternalIdentifier {
-    ExternalIdentifier::from(account.to_bytes())
+/// An account address as the core's participant id.
+pub(crate) fn account_id(account: &AccountAddr) -> ParticipantId {
+    ParticipantId::from(account.to_bytes())
 }
 
-/// The account an external id names.
-fn account_of(external_id: &ExternalIdentifier) -> Result<AccountAddr, ClientError> {
-    AccountAddr::try_from(external_id.as_bytes()).map_err(|_| ClientError::InvalidExternalId)
+/// The account a participant id names.
+fn account_of(participant_id: &ParticipantId) -> Result<AccountAddr, ClientError> {
+    AccountAddr::try_from(participant_id.as_bytes()).map_err(|_| ClientError::InvalidAccount)
 }
 
 #[cfg(test)]
@@ -73,13 +73,13 @@ mod tests {
     }
 
     #[test]
-    fn an_external_id_yields_its_account() {
+    fn a_participant_id_yields_its_account() {
         let signer = signer();
         let account = AccountAddr::try_from(Ed25519SigningKey::generate().verifying_key().as_ref())
             .expect("a generated key is an address");
         let member = libchat::Member {
             signer: signer.clone(),
-            external_id: account_id(&account),
+            participant_id: account_id(&account),
         };
 
         let decoded = Member::try_from(member).expect("decodes");
@@ -88,10 +88,10 @@ mod tests {
     }
 
     #[test]
-    fn an_external_id_that_is_not_an_account_is_rejected() {
+    fn a_participant_id_that_is_not_an_account_is_rejected() {
         let member = libchat::Member {
             signer: signer(),
-            external_id: ExternalIdentifier::from(b"saro".as_slice()),
+            participant_id: ParticipantId::from(b"saro".as_slice()),
         };
 
         assert!(Member::try_from(member).is_err());

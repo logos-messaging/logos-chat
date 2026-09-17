@@ -10,17 +10,17 @@ pub struct PanicAuth;
 impl libchat::AuthService for PanicAuth {
     type Error = std::convert::Infallible;
 
-    fn validate_external_identifier(
+    fn validate_member(
         &self,
         _signer: Signer,
-        _external_id: libchat::ExternalIdentifier,
+        _participant_id: libchat::ParticipantId,
     ) -> Result<libchat::AuthResult, Self::Error> {
         panic!("DANGER")
     }
 
-    fn signers_for_account(
+    fn signers_for_participant(
         &self,
-        _ident: &libchat::ExternalIdentifier,
+        _ident: &libchat::ParticipantId,
     ) -> Result<Vec<Signer>, Self::Error> {
         panic!("DANGER")
     }

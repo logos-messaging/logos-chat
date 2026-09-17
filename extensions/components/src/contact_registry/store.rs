@@ -386,8 +386,8 @@ mod tests {
         fn signer(&self) -> SignerRef<'_> {
             &self.signer
         }
-        fn external_id(&self) -> libchat::ExternalIdentifier {
-            libchat::ExternalIdentifier::from(b"test".as_slice())
+        fn participant_id(&self) -> libchat::ParticipantId {
+            libchat::ParticipantId::from(b"test".as_slice())
         }
         fn display_name(&self) -> String {
             self.signer.to_string()

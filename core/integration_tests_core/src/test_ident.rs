@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use crypto::Ed25519SigningKey;
 use libchat::IdentityProvider;
-use libchat::{ExternalIdentifier, Signer, SignerRef};
+use libchat::{ParticipantId, Signer, SignerRef};
 
 /// Test identity with a human-readable name ("saro"). Stands in for a device
 /// signer so core tests can address peers by name.
@@ -34,7 +34,7 @@ impl IdentityProvider for TestIdent {
         &self.signer
     }
 
-    fn external_id(&self) -> ExternalIdentifier {
+    fn participant_id(&self) -> ParticipantId {
         self.name.as_bytes().into()
     }
 
@@ -55,16 +55,16 @@ impl IdentityProvider for TestIdent {
 /// a real [`AuthService`](libchat::AuthService). Clones share one registry.
 #[derive(Debug, Clone, Default)]
 pub struct AcceptAllAuth {
-    signers: Arc<Mutex<HashMap<ExternalIdentifier, Vec<Signer>>>>,
+    signers: Arc<Mutex<HashMap<ParticipantId, Vec<Signer>>>>,
 }
 
 impl AcceptAllAuth {
-    /// Makes `ident`'s signer resolvable from its external id.
+    /// Makes `ident`'s signer resolvable from its participant id.
     pub fn register(&self, ident: &impl IdentityProvider) {
         self.signers
             .lock()
             .unwrap()
-            .entry(ident.external_id())
+            .entry(ident.participant_id())
             .or_default()
             .push(ident.signer().clone());
     }
@@ -73,15 +73,15 @@ impl AcceptAllAuth {
 impl libchat::AuthService for AcceptAllAuth {
     type Error = String;
 
-    fn validate_external_identifier(
+    fn validate_member(
         &self,
         _signer: Signer,
-        _external_id: libchat::ExternalIdentifier,
+        _participant_id: libchat::ParticipantId,
     ) -> Result<libchat::AuthResult, Self::Error> {
         Ok(libchat::AuthResult::Valid)
     }
 
-    fn signers_for_account(&self, ident: &ExternalIdentifier) -> Result<Vec<Signer>, Self::Error> {
+    fn signers_for_participant(&self, ident: &ParticipantId) -> Result<Vec<Signer>, Self::Error> {
         self.signers
             .lock()
             .unwrap()
