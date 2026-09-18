@@ -344,7 +344,7 @@ fn pending_clears_once_the_add_commits() {
 }
 
 /// A batch add is validated before any member is proposed: a member whose
-/// account is endorsed in the directory but whose device registered no key
+/// account resolves to an installation that registered no key
 /// package fails the whole call, the resolvable member in the same batch is
 /// not invited, and the group keeps working.
 #[test]
@@ -496,7 +496,7 @@ fn a_sent_message_is_acknowledged_by_the_peers_that_reply() {
         .expect("raya reply");
     pax.send_message(&convo_id, b"pax here").expect("pax reply");
 
-    // An acknowledgement names the replying *device*: it is carried by the
+    // An acknowledgement names the replying *installation*: it is carried by the
     // causal history, which records a sender by its signer, so there is no
     // account claim to verify against the directory.
     let mut holders = Vec::new();

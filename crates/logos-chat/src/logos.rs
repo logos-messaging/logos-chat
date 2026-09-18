@@ -133,7 +133,7 @@ pub fn open_with_transport<T: Transport + Clone>(
     ClientError,
 > {
     // A fresh account and installation each open: the account key is dropped,
-    // so devices cannot be added later. A caller-supplied, custody-holding account replaces
+    // so installations cannot be added later. A caller-supplied, custody-holding account replaces
     // this once the platform provides one.
     let registry = ContactRegistry::new(
         transport.clone(),
@@ -158,9 +158,9 @@ pub fn open_with_transport<T: Transport + Clone>(
 
 /// The Logos client: a [`ChatClient`] wired to the Logos service stack —
 /// an [`Installation`](logos_generic_chat::Installation) of a fresh dev account, the keypackage +
-/// account registry ([`ContactRegistry`], which is both the keypackage store
-/// and the account → device directory; it queries over HTTP and submits over
-/// HTTP or the delivery network per [`LogosConfig::set_registry_publish_mode`]),
+/// account registry ([`ContactRegistry`], the keypackage store; it queries
+/// over HTTP and submits over HTTP or the delivery network per
+/// [`LogosConfig::set_registry_publish_mode`]),
 /// and encrypted [`ChatStorage`] — running an embedded logos-delivery node as
 /// its transport. Open one with [`open`], or swap the transport via
 /// [`open_with_transport`].

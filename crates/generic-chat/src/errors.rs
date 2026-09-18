@@ -12,6 +12,4 @@ pub enum ClientError {
     InvalidAccountAddress(String),
     #[error("installation is not endorsed by its account: {0}")]
     NotEndorsed(String),
-    #[error("device bundle publish failed: {0}")]
-    BundlePublish(String),
 }

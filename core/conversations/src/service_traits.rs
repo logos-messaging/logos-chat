@@ -16,8 +16,8 @@ pub trait IdentityProvider {
     fn signer(&self) -> SignerRef<'_>;
     fn participant_id(&self) -> ParticipantId;
 
-    // Display name is not garenteed to be consistent. It should only be used to
-    // provded a more readable identifier for the account.
+    // A display name is not guaranteed to be consistent. Use it only to give
+    // the account a more readable identifier.
     fn display_name(&self) -> String;
     fn sign(&self, payload: &[u8]) -> Ed25519Signature;
 }
@@ -35,7 +35,7 @@ pub trait DeliveryService: Debug {
 /// Manages key bundle storage for MLS group creation/addition while contacts are
 /// offline.
 ///
-/// Implement this to provide a contact registry — ach participant publishes their key package
+/// Implement this to provide a contact registry — each participant publishes their key package
 /// on registration; others fetch it to initiate a conversation.
 ///
 /// `register` receives an [`IdentityProvider`] (not just a name) so

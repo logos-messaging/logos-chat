@@ -34,9 +34,9 @@ pub enum RegistryPublishMode {
     Delivery,
 }
 
-/// The keypackage store and account → device directory.
+/// The keypackage store.
 ///
-/// Reads (keypackage retrieve, account fetch) always go over the store's HTTP
+/// Reads (keypackage retrieve) always go over the store's HTTP
 /// query API. Writes (register, publish) go over whichever wire
 /// [`RegistryPublishMode`] selects: the store's HTTP POST endpoints (a JSON
 /// body with hex + base64 fields) or a protobuf submission

@@ -410,7 +410,7 @@ where
         // Fetch every signer's key package + joiner credential up front (deduped),
         // failing before any proposal opens if one has no key package.
         let members_to_add = fetch_key_packages(service_ctx, members)?;
-        // Skip devices already seated. The signature key names one device.
+        // Skip installations already seated. The signature key names one.
         let existing: HashSet<Vec<u8>> = self
             .conversation
             .members_view()
