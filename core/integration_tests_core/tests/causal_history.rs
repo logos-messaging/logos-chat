@@ -7,7 +7,7 @@
 use std::ops::{Deref, DerefMut};
 
 use components::{EphemeralRegistry, LocalBroadcaster, MemStore};
-use integration_tests_core::TestIdent;
+use integration_tests_core::{AcceptAllAuth, TestIdent};
 use libchat::{Core, MissingMessage, WakeupService};
 
 #[derive(Debug)]
@@ -19,6 +19,7 @@ impl WakeupService for NoopWakeupService {
 struct Client {
     inner: Core<(
         TestIdent,
+        AcceptAllAuth,
         LocalBroadcaster,
         EphemeralRegistry,
         NoopWakeupService,
@@ -30,6 +31,7 @@ impl Client {
     fn init(
         core: Core<(
             TestIdent,
+            AcceptAllAuth,
             LocalBroadcaster,
             EphemeralRegistry,
             NoopWakeupService,
@@ -61,6 +63,7 @@ impl Client {
 impl Deref for Client {
     type Target = Core<(
         TestIdent,
+        AcceptAllAuth,
         LocalBroadcaster,
         EphemeralRegistry,
         NoopWakeupService,
@@ -85,6 +88,7 @@ fn missing_group_message_is_detected() {
     let saro_ident = TestIdent::new("saro");
     let saro_ctx = Core::new_with_name(
         saro_ident,
+        AcceptAllAuth,
         ds.new_consumer(),
         rs.clone(),
         NoopWakeupService {},
@@ -95,6 +99,7 @@ fn missing_group_message_is_detected() {
     let raya_ident = TestIdent::new("raya");
     let raya_ctx = Core::new_with_name(
         raya_ident,
+        AcceptAllAuth,
         ds.clone(),
         rs.clone(),
         NoopWakeupService {},
