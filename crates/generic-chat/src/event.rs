@@ -47,26 +47,24 @@ pub enum Event {
     /// peer that never sends never acknowledges, and an application should
     /// treat the absence of one as "not confirmed" rather than "not delivered".
     ///
-    /// `acked_by` is resolved from the peer's self-asserted `sender_id` and is
-    /// **not authenticated**; see [`Self::MessageMissing`]'s `sender_hint`.
-    /// `None` when it could not be resolved to a device.
+    /// `acked_by` is the peer's self-asserted signer and is **not
+    /// authenticated**; see [`Self::MessageMissing`]'s `sender_hint`.
     MessageAcked {
         convo_id: Arc<str>,
         message_id: String,
-        acked_by: Option<MessageSender>,
+        acked_by: Signer,
     },
     /// A message this client never received, revealed by the causal history of
     /// one that did arrive. Detection only — nothing is fetched or replayed,
     /// and the gap is reported once.
     ///
-    /// `sender_hint` is the author the *referencing* peer named, resolved the
-    /// same way as [`Self::MessageReceived`]'s sender but **not authenticated**:
-    /// nothing about a message we never saw can be verified, so treat it as a
-    /// display hint. `None` when the hint could not be resolved to a device.
+    /// `sender_hint` is the installation the *referencing* peer named. It is
+    /// **not authenticated**: nothing about a message we never saw can be
+    /// verified, so treat it as a display hint.
     MessageMissing {
         convo_id: Arc<str>,
         message_id: String,
-        sender_hint: Option<MessageSender>,
+        sender_hint: Signer,
     },
     /// A commit changed a conversation's membership.
     ConversationMembersChanged {
