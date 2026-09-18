@@ -1,0 +1,99 @@
+# Identity Model
+
+| Field | Value |
+|---|---|
+| Status | Proposed |
+| Date | 2026-09-17 |
+
+## Context and Problem
+
+Identity passes through several layers, each with its own idea of who someone is:
+
+- **Account system:** accounts, and the installation keys they endorse.
+- **Client:** what an account actually is, and which installation this app runs as.
+- **Core:** who sent a message and who is in a conversation, without depending on any one account system.
+- **MLS:** group leaves, each a signature key plus a credential that MLS carries but never checks.
+
+With no shared model across these layers, each named and typed identity its own way. It was unclear which layer owned a concept, which identifiers had been checked, and what a given name referred to.
+
+Every conversation has to answer two questions: who sent this, and who is in here. Until now one opaque credential answered both. The client decoded it in several places with different trust rules, a roster mixed installations with accounts and deduplicated them by account (so an unauthenticated entry could hide a real one), and the identity types sat in a `shared-traits` crate that only chat used.
+
+This record fixes the vocabulary and where each identity concept lives.
+
+## Decision Drivers
+
+- **Clarity through types.** Each identity concept is its own type, so the compiler keeps a signer key, a participant, a `PendingSigner` and a signer apart, and anything the core hands out as authenticated can only come from an auth check.
+- **Standardize naming.** The same concepts went by several names (delegate, device, local identity, external id), used inconsistently. Each concept now has one name, used the same way in the core, the client and the docs.
+- **The core stays generic.** It never learns what an account is; a client decides.
+- **No one-app-per-machine assumption.** A person may run several installations on one machine.
+
+## Architecture
+
+| Term | Type | Meaning |
+|---|---|---|
+| Installation | `Installation` (client) | This app's own signing key, paired with the account that endorsed it. |
+| Signer key | `SignerKey` | An installation's public key; it identifies exactly one installation and verifies its signatures. |
+| Participant | `ParticipantId` | The user an installation acts for. Opaque bytes to the core. |
+| Signer | `Signer { key, participant_id, auth_state }` | A SignerKey and an associated Participant, committed to a group, with its current `AuthState`. |
+| Auth state | `AuthState` | The `AuthService`'s verdict, checked when read: `Authenticated`, `Revoked`, `Invalid` or `Unknown`. |
+| PendingSigner | `PendingSigner { key, participant_id }` | A SignerKey and an associated Participant, as they will appear in a conversation. |
+
+
+## Decisions
+1. **Use the newtype pattern to enforce expectations.** Where code requires an authenticated signer, such as a message's sender, it takes a newtype over `Signer` that can only be built from one whose `AuthState` is `Authenticated`. The compiler then enforces the requirement, instead of every caller checking the state. Same applies to membership and other issues.
+
+2. **The core says participant; the client says account.** `ParticipantId` is opaque to the core. `logos-generic-chat` makes it an `AccountAddr`, encoded as the account key's bytes, and `crates/generic-chat/src/signers.rs` (`account_id` / `account_of`) is the only code that knows that encoding. The account crates are the layer shared with the rest of Logos; the traits below are chat's own, so they live in libchat (`shared-traits` was folded into `core/conversations/src/identity.rs` and `service_traits.rs`).
+
+3. **`IdentityProvider` is our identity; `AuthService` is everyone else's.** Both are services the platform supplies.
+
+    ```rust
+    /// What chat needs from whatever holds this installation's own identity.
+    pub trait IdentityProvider {
+        fn signer_key(&self) -> &SignerKey;
+        fn participant_id(&self) -> ParticipantId;
+        fn display_name(&self) -> String;
+        fn sign(&self, payload: &[u8]) -> Ed25519Signature;
+    }
+
+    /// Checks other participants' identities.
+    pub trait AuthService: Debug {
+        type Error: Display + Debug;
+        fn authenticate(&self, key: SignerKey, participant_id: ParticipantId)
+            -> Result<AuthState, Self::Error>;
+        fn signer_keys_for_participant(&self, id: &ParticipantId)
+            -> Result<Vec<SignerKey>, Self::Error>;
+    }
+    ```
+
+    `authenticate` is not named for signers: it also checks this installation at start and invitees' key packages.
+
+4. **Only the core sets a signer's `AuthState`.** `Signer`'s fields are private; the core fills `auth_state` from `authenticate` each time it reads a signer, and a service error becomes `Unknown`. States are checked when read and never stored, so a revocation shows on the next read. Delivered content's sender is always `Authenticated`; a sender in any other state is logged and its content dropped.
+
+    ```rust
+    pub struct Signer { key: SignerKey, participant_id: ParticipantId, auth_state: AuthState }
+    ```
+
+5. **Signers and invites never mix.** The core returns every committed signer with its `AuthState` (`group_signers`) and uncommitted invites as `PendingSigner`s (`group_pending_signers`). An application can show a signer that is not `Authenticated`, but only `Authenticated` signers count as participants: the client derives participants as the set of accounts behind them, so no deduplication rule is needed.
+
+6. **Participants are resolved in the core, through the `AuthService`.** Creating a conversation and adding to a group take participant ids; every one is resolved to its signer keys before anything is created, and one that does not resolve fails the call with `ChatError::ParticipantResolution`. Lower-level calls take `&[SignerKey]`.
+
+7. **An installation is validated every time a client starts.** An `Installation` is the value a client is built from. `build()` asks the client's own `AuthService` and fails with `NotEndorsed` on anything but `Authenticated`. The check repeats on every start because an endorsement can be revoked after it was stored.
+
+    ```rust
+    let installation = Installation::new(..)
+    let (client, events) = ChatClientBuilder::new(installation)
+        .transport(transport)
+        .auth(auth) // build() validates the installation with this
+        .build()?;
+    ```
+
+8. **Causal history names a signer key, and only as a hint.** `Frontier::sender` and `DeliveryAck::acked_by` are `SignerKey`s parsed from the payload's self-asserted id; a malformed id is ignored. They are not bound to the MLS-verified sender, so treat them as display hints.
+
+9. **Identifiers are typed, never strings.** `SignerKey` and `ParticipantId` are separate types over bytes rather than hex strings or a shared generic id, so passing a `ParticipantId` where a `SignerKey` is expected is a compile error. Text appears only at the edges (display, registry keys, causal history's wire field, account addresses passed to the client) and is parsed once on the way in.
+
+10. **`ParticipantId` is a concrete type, not an associated type.** An associated type on `AuthService` would hand the client its account type directly, with no decoding. But the type parameter would spread through `Signer`, `Content`, `ConvoOutcome`, `PayloadOutcome` and every client function that handles them. The core carries opaque bytes instead, and the client pays one fallible decode per signer or `PendingSigner` (decision 2).
+
+## Consequences
+
+The core does not change when a client changes what a participant is, every signer an application sees carries the same auth check's verdict, and every sender has passed it. The client pays one decode per signer, failing closed: one whose participant id is not an account is dropped.
+
