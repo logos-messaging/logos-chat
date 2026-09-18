@@ -7,7 +7,7 @@ use arboard::Clipboard;
 use crossbeam_channel::Receiver;
 use logos_chat::{
     AccountAddr, AccountDirectory, ChatClient, ConversationClass, ConversationStore, Event,
-    GroupMetadata, RegistrationService, Transport,
+    GroupMetadata, RegistrationService, Transport, UncheckedAuth,
 };
 use serde::{Deserialize, Serialize};
 
@@ -80,7 +80,7 @@ where
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
-    pub client: ChatClient<T, R, S>,
+    pub client: ChatClient<T, R, UncheckedAuth, S>,
     events: Receiver<Event>,
     pub state: AppState,
     /// Whether the active chat can accept outbound content this session. Mirrors
@@ -102,7 +102,7 @@ where
     S: ConversationStore + Send,
 {
     pub fn new(
-        client: ChatClient<T, R, S>,
+        client: ChatClient<T, R, UncheckedAuth, S>,
         events: Receiver<Event>,
         user_name: &str,
         data_dir: &Path,
