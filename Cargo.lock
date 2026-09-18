@@ -1421,7 +1421,6 @@ dependencies = [
  "clap",
  "crossbeam-channel",
  "crossterm 0.29.0",
- "logos-account",
  "logos-chat",
  "ratatui",
  "serde",
@@ -1569,7 +1568,6 @@ dependencies = [
  "crypto",
  "hex",
  "libchat",
- "logos-account",
  "prost",
  "reqwest 0.12.28",
  "serde",
@@ -3699,9 +3697,10 @@ version = "0.1.0"
 dependencies = [
  "components",
  "crossbeam-channel",
+ "crypto",
  "embedded-logos-delivery",
+ "hex",
  "libchat",
- "logos-account",
  "logos-generic-chat",
 ]
 
@@ -3727,8 +3726,8 @@ dependencies = [
  "crossbeam-channel",
  "crypto",
  "hex",
+ "integration_tests_core",
  "libchat",
- "logos-account",
  "parking_lot",
  "storage",
  "tempfile",

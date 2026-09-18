@@ -10,8 +10,8 @@ fn create_group() {
 
     let mut harness = TestHarness::<3>::new(|_, _| {});
 
-    let raya_id = harness.raya().signer().clone();
-    let pax_id = harness.pax().signer().clone();
+    let raya_account = harness.raya().account();
+    let pax_id = harness.pax().addr();
 
     const M_R1: &[u8; 12] = b"Hi From Raya";
     const M_P1: &[u8; 13] = b"Hey it's Pax!";
@@ -20,7 +20,7 @@ fn create_group() {
 
     let convo_id = harness
         .saro()
-        .create_group_convo_v1(&[&raya_id])
+        .create_group_convo_v1(&[raya_account])
         .expect("Saro invite Raya ");
     harness.process_until(|h| h.raya().list_all_conversations().unwrap().len() == 1);
 
@@ -37,7 +37,7 @@ fn create_group() {
 
     harness
         .saro()
-        .group_add_member(&convo_id, &[&pax_id])
+        .group_add_member(&convo_id, &[pax_id])
         .expect("Saro invite pax");
     harness.process_until(|h| h.pax().list_all_conversations().unwrap().len() == 1);
 
