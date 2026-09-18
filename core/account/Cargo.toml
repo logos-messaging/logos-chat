@@ -10,7 +10,6 @@ dev = []
 [dependencies]
 # Workspace dependencies (sorted)
 crypto = { workspace = true }
-shared-traits = { workspace = true }
 
 # External dependencies (sorted)
 hex = "0.4.3"
