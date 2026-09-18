@@ -17,12 +17,24 @@ impl Ed25519SigningKey {
         Self(ed25519_dalek::SigningKey::generate(&mut rand_core::OsRng))
     }
 
+    /// Rebuild a key from its 32-byte RFC 8032 secret (the seed); any 32 bytes
+    /// are a valid secret.
+    pub fn from_bytes(bytes: &[u8; KEY_LEN]) -> Self {
+        Self(ed25519_dalek::SigningKey::from_bytes(bytes))
+    }
+
     pub fn verifying_key(&self) -> Ed25519VerifyingKey {
         Ed25519VerifyingKey(self.0.verifying_key())
     }
 
     pub fn sign(&self, msg: &[u8]) -> Ed25519Signature {
         Ed25519Signature(self.0.sign(msg).to_bytes())
+    }
+
+    /// The 32-byte RFC 8032 secret that [`from_bytes`](Self::from_bytes) takes.
+    #[allow(non_snake_case)] // All caps makes this standout more in reviews.
+    pub fn DANGER_to_bytes(&self) -> [u8; KEY_LEN] {
+        self.0.to_bytes()
     }
 }
 
@@ -177,5 +189,22 @@ mod tests {
         assert_eq!(Ed25519Signature::from_bytes(&sig.to_bytes()), sig);
         assert!(verifying.verify(b"payload", &sig).is_ok());
         assert!(verifying.verify(b"other", &sig).is_err());
+    }
+
+    /// RFC 8032 §7.1 test 1: the seed imports to the key it publishes.
+    #[test]
+    fn imports_an_rfc8032_seed() {
+        let seed: [u8; KEY_LEN] =
+            hex::decode("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+                .unwrap()
+                .try_into()
+                .unwrap();
+        let key = Ed25519SigningKey::from_bytes(&seed);
+
+        assert_eq!(
+            hex::encode(key.verifying_key().to_bytes()),
+            "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+        );
+        assert_eq!(key.DANGER_to_bytes(), seed);
     }
 }
