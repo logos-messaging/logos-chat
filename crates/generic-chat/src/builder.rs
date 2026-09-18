@@ -1,7 +1,7 @@
 use components::EphemeralRegistry;
 use crossbeam_channel::Receiver;
 use libchat::{ChatError, ChatStorage, GroupV2Config, RegistrationService, StorageConfig};
-use logos_account::AccountDirectory;
+use logos_account_legacy::AccountDirectory;
 use storage::ConversationStore;
 
 use crate::Transport;

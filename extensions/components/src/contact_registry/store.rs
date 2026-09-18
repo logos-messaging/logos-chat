@@ -6,7 +6,9 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use chat_proto::logoschat::store::{AccountSubmissionV1, KeyPackageSubmissionV1};
 use crypto::{Ed25519Signature, Ed25519VerifyingKey};
 use libchat::{AddressedEnvelope, DeliveryService, IdentityProvider, RegistrationService};
-use logos_account::{AccountDirectory, BundleError, DeviceSet, SignedDeviceBundle, verify_bundle};
+use logos_account_legacy::{
+    AccountDirectory, BundleError, DeviceSet, SignedDeviceBundle, verify_bundle,
+};
 use prost::Message;
 use prost::bytes::Bytes;
 use serde::{Deserialize, Serialize};
@@ -187,7 +189,7 @@ impl<D: DeliveryService> RegistrationService for ContactRegistry<D> {
         // submission around them differs. Sign once, then branch on transport.
         let payload = encode_payload(timestamp_ms, &key_bundle);
         let signature = identity.sign(&payload);
-        let device_id = identity.public_key().as_ref();
+        let device_id = identity.signer().as_bytes();
 
         match self.publish_mode {
             RegistryPublishMode::Http => self.http_post(
@@ -416,7 +418,7 @@ fn jitter_below(max: u64) -> u64 {
 mod tests {
     use super::*;
     use crypto::Ed25519SigningKey;
-    use libchat::{IdentId, IdentIdRef};
+    use libchat::{Signer, SignerRef};
 
     #[derive(Debug, Default)]
     struct CapturingDelivery {
@@ -435,35 +437,30 @@ mod tests {
     }
 
     struct TestIdent {
-        id: IdentId,
+        signer: Signer,
         key: Ed25519SigningKey,
-        verifying: Ed25519VerifyingKey,
     }
 
     impl TestIdent {
         fn new() -> Self {
             let key = Ed25519SigningKey::generate();
-            let verifying = key.verifying_key();
-            Self {
-                id: IdentId::new("test"),
-                key,
-                verifying,
-            }
+            let signer = Signer::from(key.verifying_key());
+            Self { signer, key }
         }
     }
 
     impl IdentityProvider for TestIdent {
-        fn id(&self) -> IdentIdRef<'_> {
-            &self.id
+        fn signer(&self) -> SignerRef<'_> {
+            &self.signer
+        }
+        fn participant_id(&self) -> libchat::ParticipantId {
+            libchat::ParticipantId::from(b"test".as_slice())
         }
         fn display_name(&self) -> String {
-            self.id.to_string()
+            self.signer.to_string()
         }
         fn sign(&self, payload: &[u8]) -> Ed25519Signature {
             self.key.sign(payload)
-        }
-        fn public_key(&self) -> &Ed25519VerifyingKey {
-            &self.verifying
         }
     }
 
@@ -486,13 +483,14 @@ mod tests {
         // Decode as the store does: the bytes on the wire are a protobuf
         // submission, so a field-number or type change here breaks ingestion.
         let wire = KeyPackageSubmissionV1::decode(&envelope.data[..]).unwrap();
-        assert_eq!(wire.device_id.as_ref(), ident.verifying.as_ref());
+        assert_eq!(wire.device_id.as_ref(), ident.signer.as_bytes());
         // The store verifies the signature over the payload bytes under the
         // device key before persisting — the submission must pass that check.
         assert!(wire.payload.ends_with(&key_bundle));
         let signature: [u8; 64] = wire.signature.as_ref().try_into().unwrap();
         ident
-            .verifying
+            .signer
+            .verifying_key()
             .verify(&wire.payload, &Ed25519Signature::from(signature))
             .expect("store-side verification must succeed");
     }

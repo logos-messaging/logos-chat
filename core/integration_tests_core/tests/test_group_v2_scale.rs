@@ -42,7 +42,7 @@
 //!   it just belongs to another branch of the group.
 
 use integration_tests_core::TestHarness;
-use shared_traits::IdentId;
+use shared_traits::Signer;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
@@ -131,7 +131,7 @@ fn settle<const N: usize>(
 fn add_members<const N: usize>(
     h: &mut TestHarness<N>,
     convo: &str,
-    invited: &[&IdentId],
+    invited: &[&Signer],
 ) -> Result<(), String> {
     let mut elapsed = Duration::ZERO;
     let budget = settle_budget();
@@ -265,10 +265,10 @@ fn run<const N: usize>(batch: usize) {
     let mut joined = 1;
     while joined < N {
         let upto = (joined + batch).min(N);
-        let addresses: Vec<IdentId> = (joined..upto)
+        let addresses: Vec<Signer> = (joined..upto)
             .map(|i| harness.client_mut(i).addr())
             .collect();
-        let invited: Vec<&IdentId> = addresses.iter().collect();
+        let invited: Vec<&Signer> = addresses.iter().collect();
         if let Err(refusal) = add_members(&mut harness, &convo, &invited) {
             panic!(
                 "adding members {joined}..{upto} kept being refused: {refusal} :: {}",

@@ -5,7 +5,7 @@ use openmls_traits::{
     signatures::{Signer, SignerError},
     types::SignatureScheme,
 };
-use shared_traits::IdentIdRef;
+use shared_traits::SignerRef;
 
 use crate::IdentityProvider;
 
@@ -23,8 +23,8 @@ impl<T: IdentityProvider> MlsIdentityProvider<T> {
 
     pub fn get_credential(&self) -> CredentialWithKey {
         CredentialWithKey {
-            credential: BasicCredential::new(self.id().as_str().as_bytes().to_vec()).into(),
-            signature_key: self.public_key().as_ref().into(),
+            credential: BasicCredential::new(self.participant_id().as_bytes().to_vec()).into(),
+            signature_key: self.signer().as_bytes().into(),
         }
     }
 }
@@ -38,8 +38,12 @@ impl<T: IdentityProvider> Deref for MlsIdentityProvider<T> {
 }
 
 impl<T: IdentityProvider> IdentityProvider for MlsIdentityProvider<T> {
-    fn id(&self) -> IdentIdRef<'_> {
-        self.0.id()
+    fn signer(&self) -> SignerRef<'_> {
+        self.0.signer()
+    }
+
+    fn participant_id(&self) -> shared_traits::ParticipantId {
+        self.0.participant_id()
     }
 
     fn display_name(&self) -> String {
@@ -48,10 +52,6 @@ impl<T: IdentityProvider> IdentityProvider for MlsIdentityProvider<T> {
 
     fn sign(&self, payload: &[u8]) -> crypto::Ed25519Signature {
         self.0.sign(payload)
-    }
-
-    fn public_key(&self) -> &crypto::Ed25519VerifyingKey {
-        self.0.public_key()
     }
 }
 
