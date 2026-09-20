@@ -14,7 +14,6 @@ components = { workspace = true }
 crossbeam-channel = { workspace = true }
 crypto = { workspace = true }
 libchat = { workspace = true }
-storage = { workspace = true }
 logos-account = { workspace = true, features = ["dev"]}
 shared-traits = { workspace =  true }
 

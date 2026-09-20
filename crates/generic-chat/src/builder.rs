@@ -1,8 +1,8 @@
+use chat_sqlite::{SqliteStore, StorageConfig};
 use components::EphemeralRegistry;
 use crossbeam_channel::Receiver;
-use libchat::{ChatError, ChatStorage, GroupV2Config, RegistrationService, StorageConfig};
+use libchat::{ChatError, ConversationStore, GroupV2Config, RegistrationService};
 use logos_account::AccountDirectory;
-use storage::ConversationStore;
 
 use crate::Transport;
 use crate::client::ChatClient;
@@ -86,8 +86,8 @@ impl<I, T, R, S> ChatClientBuilder<I, T, R, S> {
         }
     }
 
-    pub fn storage_config(self, config: StorageConfig) -> ChatClientBuilder<I, T, R, ChatStorage> {
-        let storage = ChatStorage::new(config)
+    pub fn storage_config(self, config: StorageConfig) -> ChatClientBuilder<I, T, R, SqliteStore> {
+        let storage = SqliteStore::new(config)
             .map_err(ChatError::from)
             .expect("Storage config file should be valid");
 
@@ -134,13 +134,13 @@ where
 
 // Transport only; I, R, S all default.
 impl<T: Transport + Send + 'static> ChatClientBuilder<Unset, T, Unset, Unset> {
-    pub fn build(self) -> Built<T, EphemeralRegistry, ChatStorage> {
+    pub fn build(self) -> Built<T, EphemeralRegistry, SqliteStore> {
         ChatClient::new(
             DelegateSigner::random(),
             self.account,
             self.transport,
             EphemeralRegistry::new(),
-            ChatStorage::in_memory(),
+            SqliteStore::in_memory(),
             self.group_v2,
         )
     }
@@ -151,13 +151,13 @@ impl<T> ChatClientBuilder<DelegateSigner, T, Unset, Unset>
 where
     T: Transport + Send + 'static,
 {
-    pub fn build(self) -> Built<T, EphemeralRegistry, ChatStorage> {
+    pub fn build(self) -> Built<T, EphemeralRegistry, SqliteStore> {
         ChatClient::new(
             self.ident,
             self.account,
             self.transport,
             EphemeralRegistry::new(),
-            ChatStorage::in_memory(),
+            SqliteStore::in_memory(),
             self.group_v2,
         )
     }
@@ -169,13 +169,13 @@ where
     T: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
 {
-    pub fn build(self) -> Built<T, R, ChatStorage> {
+    pub fn build(self) -> Built<T, R, SqliteStore> {
         ChatClient::new(
             DelegateSigner::random(),
             self.account,
             self.transport,
             self.registration,
-            ChatStorage::in_memory(),
+            SqliteStore::in_memory(),
             self.group_v2,
         )
     }
@@ -205,13 +205,13 @@ where
     T: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
 {
-    pub fn build(self) -> Built<T, R, ChatStorage> {
+    pub fn build(self) -> Built<T, R, SqliteStore> {
         ChatClient::new(
             self.ident,
             self.account,
             self.transport,
             self.registration,
-            ChatStorage::in_memory(),
+            SqliteStore::in_memory(),
             self.group_v2,
         )
     }

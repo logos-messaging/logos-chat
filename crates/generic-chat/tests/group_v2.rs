@@ -6,9 +6,9 @@
 
 use std::time::Duration;
 
+use chat_sqlite::SqliteStore;
 use components::EphemeralRegistry;
 use crossbeam_channel::Receiver;
-use libchat::ChatStorage;
 use logos_account::TestLogosAccount;
 use logos_generic_chat::{
     ChatClient, ChatClientBuilder, ConversationClass, DelegateSigner, Event, GroupMetadata,
@@ -38,7 +38,7 @@ fn fast_group_v2_config() -> GroupV2Config {
     }
 }
 
-type TestClient = ChatClient<InProcessDelivery, EphemeralRegistry, ChatStorage>;
+type TestClient = ChatClient<InProcessDelivery, EphemeralRegistry, SqliteStore>;
 
 /// A client for a fresh account: mints the account and a delegate, publishes
 /// the endorsing bundle, and builds the client on the shared bus/registry with
