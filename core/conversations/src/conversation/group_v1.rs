@@ -8,7 +8,7 @@ use chat_proto::logoschat::reliability::ReliablePayload;
 use openmls::prelude::tls_codec::Deserialize;
 use openmls::prelude::*;
 use prost::Message as _;
-use shared_traits::{Signer, SignerRef};
+use shared_traits::{SignerKey, SignerRef};
 use std::collections::{HashSet, VecDeque};
 use tracing::debug;
 
@@ -387,13 +387,14 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
         // A signer id is the hex of the member's MLS signature key; MLS names a
         // member to remove by the leaf it occupies.
         // let wanted: HashSet<Signer> =
-        let wanted: HashSet<Signer> = members.iter().map(|&m| m.clone()).collect();
+        let wanted: HashSet<SignerKey> = members.iter().map(|&m| m.clone()).collect();
         let leaves: Vec<LeafNodeIndex> = self
             .mls_group
             .members()
             .filter(|m| {
                 wanted.contains(
-                    &Signer::try_from(m.signature_key.as_slice()).expect("mls signers are valid"),
+                    &SignerKey::try_from(m.signature_key.as_slice())
+                        .expect("mls signers are valid"),
                 )
             })
             .map(|m| m.index)

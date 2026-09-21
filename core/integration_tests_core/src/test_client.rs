@@ -2,7 +2,7 @@ use crate::test_ident::TestIdent;
 use libchat::test_support::MemStore;
 use libchat::{ConversationId, Core, IdentityProvider, PayloadOutcome};
 use libchat::{GroupV2Clock, GroupV2Config};
-use shared_traits::Signer;
+use shared_traits::SignerKey;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
@@ -49,7 +49,7 @@ impl TestClient {
         }
     }
 
-    pub fn addr(&self) -> Signer {
+    pub fn addr(&self) -> SignerKey {
         self.inner.signer().clone()
     }
 
@@ -144,13 +144,13 @@ impl DerefMut for TestClient {
 
 #[allow(unused)]
 pub struct Observation {
-    ident: Signer,
+    ident: SignerKey,
     outcome: PayloadOutcome,
 }
 
 #[allow(unused)]
 pub struct TestHarness<const N: usize> {
-    addresses: HashMap<usize, Signer>,
+    addresses: HashMap<usize, SignerKey>,
     clients: Vec<TestClient>,
     wakeup_service: WS,
     cb: Box<OnMessageCallback>,

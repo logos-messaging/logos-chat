@@ -28,7 +28,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use shared_traits::Signer;
+use shared_traits::SignerKey;
 
 use crate::proto::{Bytes, HistoryEntry, ReliablePayload};
 use crate::utils::{blake2b_hex, hash_size};
@@ -158,7 +158,7 @@ impl CausalHistoryStore {
     pub fn on_send(
         &self,
         conversation_id: &str,
-        sender: &Signer,
+        sender: &SignerKey,
         content: &[u8],
     ) -> ReliablePayload {
         let mut inner = self.inner.borrow_mut();
@@ -297,14 +297,14 @@ mod tests {
     fn payload(
         store: &CausalHistoryStore,
         convo: &str,
-        sender: &Signer,
+        sender: &SignerKey,
         body: &[u8],
     ) -> ReliablePayload {
         store.on_send(convo, sender, body)
     }
 
-    fn new_signer() -> Signer {
-        Signer::from(Ed25519SigningKey::generate().verifying_key())
+    fn new_signer() -> SignerKey {
+        SignerKey::from(Ed25519SigningKey::generate().verifying_key())
     }
 
     #[test]

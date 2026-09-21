@@ -1,6 +1,6 @@
 use crypto::Ed25519SigningKey;
 use libchat::IdentityProvider;
-use shared_traits::{Signer, SignerRef};
+use shared_traits::{SignerKey, SignerRef};
 
 /// Test identity with a human-readable name ("saro"). Stands in for a device
 /// signer so core tests can address peers by name.
@@ -10,14 +10,14 @@ use shared_traits::{Signer, SignerRef};
 /// generated.
 pub struct TestIdent {
     name: String,
-    signer: Signer,
+    signer: SignerKey,
     signing_key: Ed25519SigningKey,
 }
 
 impl TestIdent {
     pub fn new(name: impl Into<String>) -> Self {
         let signing_key = Ed25519SigningKey::generate();
-        let signer = Signer::from(signing_key.verifying_key());
+        let signer = SignerKey::from(signing_key.verifying_key());
         Self {
             name: name.into(),
             signer,

@@ -418,7 +418,7 @@ fn jitter_below(max: u64) -> u64 {
 mod tests {
     use super::*;
     use crypto::Ed25519SigningKey;
-    use libchat::{Signer, SignerRef};
+    use libchat::{SignerKey, SignerRef};
 
     #[derive(Debug, Default)]
     struct CapturingDelivery {
@@ -437,14 +437,14 @@ mod tests {
     }
 
     struct TestIdent {
-        signer: Signer,
+        signer: SignerKey,
         key: Ed25519SigningKey,
     }
 
     impl TestIdent {
         fn new() -> Self {
             let key = Ed25519SigningKey::generate();
-            let signer = Signer::from(key.verifying_key());
+            let signer = SignerKey::from(key.verifying_key());
             Self { signer, key }
         }
     }

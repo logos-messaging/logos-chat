@@ -1,5 +1,5 @@
 use crypto::{Ed25519SigningKey, Ed25519VerifyingKey};
-use libchat::{IdentityProvider, Signer, trunc};
+use libchat::{IdentityProvider, SignerKey, trunc};
 
 use crate::ClientError;
 
@@ -39,7 +39,7 @@ impl DelegateSigner {
 pub(crate) struct DelegateIdentity {
     signer: DelegateSigner,
     /// The delegate key, which is what this identity signs under.
-    identity: Signer,
+    identity: SignerKey,
     /// The account claim, serialized — carried in the MLS leaf credential and
     /// opaque to the core.
     credential: Vec<u8>,
@@ -49,7 +49,7 @@ impl DelegateIdentity {
     pub(crate) fn new(signer: DelegateSigner, account: &str) -> Self {
         let credential = DelegateCredential::associated(signer.public_key(), account).serialize();
         Self {
-            identity: Signer::from(signer.public_key().clone()),
+            identity: SignerKey::from(signer.public_key().clone()),
             credential,
             signer,
         }

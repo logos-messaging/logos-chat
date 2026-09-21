@@ -25,7 +25,7 @@ use openmls::group::MlsGroupCreateConfig;
 use openmls::prelude::tls_codec::Deserialize as _;
 use openmls::prelude::{KeyPackageIn, OpenMlsProvider as _, ProtocolVersion};
 use prost::Message;
-use shared_traits::{Signer, SignerRef};
+use shared_traits::{SignerKey, SignerRef};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -71,8 +71,8 @@ fn rand_app_id() -> Arc<[u8]> {
 ///
 /// Infallible in practice: the bytes come from a validated MLS leaf, so they
 /// are a key by the time de-mls reports them as a member.
-fn signer_of(member: &Member) -> Signer {
-    Signer::try_from(member.signature_key.as_slice())
+fn signer_of(member: &Member) -> SignerKey {
+    SignerKey::try_from(member.signature_key.as_slice())
         .expect("an MLS member's signature key is an Ed25519 key")
 }
 
@@ -98,7 +98,7 @@ pub struct GroupV2Convo {
     pending_invites: HashMap<Vec<u8>, Vec<u8>>,
     /// Keeps track of current group members: maps de-mls `MemberId` handles to signer ids.
     /// We update this list when members are added or removed.
-    member_directory: HashMap<MemberId, Signer>,
+    member_directory: HashMap<MemberId, SignerKey>,
 }
 
 impl std::fmt::Debug for GroupV2Convo {
@@ -299,7 +299,7 @@ impl GroupV2Convo {
     /// Our own signer id, read off the leaf we occupy — `None` once a removal
     /// commit has ejected us. A de-mls member id is the big-endian u32 of the
     /// member's ratchet-tree leaf index; `member_id_bytes` is our own.
-    fn own_signer(&self) -> Option<Signer> {
+    fn own_signer(&self) -> Option<SignerKey> {
         let me = self.conversation.member_id_bytes();
         self.conversation
             .members_view()
@@ -577,7 +577,7 @@ impl GroupV2Convo {
                 ConversationEvent::WelcomeReady { welcome, .. } => {
                     for joiner in &welcome.joiner_identities {
                         if self.pending_invites.remove(joiner).is_some() {
-                            let signer = Signer::try_from(joiner.as_slice())
+                            let signer = SignerKey::try_from(joiner.as_slice())
                                 .expect("a joiner identity is an Ed25519 key");
                             crate::inbox_v2::invite_user_v2(&mut service_ctx.ds, &signer, welcome)?;
                         }

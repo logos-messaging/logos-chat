@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use libchat::{ConversationClass, Signer};
+use libchat::{ConversationClass, SignerKey};
 use logos_account::AccountAddr;
 
 /// The sender of a received message, recovered from its credential.
@@ -20,7 +20,7 @@ use logos_account::AccountAddr;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageSender {
     pub account: Option<AccountAddr>,
-    pub local_identity: Signer,
+    pub local_identity: SignerKey,
 }
 
 /// A discrete chat event.

@@ -3,10 +3,10 @@ use std::fmt;
 
 /// Who signed: the Ed25519 key a message's signatures verify under.
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub struct Signer(Ed25519VerifyingKey);
-pub type SignerRef<'a> = &'a Signer;
+pub struct SignerKey(Ed25519VerifyingKey);
+pub type SignerRef<'a> = &'a SignerKey;
 
-impl Signer {
+impl SignerKey {
     /// The key's bytes — the device id the registries and directory are keyed on.
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_ref()
@@ -18,7 +18,7 @@ impl Signer {
     }
 }
 
-impl From<Ed25519VerifyingKey> for Signer {
+impl From<Ed25519VerifyingKey> for SignerKey {
     fn from(key: Ed25519VerifyingKey) -> Self {
         Self(key)
     }
@@ -26,7 +26,7 @@ impl From<Ed25519VerifyingKey> for Signer {
 
 /// Not every byte string names a signer: exactly 32 bytes forming a valid
 /// Ed25519 key.
-impl TryFrom<&[u8]> for Signer {
+impl TryFrom<&[u8]> for SignerKey {
     type Error = SignerError;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
@@ -37,13 +37,13 @@ impl TryFrom<&[u8]> for Signer {
     }
 }
 
-impl fmt::Display for Signer {
+impl fmt::Display for SignerKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&hex::encode(self.as_bytes()))
     }
 }
 
-impl fmt::Debug for Signer {
+impl fmt::Debug for SignerKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Signer")
             .field(&hex::encode(self.as_bytes()))

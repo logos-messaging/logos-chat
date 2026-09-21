@@ -212,7 +212,7 @@ pub fn resolve_device_ids<D: AccountDirectory + ?Sized>(
 mod tests {
     use super::*;
     use crypto::Ed25519SigningKey;
-    use shared_traits::Signer;
+    use shared_traits::SignerKey;
 
     /// encode → decode round-trips, including zero and many devices.
     #[test]
@@ -342,7 +342,7 @@ mod tests {
     #[test]
     fn resolve_rejects_unpublished_account() {
         let account_pub = Ed25519SigningKey::generate().verifying_key();
-        let account_id = Signer::from(account_pub.clone());
+        let account_id = SignerKey::from(account_pub.clone());
         assert!(matches!(
             resolve_device_ids(&FakeDir(None), &account_id),
             Err(ResolveError::NoDeviceBundle)
@@ -367,7 +367,7 @@ mod tests {
 
         // The identifier is the hex of the account key, so resolution consults the
         // directory rather than falling back.
-        let account_id = Signer::from(account_pub.clone());
+        let account_id = SignerKey::from(account_pub.clone());
         let resolved = resolve_device_ids(&FakeDir(Some(bundle)), &account_id).unwrap();
         let want: Vec<String> = devices.iter().map(|d| hex::encode(d.as_ref())).collect();
         assert_eq!(resolved, want);

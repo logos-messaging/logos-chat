@@ -8,7 +8,7 @@ use crypto::Ed25519VerifyingKey;
 use libchat::{
     ConversationId, ConversationStore, ConvoMetadata, ConvoOutcome, Core, DeliveryAck,
     DeliveryService, GroupV2Config, InboxOutcome, MessageId, MissingMessage, PayloadOutcome,
-    RegistrationService, Signer, SignerRef,
+    RegistrationService, SignerKey, SignerRef,
 };
 use logos_account::AccountAddr;
 use logos_account_legacy::{AccountDirectory, resolve_device_ids};
@@ -20,7 +20,7 @@ use crate::event::{Event, MessageSender};
 
 type ClientCore<T, R, S> = Core<(DelegateIdentity, T, R, ThreadedWakeupService, S)>;
 type AccountAddressRef<'a> = &'a str;
-type LocalSigner = Signer;
+type LocalSigner = SignerKey;
 
 /// A member of a group conversation's roster.
 ///
@@ -38,7 +38,7 @@ type LocalSigner = Signer;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupMember {
     pub account: Option<AccountAddr>,
-    pub local_identity: Signer,
+    pub local_identity: SignerKey,
     pub pending: bool,
 }
 
@@ -352,7 +352,7 @@ where
         let account: AccountAddr = account
             .parse()
             .map_err(|_| ClientError::AccountResolution("not an account address".to_owned()))?;
-        let account_signer = Signer::try_from(account.to_bytes())
+        let account_signer = SignerKey::try_from(account.to_bytes())
             .map_err(|_| ClientError::AccountResolution("not an account key".to_owned()))?;
         let device_ids = resolve_device_ids(&self.directory, &account_signer)
             .map_err(|e| ClientError::AccountResolution(e.to_string()))?;
@@ -361,7 +361,7 @@ where
             .map(|id| {
                 hex::decode(&id)
                     .ok()
-                    .and_then(|bytes| Signer::try_from(bytes.as_slice()).ok())
+                    .and_then(|bytes| SignerKey::try_from(bytes.as_slice()).ok())
                     .ok_or_else(|| {
                         ClientError::AccountResolution(format!("malformed device id: {id}"))
                     })
@@ -525,7 +525,7 @@ fn sender_hint(encoded: &str) -> Option<MessageSender> {
     let bytes = hex::decode(encoded).ok()?;
     Some(MessageSender {
         account: None,
-        local_identity: Signer::try_from(bytes.as_slice()).ok()?,
+        local_identity: SignerKey::try_from(bytes.as_slice()).ok()?,
     })
 }
 
@@ -570,7 +570,7 @@ enum AccountClaim {
 fn parse_credential(
     directory: &impl AccountDirectory,
     encoded: &[u8],
-) -> Result<(Signer, AccountClaim), SenderError> {
+) -> Result<(SignerKey, AccountClaim), SenderError> {
     // No credential at all: there is no device to attribute.
     if encoded.is_empty() {
         return Err(SenderError::Missing);
@@ -579,7 +579,7 @@ fn parse_credential(
         tracing::warn!("malformed credential");
         return Err(SenderError::Malformed);
     };
-    let device = Signer::from(cred.delegate_id().clone());
+    let device = SignerKey::from(cred.delegate_id().clone());
     // An unassociated delegate asserts no account → device mapping.
     let Some(account_addr) = cred.account_addr() else {
         return Ok((device, AccountClaim::None));
@@ -730,7 +730,7 @@ mod sender_check_tests {
     use logos_account_legacy::{DeviceSet, SignedDeviceBundle};
 
     use super::{
-        AccountAddr, Event, GroupMember, MessageSender, SenderError, Signer, decode_sender,
+        AccountAddr, Event, GroupMember, MessageSender, SenderError, SignerKey, decode_sender,
         dedup_members, delivery_ack_events, member_key, missing_events, roster_member,
     };
     use crate::delegate::DelegateCredential;
@@ -790,8 +790,8 @@ mod sender_check_tests {
         cred.serialize()
     }
 
-    fn local_id(k: &Ed25519VerifyingKey) -> Signer {
-        Signer::from(k.clone())
+    fn local_id(k: &Ed25519VerifyingKey) -> SignerKey {
+        SignerKey::from(k.clone())
     }
 
     /// The same key an account is known by, as an address.
@@ -1009,12 +1009,12 @@ mod sender_check_tests {
         let (alice_dev_1, alice_dev_2) = (local_id(&key()), local_id(&key()));
         let bob_dev_1 = local_id(&key());
         let (orphan_x, orphan_y) = (local_id(&key()), local_id(&key()));
-        let with_account = |account: &AccountAddr, device: &Signer| GroupMember {
+        let with_account = |account: &AccountAddr, device: &SignerKey| GroupMember {
             account: Some(account.clone()),
             local_identity: device.clone(),
             pending: false,
         };
-        let device_only = |device: &Signer| GroupMember {
+        let device_only = |device: &SignerKey| GroupMember {
             account: None,
             local_identity: device.clone(),
             pending: false,

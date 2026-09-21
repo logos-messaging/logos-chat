@@ -24,7 +24,7 @@ use crate::conversation::mls_extensions::GROUP_METADATA_EXTENSION_TYPE;
 use crate::outcomes::ConversationClass;
 use crate::service_context::{ExternalServices, ServiceContext};
 use crate::utils::{blake2b_hex, hash_size};
-use crate::{AddressedEnvelope, IdentityProvider, Signer, SignerRef};
+use crate::{AddressedEnvelope, IdentityProvider, SignerKey, SignerRef};
 
 pub(crate) const CIPHER_SUITE: Ciphersuite =
     Ciphersuite::MLS_256_XWING_CHACHA20POLY1305_SHA256_Ed25519;
@@ -83,11 +83,11 @@ type ClassifiedConvo<S> = (Box<dyn GroupConvo<S>>, ConversationClass);
 /// conversation protocols such as MLS.
 pub struct InboxV2 {
     // Owned so it can be returned via reference.
-    signer: Signer,
+    signer: SignerKey,
 }
 
 impl InboxV2 {
-    pub fn new(signer: Signer) -> Self {
+    pub fn new(signer: SignerKey) -> Self {
         Self { signer }
     }
 
