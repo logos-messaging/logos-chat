@@ -352,6 +352,11 @@ where
                 if let Some(session) = self.state.chats.get(&chat_id) {
                     self.status = format!("Membership changed in {}.", session.display_name());
                 }
+                // The commit may be the one that removed us; `is_active` is
+                // otherwise only recomputed on a chat switch.
+                if self.state.active_chat.as_deref() == Some(&chat_id) {
+                    self.is_active = self.client.can_send(&chat_id);
+                }
             }
             Event::InboundError { message } => {
                 self.status = format!("Could not process incoming message: {message}");
@@ -369,8 +374,8 @@ where
 
         if !self.is_active {
             anyhow::bail!(
-                "This conversation is from a previous session and can't receive messages yet \
-                 — chats don't persist across restart. Start a new one with /dm or /new."
+                "Not an active conversation — it may be a stale one from a previous session, \
+                 or you're no longer a member."
             );
         }
 
@@ -410,6 +415,7 @@ where
                 self.add_system_message("/dm <address> - Start a direct (1:1) chat");
                 self.add_system_message("/new <name> [address...] - Create a group chat");
                 self.add_system_message("/add <address> - Add someone to the active group");
+                self.add_system_message("/remove <address> - Remove someone from the active group");
                 self.add_system_message("/members - List members of the active conversation");
                 self.add_system_message("/nickname <name> - Name the active chat");
                 self.add_system_message("/chats - List all chats");
@@ -521,6 +527,25 @@ where
                     .map_err(|e| anyhow::anyhow!("{e:?}"))?;
                 self.status = "Invite pending — the group will commit it shortly.".to_string();
                 Ok(Some("Invite pending".to_string()))
+            }
+            "/remove" => {
+                let address = args.trim();
+                if address.is_empty() {
+                    return Ok(Some("Usage: /remove <address>".to_string()));
+                }
+                let chat_id = self
+                    .state
+                    .active_chat
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("No active conversation."))?;
+                self.client
+                    .remove_group_members(&chat_id, &[address])
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                // The group votes on the removal; the member stays on the
+                // roster until the commit ejecting them lands.
+                let msg = "Removal pending — the group will commit it shortly.".to_string();
+                self.status = msg.clone();
+                Ok(Some(msg))
             }
             "/members" => {
                 let chat_id = self

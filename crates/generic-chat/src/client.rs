@@ -229,6 +229,23 @@ where
             .map_err(Into::into)
     }
 
+    /// Remove accounts' devices from a group conversation. Every device the
+    /// account's bundle endorses is named; those with no seat are skipped, and
+    /// the call fails if none holds one.
+    pub fn remove_group_members(
+        &mut self,
+        convo_id: &str,
+        accounts: &[AccountAddressRef],
+    ) -> Result<(), ClientError> {
+        let signers = self.signers_from_accounts(accounts)?;
+        let signer_refs: Vec<IdentIdRef> = signers.iter().collect();
+
+        self.core
+            .lock()
+            .group_remove_member(convo_id, &signer_refs)
+            .map_err(Into::into)
+    }
+
     /// The conversation's roster, one [`GroupMember`] per account (self
     /// included), for a direct conversation as for a group: committed members
     /// first and this client's uncommitted invites after them, flagged

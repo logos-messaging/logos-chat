@@ -238,6 +238,29 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         }
     }
 
+    /// Remove members from an existing group conversation, naming them by
+    /// signer (installation) id exactly as [`Self::group_add_member`] does.
+    pub fn group_remove_member(
+        &mut self,
+        convo_id: &str,
+        members: &[IdentIdRef],
+    ) -> Result<(), ChatError> {
+        let convo = self
+            .cached_convos
+            .get_mut(convo_id)
+            .ok_or_else(|| ChatError::NoConvo(convo_id.to_string()))?;
+
+        match convo {
+            ConvoTypeOwned::Group(group_convo) => {
+                group_convo.remove_member(&mut self.services, members)
+            }
+            ConvoTypeOwned::Direct(_) => Err(ChatError::UnsupportedFunction(
+                convo.id().into(),
+                "Remove Member".into(),
+            )),
+        }
+    }
+
     /// Each member's MLS leaf-credential content (hex-encoded), for a direct
     /// conversation as for a group.
     pub fn group_members(&mut self, convo_id: &str) -> Result<Vec<Vec<u8>>, ChatError> {

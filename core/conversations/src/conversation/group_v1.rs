@@ -9,7 +9,7 @@ use openmls::prelude::tls_codec::Deserialize;
 use openmls::prelude::*;
 use prost::Message as _;
 use shared_traits::IdentIdRef;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use tracing::debug;
 
 use crate::conversation::{ConversationIdRef, MessageId};
@@ -253,6 +253,10 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
             }
         };
 
+        if !self.mls_group.is_active() {
+            return Ok(ConvoOutcome::empty(self.id().to_string()));
+        }
+
         // Bail early if we sent this message
         let msg_hash = blake2b_hex::<hash_size::MessageId>(&[bytes.as_ref()]);
         if self.outbound_msgs.contains(&msg_hash) {
@@ -369,6 +373,46 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
                 .invite_user(&mut cx.ds, signer_id, &welcome)?;
         }
 
+        self.send_payload(cx, commit.to_bytes()?)
+    }
+
+    /// Commits the removal in-call, the mirror of `add_member`: the named
+    /// members are off the roster by the time this returns.
+    fn remove_member(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        members: &[IdentIdRef],
+    ) -> Result<(), ChatError> {
+        // A signer id is the hex of the member's MLS signature key; MLS names a
+        // member to remove by the leaf it occupies.
+        let wanted: HashSet<&str> = members.iter().map(|m| m.as_str()).collect();
+        let leaves: Vec<LeafNodeIndex> = self
+            .mls_group
+            .members()
+            .filter(|m| wanted.contains(hex::encode(&m.signature_key).as_str()))
+            .map(|m| m.index)
+            .collect();
+
+        // MLS does not let a member commit its own removal. Checked before the
+        // empty case so naming yourself is reported as such either way.
+        if leaves.contains(&self.mls_group.own_leaf_index()) {
+            return Err(ChatError::CannotRemoveSelf);
+        }
+        if leaves.is_empty() {
+            return Err(ChatError::NotAGroupMember);
+        }
+
+        let (commit, _welcome, _group_info) = self
+            .mls_group
+            .remove_members(&cx.mls_provider, &cx.mls_identity, &leaves)
+            .map_err(ChatError::generic)?;
+
+        self.mls_group
+            .merge_pending_commit(&cx.mls_provider)
+            .map_err(ChatError::generic)?;
+
+        // The commit was sealed at the pre-removal epoch, so the members it
+        // ejects can still read it and learn they are out.
         self.send_payload(cx, commit.to_bytes()?)
     }
 

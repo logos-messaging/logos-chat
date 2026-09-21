@@ -371,6 +371,31 @@ fn direct_conversation_lists_its_participants() {
     ));
 }
 
+/// A direct conversation is 1:1, so removing the other party is not a supported
+/// operation — the core rejects it rather than tearing the pair apart.
+#[test]
+fn removing_a_member_is_unsupported_on_a_direct_conversation() {
+    let bus = MessageBus::default();
+    let reg = EphemeralRegistry::new();
+
+    let (mut saro, _saro_events) =
+        create_test_client(bus.clone(), reg.clone()).expect("client create");
+    let (raya, _raya_events) = create_test_client(bus.clone(), reg.clone()).expect("client create");
+
+    let raya_addr = raya.addr().to_string();
+    let convo_id = saro
+        .create_direct_conversation(&raya_addr)
+        .expect("convo create");
+
+    let err = saro
+        .remove_group_members(&convo_id, &[&raya_addr])
+        .expect_err("remove member is unsupported on a direct conversation");
+    assert!(matches!(
+        err,
+        logos_generic_chat::ClientError::Chat(libchat::ChatError::UnsupportedFunction(..))
+    ));
+}
+
 #[derive(Debug)]
 struct FailingDelivery {
     inbound_tx: Sender<Vec<u8>>,
