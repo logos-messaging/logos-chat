@@ -8,7 +8,7 @@ description = "Append-only signed account log: entries, invariants, and canonica
 # No `workspace = true` inheritance anywhere in this manifest: the crate must
 # resolve standalone so it can be lifted into its own repository unchanged.
 [dependencies]
-ed25519-dalek = { version = "2.2.0", features = ["rand_core"] }
+ed25519-dalek = { version = "2.2.0", features = ["rand_core", "zeroize"] }
 hex = "0.4.3"
 rand_core = { version = "0.6", features = ["getrandom"] }
 thiserror = "2"
