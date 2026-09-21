@@ -188,6 +188,29 @@ impl AccountLog {
             .collect()
     }
 
+    /// The Ed25519 keys removed under `context` and not live again, each once, in add order.
+    pub fn revoked_ed25519_keys_for(&self, context: &Context) -> Vec<Ed25519VerifyingKey> {
+        let live = self.ed25519_keys_for(context);
+        let removed = filter_mask_removed(&self.entries).expect("validated at construction");
+        let mut revoked = Vec::new();
+        for e in self.indexed() {
+            if let AccountEntry::Add {
+                context: c,
+                data: EntryData::Ed25519Key(bytes),
+            } = e.entry
+                && c == context
+                && removed[e.index as usize]
+            {
+                let key = Ed25519VerifyingKey::from_canonical_bytes(bytes)
+                    .expect("validated at construction");
+                if !live.contains(&key) && !revoked.contains(&key) {
+                    revoked.push(key);
+                }
+            }
+        }
+        revoked
+    }
+
     /// The text records live under `context`, in add order.
     pub fn text_for(&self, context: &Context) -> Vec<&str> {
         self.entries_for(context)
@@ -384,6 +407,30 @@ mod tests {
         assert_eq!(live.len(), 2);
         assert_eq!(live[0].as_ref(), &b[..]);
         assert_eq!(live[1].as_ref(), &c[..]);
+    }
+
+    /// A key removed twice is listed once; a key endorsed again is live, not revoked.
+    #[test]
+    fn revoked_keys_for_excludes_live_keys() {
+        let (a, b) = (key_bytes(), key_bytes());
+        let log = AccountLog::from_entries(vec![
+            key(a),
+            key(b),
+            AccountEntry::Remove { index: 0 },
+            key(a),
+            AccountEntry::Remove { index: 3 },
+            AccountEntry::Remove { index: 1 },
+            key(b),
+        ])
+        .unwrap();
+
+        let revoked = log.revoked_ed25519_keys_for(&SIGNER_CONTEXT);
+        assert_eq!(revoked.len(), 1);
+        assert_eq!(revoked[0].as_ref(), &a[..]);
+        assert!(
+            log.revoked_ed25519_keys_for(&Context::new("chat.other").unwrap())
+                .is_empty()
+        );
     }
 
     /// Selection is by context: an entry under another context is live but

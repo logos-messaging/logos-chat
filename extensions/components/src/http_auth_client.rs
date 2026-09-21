@@ -159,6 +159,11 @@ impl AuthService for HttpAuthClient {
                 .contains(&signer)
             {
                 AuthResult::Valid
+            } else if account_log
+                .revoked_ed25519_keys_for(&self.context)
+                .contains(&signer)
+            {
+                AuthResult::Revoked
             } else {
                 AuthResult::Invalid
             },
