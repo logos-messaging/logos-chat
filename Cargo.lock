@@ -3695,12 +3695,9 @@ dependencies = [
  "account",
  "components",
  "crossbeam-channel",
- "crypto",
  "embedded-logos-delivery",
- "hex",
  "libchat",
  "logos-generic-chat",
- "tracing",
 ]
 
 [[package]]

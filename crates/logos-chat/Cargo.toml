@@ -11,11 +11,8 @@ crate-type = ["rlib"]
 # Workspace dependencies (sorted)
 components = { workspace = true }
 crossbeam-channel = { workspace = true }
-crypto = { workspace = true }
 embedded-logos-delivery = { workspace = true }
 libchat = { workspace = true }
 logos-account = { workspace = true }
 logos-generic-chat = { workspace = true }
 
-hex = "0.4.3"
-tracing = "0.1"

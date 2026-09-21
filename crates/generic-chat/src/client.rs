@@ -15,7 +15,7 @@ use parking_lot::Mutex;
 use crate::errors::ClientError;
 use crate::event::Event;
 use crate::installation::Installation;
-use crate::members::{AuthenticatedMember, Member, account_id};
+use crate::members::{AuthenticatedMember, Signer, account_id};
 
 type ClientCore<T, R, A, S> = Core<(Installation, A, T, R, ThreadedWakeupService, S)>;
 type AccountAddressRef<'a> = &'a str;
@@ -213,18 +213,18 @@ where
 
     /// The conversation's committed members that pass auth, one per installation,
     /// for a direct conversation as for a group.
-    pub fn members(&self, convo_id: &str) -> Result<Vec<Member>, ClientError> {
+    pub fn members(&self, convo_id: &str) -> Result<Vec<Signer>, ClientError> {
         let members = self.core.lock().group_members(convo_id)?;
         Ok(members
             .into_iter()
             .filter_map(decode_member::<_, AuthenticatedMember>)
-            .map(Member::from)
+            .map(Signer::from)
             .collect())
     }
 
     /// Installations this client invited whose commit has not landed. A direct
     /// conversation has none.
-    pub fn pending_members(&self, convo_id: &str) -> Result<Vec<Member>, ClientError> {
+    pub fn pending_members(&self, convo_id: &str) -> Result<Vec<Signer>, ClientError> {
         let pending = self.core.lock().group_pending_members(convo_id)?;
         Ok(pending.into_iter().filter_map(decode_member).collect())
     }

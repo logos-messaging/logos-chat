@@ -69,7 +69,7 @@ impl fmt::Display for SignerKey {
 
 impl fmt::Debug for SignerKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Signer")
+        f.debug_tuple("SignerKey")
             .field(&hex::encode(self.as_bytes()))
             .finish()
     }

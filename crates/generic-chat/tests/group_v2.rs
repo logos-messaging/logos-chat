@@ -14,7 +14,7 @@ use libchat::ChatError;
 use logos_account::AccountAddr;
 use logos_generic_chat::{
     ChatClient, ChatClientBuilder, ClientError, ConversationClass, Event, GroupMetadata,
-    GroupV2Config, InProcessDelivery, Member, MessageBus, PendingInstallation,
+    GroupV2Config, InProcessDelivery, MessageBus, PendingInstallation, Signer,
 };
 
 /// Metadata for a group these tests create without a name or description.
@@ -294,7 +294,7 @@ fn invited_member_is_pending_until_the_group_commits() {
     saro.add_group_members(&convo_id, &[&raya_addr])
         .expect("saro invites raya");
 
-    let accounts = |members: Vec<Member>| -> Vec<String> {
+    let accounts = |members: Vec<Signer>| -> Vec<String> {
         members.iter().map(|m| m.account.to_string()).collect()
     };
     assert_eq!(

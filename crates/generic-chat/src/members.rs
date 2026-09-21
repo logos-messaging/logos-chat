@@ -5,29 +5,29 @@ use crate::errors::ClientError;
 
 /// One installation in a conversation, and the account it acts for.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Member {
-    pub signer: SignerKey,
+pub struct Signer {
+    pub signer_key: SignerKey,
     pub account: AccountAddr,
 }
 
-impl TryFrom<libchat::Signer> for Member {
+impl TryFrom<libchat::Signer> for Signer {
     type Error = ClientError;
 
     fn try_from(value: libchat::Signer) -> Result<Self, Self::Error> {
-        Ok(Member {
+        Ok(Signer {
             account: account_of(&value.participant_id)?,
-            signer: value.signer,
+            signer_key: value.signer,
         })
     }
 }
 
 /// A member the core's auth service vouched for.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthenticatedMember(Member);
+pub struct AuthenticatedMember(Signer);
 
 impl AuthenticatedMember {
     pub fn signer(&self) -> &SignerKey {
-        &self.0.signer
+        &self.0.signer_key
     }
 
     pub fn account(&self) -> &AccountAddr {
@@ -39,14 +39,14 @@ impl TryFrom<libchat::AuthenticatedMember> for AuthenticatedMember {
     type Error = ClientError;
 
     fn try_from(value: libchat::AuthenticatedMember) -> Result<Self, Self::Error> {
-        Ok(AuthenticatedMember(Member {
-            signer: value.signer().clone(),
+        Ok(AuthenticatedMember(Signer {
+            signer_key: value.signer().clone(),
             account: account_of(value.participant_id())?,
         }))
     }
 }
 
-impl From<AuthenticatedMember> for Member {
+impl From<AuthenticatedMember> for Signer {
     fn from(value: AuthenticatedMember) -> Self {
         value.0
     }
@@ -83,9 +83,9 @@ mod tests {
             participant_id: account_id(&account),
         };
 
-        let decoded = Member::try_from(member).expect("decodes");
+        let decoded = Signer::try_from(member).expect("decodes");
         assert_eq!(decoded.account, account);
-        assert_eq!(decoded.signer, signer);
+        assert_eq!(decoded.signer_key, signer);
     }
 
     #[test]
@@ -95,6 +95,6 @@ mod tests {
             participant_id: ParticipantId::from(b"saro".as_slice()),
         };
 
-        assert!(Member::try_from(member).is_err());
+        assert!(Signer::try_from(member).is_err());
     }
 }
