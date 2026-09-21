@@ -2,7 +2,7 @@ use crate::identity::SignerKey;
 use chat_proto::logoschat::encryption::EncryptedPayload;
 
 use crate::{
-    ChatError, ExternalServices, Signer, MessageId,
+    ChatError, ExternalServices, MessageId, Signer,
     conversation::{ConversationIdRef, Convo, GroupConvo, GroupV1Convo, Identified},
     service_context::ServiceContext,
 };
