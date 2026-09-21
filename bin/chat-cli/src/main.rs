@@ -34,7 +34,8 @@ enum GroupCommit {
     Default,
 }
 
-/// Fast GroupV2 timing so `/add` commits in ~1s instead of ~60s — for local
+/// Fast GroupV2 timing so a membership change (`/add`, `/remove`) commits in
+/// ~1s instead of ~60s — for local
 /// demos and tests. These are the vetted values from the library's group
 /// tests; they are deliberately aggressive and not appropriate for a
 /// high-latency network (hence `--group-commit auto` keeps defaults there).
@@ -72,8 +73,9 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = TransportKind::File)]
     transport: TransportKind,
 
-    /// How quickly group membership changes commit. `fast` makes `/add` commit
-    /// in ~1s (great for local demos); `default` uses production de-mls timing.
+    /// How quickly group membership changes commit. `fast` makes `/add` and
+    /// `/remove` commit in ~1s (great for local demos); `default` uses
+    /// production de-mls timing.
     /// `auto` (the default) picks `fast` for `--transport file` and `default`
     /// otherwise, since fast timers are too aggressive for a high-latency network.
     #[arg(long, value_enum, default_value_t = GroupCommit::Auto)]

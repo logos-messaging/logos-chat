@@ -292,6 +292,35 @@ impl GroupV2Convo {
         &self.convo_id
     }
 
+    /// Our own signer id, read off the leaf we occupy — `None` once a removal
+    /// commit has ejected us. A de-mls member id is the big-endian u32 of the
+    /// member's ratchet-tree leaf index; `member_id_bytes` is our own.
+    fn own_signer(&self) -> Option<IdentId> {
+        let me = self.conversation.member_id_bytes();
+        self.conversation
+            .members_view()
+            .iter()
+            .find(|m| m.index.u32().to_be_bytes().as_slice() == me)
+            .map(signer_of)
+    }
+
+    /// False if it's not a member.
+    fn is_member(&self) -> bool {
+        self.own_signer().is_some()
+    }
+
+    /// The seat each named signer holds, in group order, skipping those with no
+    /// leaf. A signer id is the hex of its MLS signature key.
+    fn seats_of(&self, members: &[IdentIdRef]) -> Vec<MemberId> {
+        let wanted: HashSet<&str> = members.iter().map(|m| m.as_str()).collect();
+        self.conversation
+            .members_view()
+            .iter()
+            .filter(|m| wanted.contains(signer_of(m).as_str()))
+            .map(MemberId::from)
+            .collect()
+    }
+
     /// Rebuild the member directory from the group's current members. Used to
     /// seed the set at construction, where no `MembersChanged` is emitted.
     fn rebuild_member_directory(&mut self) {
@@ -347,6 +376,11 @@ where
                 return Err(ChatError::generic("Expected plaintext"));
             }
         };
+
+        if !self.is_member() {
+            return Ok(ConvoOutcome::empty(self.convo_id.clone()));
+        }
+
         let frame = GroupV2Frame::decode(bytes.as_ref()).map_err(ChatError::generic)?;
         let inner = match frame.payload {
             Some(GroupV2Payload::DeMlsWrapper(b)) => b.to_vec(),
@@ -389,14 +423,7 @@ where
     }
 
     fn can_send(&self) -> bool {
-        // A de-mls member id is the big-endian u32 of the member's ratchet-tree
-        // leaf index; `member_id_bytes` is our own. We can send while a member
-        // still occupies that leaf — i.e. we have not been removed.
-        let me = self.conversation.member_id_bytes();
-        self.conversation
-            .members_view()
-            .iter()
-            .any(|m| m.index.u32().to_be_bytes().as_slice() == me)
+        self.is_member()
     }
 }
 
@@ -454,6 +481,47 @@ where
         // Flush even on a mid-loop failure: proposals already opened must be
         // published and the wakeup re-armed, or they sit dormant until an
         // unrelated frame drives the conversation.
+        let flushed = self.after_op(service_ctx).map(drop);
+        result.and(flushed)
+    }
+
+    /// Opens one de-mls removal round per named member: the group votes, so a
+    /// member is still seated when this returns and the commit ejecting them
+    /// surfaces later as a `MembersChanged`.
+    #[instrument(name = "groupv2.remove_member", skip_all, fields(user_id = %service_ctx.mls_identity.display_name()))]
+    fn remove_member(
+        &mut self,
+        service_ctx: &mut ServiceContext<S>,
+        members: &[IdentIdRef],
+    ) -> Result<(), ChatError> {
+        if let Some(me) = self.own_signer()
+            && members.contains(&&me)
+        {
+            return Err(ChatError::CannotRemoveSelf);
+        }
+
+        // Resolve up front so a request naming nobody seated opens no round.
+        let targets = self.seats_of(members);
+        if targets.is_empty() {
+            return Err(ChatError::NotAGroupMember);
+        }
+
+        let mut result = Ok(());
+        for target in &targets {
+            match self.conversation.remove_member(
+                &service_ctx.mls_provider,
+                &service_ctx.mls_identity,
+                target,
+            ) {
+                Ok(()) => {}
+                // Left or leaf reused since we resolved the seats; skip it.
+                Err(ConversationError::MemberGone) => {}
+                Err(e) => {
+                    result = Err(e.into());
+                    break;
+                }
+            }
+        }
         let flushed = self.after_op(service_ctx).map(drop);
         result.and(flushed)
     }
@@ -586,10 +654,15 @@ impl GroupV2Convo {
             })
             .transpose()?;
 
+        // `Leaving` is de-mls's "your own removal just committed". Listed in
+        // its own right rather than inferred from the `CommitApplied` beside
+        // it, which would depend on the path that delivered the commit.
         let members_changed = events.iter().any(|evt| {
             matches!(
                 evt,
-                ConversationEvent::CommitApplied(_) | ConversationEvent::WelcomeReady { .. }
+                ConversationEvent::CommitApplied(_)
+                    | ConversationEvent::WelcomeReady { .. }
+                    | ConversationEvent::Leaving
             )
         });
         Ok(ConvoOutcome {

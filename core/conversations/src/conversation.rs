@@ -69,6 +69,14 @@ pub(crate) trait GroupConvo<S: ExternalServices>: Convo<S> + std::fmt::Debug + S
         members: &[IdentIdRef],
     ) -> Result<(), ChatError>;
 
+    /// Remove members from the group, naming them by signer (installation) id
+    /// exactly as [`Self::add_member`] does.
+    fn remove_member(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        members: &[IdentIdRef],
+    ) -> Result<(), ChatError>;
+
     /// Each member this conversation invited and the group has not committed
     /// yet, in the same encoding as [`Self::members`]. Covers only invites
     /// [`Self::add_member`] made here, and is empty for a conversation kind

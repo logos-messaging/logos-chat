@@ -1,5 +1,5 @@
 use integration_tests_core::TestHarness;
-use libchat::{DeliveryAck, MissingMessage};
+use libchat::{ChatError, DeliveryAck, MissingMessage};
 use tracing::info;
 
 #[test]
@@ -176,6 +176,125 @@ fn core_client_four_members_two_epochs() {
             && h.pax().check(&convo_id, MSG)
             && h.mira().check(&convo_id, MSG)
     });
+}
+
+#[test]
+fn core_client_remove_member() {
+    // Saro removes Pax. The removal goes to consensus, so it lands on a later
+    // commit: settle until Pax is off every roster, then check Pax knows it
+    // can no longer send and the group left behind still works.
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_test_writer()
+        .try_init();
+
+    const MSG: &[u8] = b"STILL HERE";
+
+    let mut harness = TestHarness::<3>::new(|_, _| {});
+
+    let pax_addr = harness.pax().addr();
+    let particpants = &[&harness.raya().addr(), &pax_addr];
+    let convo_id = harness
+        .saro()
+        .create_group_convo_v2(particpants, "", "")
+        .expect("Saro create");
+
+    harness.process_until_label("Raya + Pax join", |h| {
+        h.raya().convo_count() == 1 && h.pax().convo_count() == 1
+    });
+    assert_eq!(
+        harness
+            .saro()
+            .group_members(&convo_id)
+            .expect("members")
+            .len(),
+        3
+    );
+
+    harness
+        .saro()
+        .group_remove_member(&convo_id, &[&pax_addr])
+        .expect("Saro remove Pax");
+
+    harness.process_until_label("Pax removed", |h| {
+        h.saro().group_members(&convo_id).map_or(0, |m| m.len()) == 2
+            && h.raya().group_members(&convo_id).map_or(0, |m| m.len()) == 2
+    });
+
+    // Pax applied the same commit and sees its own leaf gone.
+    assert!(!harness.pax().can_send(&convo_id));
+
+    // The remaining members are at the same epoch and still talking.
+    harness
+        .saro()
+        .send_content(&convo_id, MSG)
+        .expect("Saro send");
+    harness.process_until_label("Raya receives", |h| h.raya().check(&convo_id, MSG));
+}
+
+#[test]
+fn remove_member_refuses_to_target_self() {
+    // de-mls has `leave` for your own seat — a one-voter round — so a
+    // `remove_member` aimed at it is refused rather than put to the group.
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_test_writer()
+        .try_init();
+
+    let mut harness = TestHarness::<2>::new(|_, _| {});
+
+    let saro_addr = harness.saro().addr();
+    let particpants = &[&harness.raya().addr()];
+    let convo_id = harness
+        .saro()
+        .create_group_convo_v2(particpants, "", "")
+        .expect("Saro create");
+
+    harness.process_until_label("Raya join", |h| h.raya().convo_count() == 1);
+
+    let err = harness
+        .saro()
+        .group_remove_member(&convo_id, &[&saro_addr])
+        .expect_err("self-removal is refused");
+    assert!(matches!(err, ChatError::CannotRemoveSelf), "{err:?}");
+
+    // The refused call changed nothing.
+    assert!(harness.saro().can_send(&convo_id));
+    assert_eq!(
+        harness
+            .saro()
+            .group_members(&convo_id)
+            .expect("members")
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn remove_member_rejects_a_non_member() {
+    // Someone who never joined holds no leaf, so the call fails before any
+    // round opens.
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_test_writer()
+        .try_init();
+
+    let mut harness = TestHarness::<3>::new(|_, _| {});
+
+    let pax_addr = harness.pax().addr();
+    let particpants = &[&harness.raya().addr()];
+    let convo_id = harness
+        .saro()
+        .create_group_convo_v2(particpants, "", "")
+        .expect("Saro create");
+
+    harness.process_until_label("Raya join", |h| h.raya().convo_count() == 1);
+
+    let err = harness
+        .saro()
+        .group_remove_member(&convo_id, &[&pax_addr])
+        .expect_err("Pax is not a member");
+    assert!(matches!(err, ChatError::NotAGroupMember), "{err:?}");
 }
 
 #[test]
