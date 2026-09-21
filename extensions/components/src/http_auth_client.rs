@@ -5,9 +5,13 @@
 //! POST  ← signature || payload
 //! ```
 
+use std::io::Read;
 use std::time::Duration;
 
-use account_log::{AccountLog, AccountLogError, Context, Ed25519VerifyingKey, SignedAccountLog};
+use account_log::{
+    AccountLog, AccountLogError, CHATSIGNER_CONTEXT, Context, Ed25519VerifyingKey,
+    MAX_PAYLOAD_BYTES, SignedAccountLog,
+};
 use libchat::{AuthResult, AuthService, SignerKey};
 use logos_account::{AccountAddr, AccountProvider, AccountPublisher};
 use reqwest::StatusCode;
@@ -17,12 +21,17 @@ use tracing::info;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// The largest valid response: a 64-byte Ed25519 signature, then the payload.
+const MAX_ARTIFACT_BYTES: u64 = 64 + MAX_PAYLOAD_BYTES as u64;
+
 #[derive(Debug, thiserror::Error)]
 pub enum HttpAccountError {
     #[error("http: {0}")]
     Http(#[from] reqwest::Error),
     #[error("server returned status {0}: {1}")]
     Server(u16, String),
+    #[error("reading response: {0}")]
+    Io(#[from] std::io::Error),
     #[error("decode: {0}")]
     Decode(#[from] AccountLogError),
     #[error(transparent)]
@@ -111,7 +120,15 @@ impl AccountProvider for HttpAuthClient {
         if resp.status() == StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        let body = success(resp)?.bytes()?;
+        // The server is untrusted: read one byte past the cap, never the whole body.
+        let mut body = Vec::new();
+        success(resp)?
+            .take(MAX_ARTIFACT_BYTES + 1)
+            .read_to_end(&mut body)?;
+
+        if body.len() as u64 > MAX_ARTIFACT_BYTES {
+            return Err(AccountLogError::TooLarge(MAX_PAYLOAD_BYTES).into());
+        }
         Ok(Some(SignedAccountLog::from_bytes(&body)?))
     }
 }
