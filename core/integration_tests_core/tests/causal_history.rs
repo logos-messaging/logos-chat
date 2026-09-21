@@ -6,8 +6,9 @@
 
 use std::ops::{Deref, DerefMut};
 
-use components::{EphemeralRegistry, LocalBroadcaster, MemStore};
+use components::{EphemeralRegistry, LocalBroadcaster};
 use integration_tests_core::TestIdent;
+use libchat::test_support::MemStore;
 use libchat::{Core, MissingMessage, WakeupService};
 
 #[derive(Debug)]

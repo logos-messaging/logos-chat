@@ -6,13 +6,12 @@ use components::{ThreadedWakeupService, WakeupEvent};
 use crossbeam_channel::{Receiver, Sender, select};
 use crypto::Ed25519VerifyingKey;
 use libchat::{
-    ConversationId, ConvoMetadata, ConvoOutcome, Core, DeliveryAck, DeliveryService, GroupV2Config,
-    IdentId, IdentIdRef, InboxOutcome, MessageId, MissingMessage, PayloadOutcome,
-    RegistrationService,
+    ConversationId, ConversationStore, ConvoMetadata, ConvoOutcome, Core, DeliveryAck,
+    DeliveryService, GroupV2Config, IdentId, IdentIdRef, InboxOutcome, MessageId, MissingMessage,
+    PayloadOutcome, RegistrationService,
 };
 use logos_account::{AccountDirectory, resolve_device_ids};
 use parking_lot::Mutex;
-use storage::ConversationStore;
 
 use crate::delegate::{DelegateCredential, DelegateIdentity, DelegateSigner};
 use crate::errors::ClientError;
@@ -227,6 +226,23 @@ where
         self.core
             .lock()
             .group_add_member(convo_id, &signer_refs)
+            .map_err(Into::into)
+    }
+
+    /// Remove accounts' devices from a group conversation. Every device the
+    /// account's bundle endorses is named; those with no seat are skipped, and
+    /// the call fails if none holds one.
+    pub fn remove_group_members(
+        &mut self,
+        convo_id: &str,
+        accounts: &[AccountAddressRef],
+    ) -> Result<(), ClientError> {
+        let signers = self.signers_from_accounts(accounts)?;
+        let signer_refs: Vec<IdentIdRef> = signers.iter().collect();
+
+        self.core
+            .lock()
+            .group_remove_member(convo_id, &signer_refs)
             .map_err(Into::into)
     }
 

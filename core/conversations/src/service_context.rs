@@ -1,13 +1,11 @@
 //! Bundles the services a conversation operation needs into one [`ServiceContext`].
 
-use storage::ConversationStore;
-
 use crate::IdentityProvider;
 use crate::causal_history::CausalHistoryStore;
 use crate::conversation::GroupV2Clock;
 use crate::inbox_v2::{MlsEphemeralPqProvider, MlsIdentityProvider};
 use crate::service_traits::WakeupService;
-use crate::{DeliveryService, RegistrationService};
+use crate::{ConversationStore, DeliveryService, RegistrationService};
 
 /// Bundles the external service types (`DS`, `RS`, `CS`) behind one `S`. The
 /// `(DS, RS, CS)` tuple impl lets them still be supplied separately.

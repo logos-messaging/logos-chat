@@ -6,13 +6,14 @@
 
 use std::time::Duration;
 
+use chat_sqlite::SqliteStore;
 use components::EphemeralRegistry;
 use crossbeam_channel::Receiver;
-use libchat::ChatStorage;
+use libchat::ChatError;
 use logos_account::TestLogosAccount;
 use logos_generic_chat::{
-    ChatClient, ChatClientBuilder, ConversationClass, DelegateSigner, Event, GroupMetadata,
-    GroupV2Config, InProcessDelivery, MessageBus,
+    ChatClient, ChatClientBuilder, ClientError, ConversationClass, DelegateSigner, Event,
+    GroupMetadata, GroupV2Config, InProcessDelivery, MessageBus,
 };
 
 /// Metadata for a group these tests create without a name or description.
@@ -38,7 +39,7 @@ fn fast_group_v2_config() -> GroupV2Config {
     }
 }
 
-type TestClient = ChatClient<InProcessDelivery, EphemeralRegistry, ChatStorage>;
+type TestClient = ChatClient<InProcessDelivery, EphemeralRegistry, SqliteStore>;
 
 /// A client for a fresh account: mints the account and a delegate, publishes
 /// the endorsing bundle, and builds the client on the shared bus/registry with
@@ -406,6 +407,110 @@ fn add_batch_with_missing_key_package_invites_no_one() {
     // The failed add left the group functional.
     saro.send_message(&convo_id, b"still alive").unwrap();
     wait_for_message(&raya_events, b"still alive");
+}
+
+/// A removed member leaves every roster and loses its ability to send, while
+/// the members left behind stay converged and keep talking.
+#[test]
+fn a_removed_member_leaves_the_roster() {
+    let bus = MessageBus::default();
+    let reg = EphemeralRegistry::new();
+
+    let (mut saro, _saro_events, saro_addr) = create_test_client(bus.clone(), reg.clone());
+    let (mut raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone());
+    let (mut pax, pax_events, pax_addr) = create_test_client(bus.clone(), reg.clone());
+
+    let convo_id = saro
+        .create_group_conversation(&[&raya_addr, &pax_addr], unnamed_group())
+        .expect("saro create group");
+    wait_for_group_started(&raya_events, "raya ConversationStarted");
+    wait_for_group_started(&pax_events, "pax ConversationStarted");
+    wait_for_members(&mut saro, &convo_id, &[&saro_addr, &raya_addr, &pax_addr]);
+    wait_for_members(&mut pax, &convo_id, &[&saro_addr, &raya_addr, &pax_addr]);
+
+    // A consensus round: pax is still seated when the call returns and drops
+    // off each roster as the ejecting commit is applied.
+    saro.remove_group_members(&convo_id, &[&pax_addr])
+        .expect("saro remove pax");
+    wait_for_members(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
+    wait_for_members(&mut raya, &convo_id, &[&saro_addr, &raya_addr]);
+    wait_for_members(&mut pax, &convo_id, &[&saro_addr, &raya_addr]);
+
+    // Pax is told it is out rather than left to notice its roster shrank.
+    wait_for_event(
+        &pax_events,
+        "pax ConversationMembersChanged",
+        Duration::from_secs(10),
+        |e| match e {
+            Event::ConversationMembersChanged { convo_id: id } => Some(id.to_string()),
+            _ => None,
+        },
+    );
+    // Pax applied the same commit and sees its own leaf gone.
+    assert!(!pax.can_send(&convo_id));
+
+    // The group carries on for the two members that remain.
+    saro.send_message(&convo_id, b"just us now").unwrap();
+    assert_eq!(
+        wait_for_message(&raya_events, b"just us now").as_deref(),
+        Some(saro_addr.as_str())
+    );
+}
+
+/// de-mls has `leave` for your own seat — a one-voter round — so a removal
+/// aimed at your own account is refused rather than put to the group.
+#[test]
+fn removing_yourself_is_refused() {
+    let bus = MessageBus::default();
+    let reg = EphemeralRegistry::new();
+
+    let (mut saro, _saro_events, saro_addr) = create_test_client(bus.clone(), reg.clone());
+    let (_raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone());
+
+    let convo_id = saro
+        .create_group_conversation(&[&raya_addr], unnamed_group())
+        .expect("saro create group");
+    wait_for_group_started(&raya_events, "raya ConversationStarted");
+    wait_for_members(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
+
+    let err = saro
+        .remove_group_members(&convo_id, &[&saro_addr])
+        .expect_err("self-removal is refused");
+    assert!(
+        matches!(err, ClientError::Chat(ChatError::CannotRemoveSelf)),
+        "{err:?}"
+    );
+
+    // The refused call left the group untouched and still working.
+    wait_for_members(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
+    saro.send_message(&convo_id, b"still here").unwrap();
+    wait_for_message(&raya_events, b"still here");
+}
+
+/// An account with no seat names nobody the group could remove, so the call
+/// fails before any round opens.
+#[test]
+fn removing_a_non_member_is_an_error() {
+    let bus = MessageBus::default();
+    let reg = EphemeralRegistry::new();
+
+    let (mut saro, _saro_events, saro_addr) = create_test_client(bus.clone(), reg.clone());
+    let (_raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone());
+    let (_pax, _pax_events, pax_addr) = create_test_client(bus.clone(), reg.clone());
+
+    let convo_id = saro
+        .create_group_conversation(&[&raya_addr], unnamed_group())
+        .expect("saro create group");
+    wait_for_group_started(&raya_events, "raya ConversationStarted");
+    wait_for_members(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
+
+    let err = saro
+        .remove_group_members(&convo_id, &[&pax_addr])
+        .expect_err("pax was never in the group");
+    assert!(
+        matches!(err, ClientError::Chat(ChatError::NotAGroupMember)),
+        "{err:?}"
+    );
 }
 
 /// Group membership is resolved through the account directory, so inviting an
