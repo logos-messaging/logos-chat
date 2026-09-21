@@ -150,6 +150,7 @@ pub fn open_with_transport<T: Transport + Clone>(
     // Auth uses the same server as registry for the time being
     let auth = HttpAuthClient::new(config.registry_url);
 
+    // TODO: (P2) Load existing account once persistence is in place
     let installation = register_account(auth.clone())?;
 
     let mut builder = ChatClientBuilder::new(installation)
@@ -187,8 +188,8 @@ fn register_account<A: AccountPublisher + AccountProvider>(
     let pending = PendingInstallation::generate();
 
     let mut account = logos_account::Account::new(auth_client);
-    let key = Ed25519VerifyingKey::from_canonical_slice(&pending.endorsement_request())
-        .expect("compile time defined");
+    let key = Ed25519VerifyingKey::from_canonical_slice(&pending.endorsement_request())?;
+
     let _ = account
         .update()
         .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &key)

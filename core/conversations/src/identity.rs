@@ -168,7 +168,7 @@ impl From<AuthResult> for AuthStatus {
 
 /// A member the auth service found valid.
 ///
-/// [`Member::require_valid`] is the only constructor, so holding one
+/// [`Signer::require_valid`] is the only constructor, so holding one
 /// is proof the check passed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthenticatedMember(Signer);
