@@ -56,7 +56,7 @@ pub struct AcceptAllAuth;
 impl libchat::AuthService for AcceptAllAuth {
     type Error = std::convert::Infallible;
 
-    fn validate_member(
+    fn validate_signer(
         &self,
         _signer: SignerKey,
         _participant_id: libchat::ParticipantId,

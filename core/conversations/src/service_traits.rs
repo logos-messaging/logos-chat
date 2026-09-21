@@ -66,9 +66,9 @@ pub enum AuthResult {
 
 pub trait AuthService: Debug {
     type Error: Display + Debug;
-    fn validate_member(
+    fn validate_signer(
         &self,
-        signer: SignerKey,
+        signer_key: SignerKey,
         participant_id: ParticipantId,
     ) -> Result<AuthResult, Self::Error>;
 }
