@@ -22,7 +22,7 @@ This record fixes the vocabulary and where each identity concept lives.
 
 ## Decision Drivers
 
-- **Clarity through types.** Each identity concept is its own type, so the compiler keeps a signer key, a participant, a `PendingSigner` and a signer apart, and anything the core hands out as authenticated can only come from an auth check.
+- **Clarity through types.** Each identity concept is its own type, so the compiler keeps a signer key, a participant and a signer apart, and anything the core hands out as authenticated can only come from an auth check.
 - **Standardize naming.** The same concepts went by several names (delegate, device, local identity, external id), used inconsistently. Each concept now has one name, used the same way in the core, the client and the docs.
 - **The core stays generic.** It never learns what an account is; a client decides.
 - **No one-app-per-machine assumption.** A person may run several installations on one machine.
@@ -36,7 +36,6 @@ This record fixes the vocabulary and where each identity concept lives.
 | Participant | `ParticipantId` | The user an installation acts for. Opaque bytes to the core. |
 | Signer | `Signer { key, participant_id, auth_state }` | A SignerKey and an associated Participant, committed to a group, with its current `AuthState`. |
 | Auth state | `AuthState` | The `AuthService`'s verdict, checked when read: `Authenticated`, `Revoked`, `Invalid` or `Unknown`. |
-| PendingSigner | `PendingSigner { key, participant_id }` | A SignerKey and an associated Participant, as they will appear in a conversation. |
 
 
 ## Decisions
@@ -91,7 +90,7 @@ This record fixes the vocabulary and where each identity concept lives.
 
 9. **Identifiers are typed, never strings.** `SignerKey` and `ParticipantId` are separate types over bytes rather than hex strings or a shared generic id, so passing a `ParticipantId` where a `SignerKey` is expected is a compile error. Text appears only at the edges (display, registry keys, causal history's wire field, account addresses passed to the client) and is parsed once on the way in.
 
-10. **`ParticipantId` is a concrete type, not an associated type.** An associated type on `AuthService` would hand the client its account type directly, with no decoding. But the type parameter would spread through `Signer`, `Content`, `ConvoOutcome`, `PayloadOutcome` and every client function that handles them. The core carries opaque bytes instead, and the client pays one fallible decode per signer or `PendingSigner` (decision 2).
+10. **`ParticipantId` is a concrete type, not an associated type.** An associated type on `AuthService` would hand the client its account type directly, with no decoding. But the type parameter would spread through `Signer`, `Content`, `ConvoOutcome`, `PayloadOutcome` and every client function that handles them. The core carries opaque bytes instead, and the client pays one fallible decode per signer (decision 2).
 
 ## Consequences
 
