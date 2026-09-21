@@ -81,7 +81,7 @@ pub enum SignerError {
 /// Represents an external Identity
 /// Implement this to provide an Authentication model for users/installations
 pub trait IdentityProvider {
-    fn signer(&self) -> SignerRef<'_>;
+    fn signer_key(&self) -> SignerRef<'_>;
     fn participant_id(&self) -> ParticipantId;
 
     // Display name is not garenteed to be consistent. It should only be used to

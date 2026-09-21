@@ -189,7 +189,7 @@ impl<D: DeliveryService> RegistrationService for ContactRegistry<D> {
         // submission around them differs. Sign once, then branch on transport.
         let payload = encode_payload(timestamp_ms, &key_bundle);
         let signature = identity.sign(&payload);
-        let device_id = identity.signer().as_bytes();
+        let device_id = identity.signer_key().as_bytes();
 
         match self.publish_mode {
             RegistryPublishMode::Http => self.http_post(
@@ -450,7 +450,7 @@ mod tests {
     }
 
     impl IdentityProvider for TestIdent {
-        fn signer(&self) -> SignerRef<'_> {
+        fn signer_key(&self) -> SignerRef<'_> {
             &self.signer
         }
         fn participant_id(&self) -> libchat::ParticipantId {

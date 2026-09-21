@@ -27,7 +27,7 @@ impl TestIdent {
 }
 
 impl IdentityProvider for TestIdent {
-    fn signer(&self) -> SignerRef<'_> {
+    fn signer_key(&self) -> SignerRef<'_> {
         &self.signer
     }
 

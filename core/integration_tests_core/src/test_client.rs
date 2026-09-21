@@ -174,7 +174,7 @@ impl<const N: usize> TestHarness<N> {
             let wp = ws.new_provider(i);
             let ident = TestIdent::new(Self::names(i));
 
-            addresses.insert(i, ident.signer().clone());
+            addresses.insert(i, ident.signer_key().clone());
             let mut core_client =
                 ClientType::new_with_name(ident, ds.clone(), rs.clone(), wp, MemStore::new())
                     .unwrap();

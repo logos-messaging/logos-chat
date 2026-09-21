@@ -99,7 +99,7 @@ where
         // directory lists and the registries key key-packages under, so it is
         // exactly what an inviter can derive for this installation. The MLS
         // credential below still carries the full `id()`.
-        let signer = ident.signer().clone();
+        let signer = ident.signer_key().clone();
         let mls_identity = MlsIdentityProvider::new(ident);
         let mls_provider = MlsEphemeralPqProvider::new().map_err(ChatError::generic)?;
         let causal = CausalHistoryStore::new();
@@ -151,7 +151,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
     }
 
     pub fn installation_name(&self) -> String {
-        self.services.mls_identity.signer().to_string()
+        self.services.mls_identity.signer_key().to_string()
     }
 
     pub fn create_direct_convo(
@@ -432,7 +432,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
     }
 
     pub fn wakeup(&mut self, convo_id: ConversationIdRef) -> Result<PayloadOutcome, ChatError> {
-        info!(convos = ?self.cached_convos.keys().collect::<Vec<_>>(), id = ?self.services.mls_identity.signer(), "Cached Convos");
+        info!(convos = ?self.cached_convos.keys().collect::<Vec<_>>(), id = ?self.services.mls_identity.signer_key(), "Cached Convos");
 
         match convo_id {
             c if c == self.pq_inbox.id() => todo!(),

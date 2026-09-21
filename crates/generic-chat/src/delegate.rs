@@ -57,7 +57,7 @@ impl DelegateIdentity {
 }
 
 impl IdentityProvider for DelegateIdentity {
-    fn signer(&self) -> libchat::SignerRef<'_> {
+    fn signer_key(&self) -> libchat::SignerRef<'_> {
         &self.identity
     }
 

@@ -356,10 +356,11 @@ where
         service_ctx: &mut super::ServiceContext<S>,
         content: &[u8],
     ) -> Result<MessageId, ChatError> {
-        let reliable =
-            service_ctx
-                .causal
-                .on_send(&self.convo_id, service_ctx.mls_identity.signer(), content);
+        let reliable = service_ctx.causal.on_send(
+            &self.convo_id,
+            service_ctx.mls_identity.signer_key(),
+            content,
+        );
 
         self.conversation.send_message(
             &service_ctx.mls_provider,

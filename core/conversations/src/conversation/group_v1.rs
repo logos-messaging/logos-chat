@@ -181,7 +181,7 @@ impl GroupV1Convo {
     ) -> Result<MessageId, ChatError> {
         let reliable = cx
             .causal
-            .on_send(&self.convo_id, cx.mls_identity.signer(), content);
+            .on_send(&self.convo_id, cx.mls_identity.signer_key(), content);
         let wire = reliable.encode_to_vec();
 
         let mls_message_out = self
