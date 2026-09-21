@@ -140,29 +140,39 @@ impl AuthService for HttpAuthClient {
         signer_key: libchat::SignerKey,
         participant_id: libchat::ParticipantId,
     ) -> Result<libchat::AuthResult, Self::Error> {
-        let addr = to_account_addr(&participant_id)?;
-        let signer = Ed25519VerifyingKey::from_canonical_slice(signer_key.as_bytes())?;
+        // A malformed claim is a definite no, not a failure to decide.
+        let Ok(addr) = AccountAddr::try_from(participant_id.as_bytes()) else {
+            return Ok(AuthResult::Invalid);
+        };
+
+        let Ok(signer) = Ed25519VerifyingKey::from_canonical_slice(signer_key.as_bytes()) else {
+            return Ok(AuthResult::Invalid);
+        };
 
         let Some(account_log) = self.get_account_log(&addr)? else {
             return Ok(libchat::AuthResult::Invalid);
         };
-        let a = account_log
-            .ed25519_keys_for(&self.context)
-            .contains(&signer);
 
-        let result = if a {
-            AuthResult::Valid
-        } else {
-            AuthResult::Invalid
-        };
-        Ok(result)
+        Ok(
+            if account_log
+                .ed25519_keys_for(&self.context)
+                .contains(&signer)
+            {
+                AuthResult::Valid
+            } else {
+                AuthResult::Invalid
+            },
+        )
     }
 
     fn signers_for_participant(
         &self,
         participant_id: &libchat::ParticipantId,
     ) -> Result<Vec<SignerKey>, Self::Error> {
-        let addr = to_account_addr(participant_id)?;
+        // A malformed address is an resolution failure.
+        let addr =
+            AccountAddr::try_from(participant_id.as_bytes()).map_err(HttpAccountError::from)?;
+
         let Some(account_log) = self.get_account_log(&addr)? else {
             // The server has returned a success code but
             return Err(HttpAccountError::AccountNotFound(addr.to_string()));
@@ -179,8 +189,4 @@ impl AuthService for HttpAuthClient {
         }
         Ok(signers)
     }
-}
-
-fn to_account_addr(participant: &libchat::ParticipantId) -> Result<AccountAddr, HttpAccountError> {
-    AccountAddr::try_from(participant.as_bytes()).map_err(HttpAccountError::from)
 }

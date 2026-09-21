@@ -19,6 +19,8 @@ use components::{ContactRegistry, HttpAuthClient, RegistryPublishMode};
 use crossbeam_channel::Receiver;
 use embedded_logos_delivery::{EmbeddedLogosDelivery, P2pConfig};
 use logos_account::AccountError;
+use logos_account::AccountProvider;
+use logos_account::AccountPublisher;
 use logos_account::Ed25519VerifyingKey;
 
 use logos_account::SIGNER_CONTEXT;
@@ -28,7 +30,6 @@ use logos_generic_chat::{
     ChatClient, ChatClientBuilder, ClientError, Event, GroupV2Config, Installation,
     PendingInstallation, Transport,
 };
-use tracing::info;
 
 /// The endpoint for the account and keypackage registration service.
 pub const REGISTRY_ENDPOINT: &str = "https://devnet.chat-kc.logos.co";
@@ -149,7 +150,7 @@ pub fn open_with_transport<T: Transport + Clone>(
     // Auth uses the same server as registry for the time being
     let auth = HttpAuthClient::new(config.registry_url);
 
-    let installation = register_account()?;
+    let installation = register_account(auth.clone())?;
 
     let mut builder = ChatClientBuilder::new(installation)
         .transport(transport)
@@ -180,12 +181,12 @@ pub type LogosChatClient = ChatClient<
     SqliteStore,
 >;
 
-fn register_account() -> Result<Installation, AccountError> {
+fn register_account<A: AccountPublisher + AccountProvider>(
+    auth_client: A,
+) -> Result<Installation, AccountError> {
     let pending = PendingInstallation::generate();
-    info!("REgisterAccount");
-    let http_auth_client = HttpAuthClient::default();
 
-    let mut account = logos_account::Account::new(http_auth_client);
+    let mut account = logos_account::Account::new(auth_client);
     let key = Ed25519VerifyingKey::from_canonical_slice(&pending.endorsement_request())
         .expect("compile time defined");
     let _ = account
