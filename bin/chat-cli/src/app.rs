@@ -10,7 +10,6 @@ use logos_chat::{
     GroupMetadata, RegistrationService, Transport,
 };
 use serde::{Deserialize, Serialize};
-use tracing::error;
 
 use crate::utils::now;
 
@@ -111,7 +110,6 @@ where
         data_dir: &Path,
     ) -> Result<Self> {
         fs::create_dir_all(data_dir)?;
-        error!("STARTING");
         let state_path = data_dir.join(format!("{user_name}_state.json"));
         let state = Self::load_state(&state_path);
 

@@ -17,7 +17,6 @@ use logos_account::{AccountAddr, AccountProvider, AccountPublisher};
 use reqwest::StatusCode;
 use reqwest::blocking::{Client, Response};
 use reqwest::header::CONTENT_TYPE;
-use tracing::info;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -144,7 +143,7 @@ impl AccountPublisher for HttpAuthClient {
             .header(CONTENT_TYPE, "application/octet-stream")
             .body(log.to_bytes())
             .send()?;
-        info!("Publishing");
+
         success(resp).map(drop)
     }
 }

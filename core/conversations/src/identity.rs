@@ -3,7 +3,7 @@
 //! ```text
 //! SignerKey                           an installation: the key it signs under
 //! ParticipantId                       a participant: the user an installation acts for
-//! Member { signer, participant_id }   one installation of one participant, in a conversation
+//! Signer { signer_key, participant_id }   one installation of one participant, in a conversation
 //!   │  AuthService
 //!   └──► AuthenticatedMember          a member the service vouched for
 //! ```
