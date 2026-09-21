@@ -43,17 +43,6 @@ impl From<Ed25519VerifyingKey> for AccountAddr {
     }
 }
 
-impl TryFrom<&str> for AccountAddr {
-    type Error = AccountAddrError;
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        Self::try_from(
-            hex::decode(value)
-                .map_err(|_| AccountAddrError::InvalidAddress)?
-                .as_slice(),
-        )
-    }
-}
-
 /// The string form is exactly what [`Display`](fmt::Display) produces: 64
 /// lowercase hex characters, unprefixed. Uppercase and prefixed variants are
 /// rejected rather than accepted-and-normalized, so one address has one

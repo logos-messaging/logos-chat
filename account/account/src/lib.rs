@@ -8,7 +8,7 @@ pub use crate::account::Account;
 pub use crate::error::AccountError;
 pub use crate::resolver::AccountResolver;
 use account_log::SignedAccountLog;
-pub use account_log::{AccountAddr, Ed25519VerifyingKey, SIGNER_CONTEXT};
+pub use account_log::{AccountAddr, Ed25519VerifyingKey, CHATSIGNER_CONTEXT};
 
 /// Read access to published account logs.
 ///

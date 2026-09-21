@@ -371,7 +371,7 @@ pub(crate) fn compare_log_freshness(existing: &[u8], candidate: &[u8]) -> LogFre
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::SIGNER_CONTEXT;
+    use crate::context::CHATSIGNER_CONTEXT;
 
     /// A fresh usable key. Keys are validated now, so `[byte; 32]` no longer
     /// serves as a stand-in.
@@ -384,11 +384,11 @@ mod tests {
     }
 
     fn key(bytes: [u8; 32]) -> AccountEntry {
-        AccountEntry::add(SIGNER_CONTEXT.clone(), EntryData::Ed25519Key(bytes))
+        AccountEntry::add(CHATSIGNER_CONTEXT.clone(), EntryData::Ed25519Key(bytes))
     }
 
     fn text(value: &str) -> AccountEntry {
-        AccountEntry::add(SIGNER_CONTEXT.clone(), EntryData::Text(value.into()))
+        AccountEntry::add(CHATSIGNER_CONTEXT.clone(), EntryData::Text(value.into()))
     }
 
     /// Tombstones are applied and add order is preserved.
@@ -403,7 +403,7 @@ mod tests {
         ])
         .unwrap();
 
-        let live = log.ed25519_keys_for(&SIGNER_CONTEXT);
+        let live = log.ed25519_keys_for(&CHATSIGNER_CONTEXT);
         assert_eq!(live.len(), 2);
         assert_eq!(live[0].as_ref(), &b[..]);
         assert_eq!(live[1].as_ref(), &c[..]);
@@ -424,7 +424,7 @@ mod tests {
         ])
         .unwrap();
 
-        let revoked = log.revoked_ed25519_keys_for(&SIGNER_CONTEXT);
+        let revoked = log.revoked_ed25519_keys_for(&CHATSIGNER_CONTEXT);
         assert_eq!(revoked.len(), 1);
         assert_eq!(revoked[0].as_ref(), &a[..]);
         assert!(
@@ -445,7 +445,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(log.ed25519_keys_for(&SIGNER_CONTEXT).len(), 1);
+        assert_eq!(log.ed25519_keys_for(&CHATSIGNER_CONTEXT).len(), 1);
         assert_eq!(log.ed25519_keys_for(&other).len(), 1);
         assert!(
             log.ed25519_keys_for(&Context::new("chat.other").unwrap())
@@ -458,8 +458,8 @@ mod tests {
     #[test]
     fn text_records_select_by_context() {
         let log = AccountLog::from_entries(vec![text("alice"), text("alice j")]).unwrap();
-        assert_eq!(log.text_for(&SIGNER_CONTEXT), vec!["alice", "alice j"]);
-        assert!(log.ed25519_keys_for(&SIGNER_CONTEXT).is_empty());
+        assert_eq!(log.text_for(&CHATSIGNER_CONTEXT), vec!["alice", "alice j"]);
+        assert!(log.ed25519_keys_for(&CHATSIGNER_CONTEXT).is_empty());
     }
 
     /// An unknown opcode holds its slot: it stays live, keeps its index, and
@@ -477,7 +477,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert!(log.ed25519_keys_for(&SIGNER_CONTEXT).is_empty());
+        assert!(log.ed25519_keys_for(&CHATSIGNER_CONTEXT).is_empty());
         assert_eq!(log.live_indexed().len(), 1);
     }
 

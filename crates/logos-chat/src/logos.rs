@@ -23,7 +23,7 @@ use logos_account::AccountProvider;
 use logos_account::AccountPublisher;
 use logos_account::Ed25519VerifyingKey;
 
-use logos_account::SIGNER_CONTEXT;
+use logos_account::CHATSIGNER_CONTEXT;
 use logos_generic_chat::SqliteStore;
 use logos_generic_chat::StorageConfig;
 use logos_generic_chat::{
@@ -191,7 +191,7 @@ fn register_account<A: AccountPublisher + AccountProvider>(
         .expect("compile time defined");
     let _ = account
         .update()
-        .endorse_ed25519_key(SIGNER_CONTEXT.clone(), &key)
+        .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &key)
         .publish()?;
 
     Ok(pending.complete(account.addr()))

@@ -69,7 +69,7 @@ fn success(resp: Response) -> Result<Response, HttpAccountError> {
 }
 
 fn default_context() -> Context {
-    Context::new("chat.signer").expect("hardcoded valid context")
+    CHATSIGNER_CONTEXT.clone()
 }
 
 #[derive(Debug, Clone)]

@@ -127,7 +127,7 @@ fn ensure_single_use_keys(log: &AccountLog) -> Result<(), AccountLogError> {
 mod tests {
     use super::*;
     use crate::account_log::EntryData;
-    use crate::context::SIGNER_CONTEXT;
+    use crate::context::CHATSIGNER_CONTEXT;
     use crate::crypto::Ed25519SigningKey;
 
     fn key() -> AccountEntry {
@@ -136,7 +136,7 @@ mod tests {
             .as_ref()
             .try_into()
             .expect("32 bytes");
-        AccountEntry::add(SIGNER_CONTEXT.clone(), EntryData::Ed25519Key(bytes))
+        AccountEntry::add(CHATSIGNER_CONTEXT.clone(), EntryData::Ed25519Key(bytes))
     }
 
     /// A draft carries prior entries over untouched, so what it produces
@@ -180,7 +180,7 @@ mod tests {
             .expect("32 bytes");
         let mut draft = AccountLogDraft::new();
         draft
-            .add(SIGNER_CONTEXT.clone(), EntryData::Ed25519Key(bytes))
+            .add(CHATSIGNER_CONTEXT.clone(), EntryData::Ed25519Key(bytes))
             .unwrap();
 
         assert!(matches!(
@@ -193,7 +193,7 @@ mod tests {
 
         draft.revoke(0).unwrap();
         draft
-            .add(SIGNER_CONTEXT.clone(), EntryData::Ed25519Key(bytes))
+            .add(CHATSIGNER_CONTEXT.clone(), EntryData::Ed25519Key(bytes))
             .unwrap();
         assert_eq!(draft.live_entries().len(), 1);
     }
@@ -216,7 +216,7 @@ mod tests {
         .unwrap();
 
         // Reading is unaffected.
-        assert_eq!(log.ed25519_keys_for(&SIGNER_CONTEXT).len(), 1);
+        assert_eq!(log.ed25519_keys_for(&CHATSIGNER_CONTEXT).len(), 1);
 
         assert!(matches!(
             AccountLogDraft::from_log(&log),
@@ -238,7 +238,7 @@ mod tests {
                 body: vec![0xde, 0xad],
             },
             AccountEntry::add(
-                SIGNER_CONTEXT.clone(),
+                CHATSIGNER_CONTEXT.clone(),
                 EntryData::Unknown {
                     tag: 0x7f,
                     body: vec![1, 2, 3],

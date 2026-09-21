@@ -28,7 +28,7 @@ pub use account_log::{
 pub use account_record::{AccountRecord, AccountRecordUpdate, Outcome};
 pub use addr::AccountAddr;
 pub use codec::{ACCOUNT_LOG_DOMAIN, MAX_PAYLOAD_BYTES};
-pub use context::{Context, SIGNER_CONTEXT};
+pub use context::{Context, CHATSIGNER_CONTEXT};
 pub use crypto::{Ed25519SigningKey, Ed25519VerifyingKey};
 pub use draft::AccountLogDraft;
 pub use error::{AccountAddrError, AccountLogError};

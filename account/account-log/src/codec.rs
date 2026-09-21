@@ -284,7 +284,7 @@ fn split_at_checked(body: &[u8], mid: usize) -> Result<(&[u8], &[u8]), AccountLo
 mod tests {
     use super::*;
     use crate::AccountAddr;
-    use crate::context::SIGNER_CONTEXT;
+    use crate::context::CHATSIGNER_CONTEXT;
     use crate::crypto::Ed25519SigningKey;
 
     fn key_bytes() -> [u8; 32] {
@@ -296,7 +296,7 @@ mod tests {
     }
 
     fn key() -> AccountEntry {
-        AccountEntry::add(SIGNER_CONTEXT.clone(), EntryData::Ed25519Key(key_bytes()))
+        AccountEntry::add(CHATSIGNER_CONTEXT.clone(), EntryData::Ed25519Key(key_bytes()))
     }
 
     fn make_log(entries: Vec<AccountEntry>) -> AccountLog {
@@ -325,7 +325,7 @@ mod tests {
                 body: vec![0xde, 0xad, 0xbe, 0xef],
             },
             AccountEntry::add(
-                SIGNER_CONTEXT.clone(),
+                CHATSIGNER_CONTEXT.clone(),
                 EntryData::Unknown {
                     tag: 0x7f,
                     body: vec![1, 2, 3],
@@ -348,7 +348,7 @@ mod tests {
     #[test]
     fn empty_text_roundtrips() {
         let log = make_log(vec![AccountEntry::add(
-            SIGNER_CONTEXT.clone(),
+            CHATSIGNER_CONTEXT.clone(),
             EntryData::Text(String::new()),
         )]);
         assert_eq!(
@@ -434,8 +434,8 @@ mod tests {
         ));
 
         // An Add(Ed25519Key) with 31 key bytes.
-        let mut body = vec![SIGNER_CONTEXT.as_bytes().len() as u8];
-        body.extend_from_slice(SIGNER_CONTEXT.as_bytes());
+        let mut body = vec![CHATSIGNER_CONTEXT.as_bytes().len() as u8];
+        body.extend_from_slice(CHATSIGNER_CONTEXT.as_bytes());
         body.push(DATA_ED25519);
         body.extend_from_slice(&[7u8; 31]);
         let mut bytes = ACCOUNT_LOG_DOMAIN.to_vec();
@@ -481,7 +481,7 @@ mod tests {
             Err(AccountLogError::Malformed(m)) if m.contains("context length is zero")
         ));
 
-        let context = SIGNER_CONTEXT.as_bytes();
+        let context = CHATSIGNER_CONTEXT.as_bytes();
         let mut bytes = ACCOUNT_LOG_DOMAIN.to_vec();
         bytes.push(OP_ADD);
         bytes.extend_from_slice(&((1 + context.len()) as u16).to_le_bytes());
