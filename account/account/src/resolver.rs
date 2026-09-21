@@ -79,7 +79,7 @@ impl<P: AccountProvider> AccountResolver<P> {
 mod tests {
     use super::*;
     use account_log::{
-        AccountLogDraft, Ed25519SigningKey, EntryData, CHATSIGNER_CONTEXT, SignedAccountLog,
+        AccountLogDraft, CHATSIGNER_CONTEXT, Ed25519SigningKey, EntryData, SignedAccountLog,
     };
 
     /// Serves whatever it was given, under whatever address it was given.
