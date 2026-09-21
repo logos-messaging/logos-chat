@@ -5,7 +5,7 @@
 use crate::conversation::mls_extensions::{
     ConvoMetaInfo, GROUP_METADATA_EXTENSION_TYPE, capabilities_with_group_metadata,
 };
-use crate::identity::{Member, SignerKey, SignerRef};
+use crate::identity::{Signer, SignerKey, SignerRef};
 use crate::types::{AddressedEncryptedPayload, ConvoMetadata};
 use crate::{Content, WakeupService};
 use alloy::signers::local::PrivateKeySigner;
@@ -173,7 +173,7 @@ fn fetch_key_packages<S: ExternalServices>(
                 .serialized_content()
                 .to_vec();
 
-            Member::from_leaf(&signature_key, &credential)
+            Signer::from_leaf(&signature_key, &credential)
                 .require_valid(&service_ctx.auth)
                 .ok_or(ChatError::BadBundleValue("invalid credential".into()))?;
 
@@ -425,12 +425,12 @@ where
         self.outcome_from_events(ctx, &events)
     }
 
-    fn members(&self) -> Result<Vec<Member>, ChatError> {
+    fn members(&self) -> Result<Vec<Signer>, ChatError> {
         Ok(self
             .conversation
             .members_view()
             .into_iter()
-            .map(|m| Member::from_leaf(&m.signature_key, m.credential.serialized_content()))
+            .map(|m| Signer::from_leaf(&m.signature_key, m.credential.serialized_content()))
             .collect())
     }
 
@@ -538,11 +538,11 @@ where
         result.and(flushed)
     }
 
-    fn pending_members(&self) -> Result<Vec<Member>, ChatError> {
+    fn pending_members(&self) -> Result<Vec<Signer>, ChatError> {
         Ok(self
             .pending_invites
             .iter()
-            .map(|(signature_key, credential)| Member::from_leaf(signature_key, credential))
+            .map(|(signature_key, credential)| Signer::from_leaf(signature_key, credential))
             .collect())
     }
 
@@ -664,7 +664,7 @@ impl GroupV2Convo {
                     ReliablePayload::decode(cm.message.as_slice()).map_err(ChatError::generic)?;
                 service_ctx.causal.on_receive(&self.convo_id, &reliable);
                 // `sender` is the MLS-verified signer of the frame.
-                let member = Member::from_leaf(
+                let member = Signer::from_leaf(
                     &sender.signature_key,
                     sender.credential.serialized_content(),
                 );

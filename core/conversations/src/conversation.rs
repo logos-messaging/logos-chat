@@ -4,7 +4,7 @@ mod group_v2;
 pub mod mls_extensions;
 
 pub use crate::errors::ChatError;
-use crate::identity::{Member, SignerKey, SignerRef};
+use crate::identity::{Signer, SignerKey, SignerRef};
 use crate::outcomes::ConvoOutcome;
 use crate::proto::EncryptedPayload;
 use crate::service_context::{ExternalServices, ServiceContext};
@@ -46,7 +46,7 @@ pub(crate) trait Convo<S: ExternalServices>: Identified + Send {
     fn wakeup(&mut self, service_ctx: &mut ServiceContext<S>) -> Result<ConvoOutcome, ChatError>;
 
     /// Each current member, self included.
-    fn members(&self) -> Result<Vec<Member>, ChatError>;
+    fn members(&self) -> Result<Vec<Signer>, ChatError>;
 
     /// Whether the local identity may currently submit content: it is still a
     /// member of this (loaded) conversation with send rights.
@@ -79,7 +79,7 @@ pub(crate) trait GroupConvo<S: ExternalServices>: Convo<S> + std::fmt::Debug + S
     /// Each member this conversation invited and the group has not committed
     /// yet. Covers only invites [`Self::add_member`] made here, and is empty for
     /// a conversation kind whose add takes effect within that call.
-    fn pending_members(&self) -> Result<Vec<Member>, ChatError>;
+    fn pending_members(&self) -> Result<Vec<Signer>, ChatError>;
     // All GroupConvos MUST return ConvoMetadata
     // the return type is Option<_> to support legacy ConvoTypes which
     // are being phased out.

@@ -2,7 +2,7 @@ use crate::causal_history::{CausalHistoryStore, DeliveryAck, MissingMessage};
 use crate::conversation::{
     ConversationIdRef, DirectV1Convo, GroupV1Convo, GroupV2Convo, Identified, MessageId,
 };
-use crate::identity::{AuthenticatedMember, Member, ParticipantId, SignerKey, SignerRef};
+use crate::identity::{AuthenticatedMember, ParticipantId, Signer, SignerKey, SignerRef};
 use crate::service_context::{ExternalServices, ServiceContext};
 use crate::service_traits::AuthService;
 use crate::storage::{ConversationKind, ConversationMeta, ConversationStore};
@@ -310,7 +310,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     /// Invites sent here whose commit has not landed. A direct conversation has
     /// none.
-    pub fn group_pending_members(&self, convo_id: &str) -> Result<Vec<Member>, ChatError> {
+    pub fn group_pending_members(&self, convo_id: &str) -> Result<Vec<Signer>, ChatError> {
         let convo = self
             .cached_convos
             .get(convo_id)
@@ -618,7 +618,7 @@ impl<S: ExternalServices> Convo<S> for ConvoTypeOwned<S> {
         }
     }
 
-    fn members(&self) -> Result<Vec<Member>, ChatError> {
+    fn members(&self) -> Result<Vec<Signer>, ChatError> {
         match self {
             ConvoTypeOwned::Group(group_convo) => group_convo.members(),
             ConvoTypeOwned::Direct(convo) => convo.members(),

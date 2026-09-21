@@ -10,10 +10,10 @@ pub struct Member {
     pub account: AccountAddr,
 }
 
-impl TryFrom<libchat::Member> for Member {
+impl TryFrom<libchat::Signer> for Member {
     type Error = ClientError;
 
-    fn try_from(value: libchat::Member) -> Result<Self, Self::Error> {
+    fn try_from(value: libchat::Signer) -> Result<Self, Self::Error> {
         Ok(Member {
             account: account_of(&value.participant_id)?,
             signer: value.signer,
@@ -59,7 +59,8 @@ pub(crate) fn account_id(account: &AccountAddr) -> ParticipantId {
 
 /// The account a participant id names.
 fn account_of(participant_id: &ParticipantId) -> Result<AccountAddr, ClientError> {
-    AccountAddr::try_from(participant_id.as_bytes()).map_err(|_| ClientError::InvalidAccount)
+    AccountAddr::try_from(participant_id.as_bytes())
+        .map_err(|_| ClientError::InvalidAccountAddress(participant_id.to_string()))
 }
 
 #[cfg(test)]
@@ -77,7 +78,7 @@ mod tests {
         let signer = signer();
         let account = AccountAddr::try_from(Ed25519SigningKey::generate().verifying_key().as_ref())
             .expect("a generated key is an address");
-        let member = libchat::Member {
+        let member = libchat::Signer {
             signer: signer.clone(),
             participant_id: account_id(&account),
         };
@@ -89,7 +90,7 @@ mod tests {
 
     #[test]
     fn a_participant_id_that_is_not_an_account_is_rejected() {
-        let member = libchat::Member {
+        let member = libchat::Signer {
             signer: signer(),
             participant_id: ParticipantId::from(b"saro".as_slice()),
         };

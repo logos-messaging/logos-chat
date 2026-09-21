@@ -111,7 +111,7 @@ fn direct_v1_standalone_integration() {
     let saro_account = TestLogosAccount::new();
     let saro_account_id = saro_account.address();
     let saro_pending = PendingInstallation::generate();
-    let saro_device_id = saro_pending.endorsement_request().to_string();
+    let saro_device_id = saro_pending.endorsement_request();
 
     // Build saro's client with its account so its outbound messages carry a
     // credential the receiver can verify against the published bundle.
@@ -145,7 +145,7 @@ fn direct_v1_standalone_integration() {
             // saro associated an account and published a matching bundle, so the
             // sender surfaces with a verified account and its device.
             assert_eq!(sender.account().to_string(), saro_account_id);
-            assert_eq!(sender.signer().to_string(), saro_device_id);
+            assert_eq!(sender.signer().as_bytes(), saro_device_id);
             Ok(())
         }
         other => Err(other),

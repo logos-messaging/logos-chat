@@ -15,13 +15,20 @@
 //! constructors off the alias; they are crate-level functions ([`open`],
 //! [`open_with_transport`]) taking the all-inclusive [`LogosConfig`] instead.
 
-use components::{ContactRegistry, RegistryPublishMode};
+use components::{ContactRegistry, HttpAuthClient, RegistryPublishMode};
 use crossbeam_channel::Receiver;
 use embedded_logos_delivery::{EmbeddedLogosDelivery, P2pConfig};
+use logos_account::AccountError;
+use logos_account::Ed25519VerifyingKey;
+
+use logos_account::SIGNER_CONTEXT;
+use logos_generic_chat::SqliteStore;
+use logos_generic_chat::StorageConfig;
 use logos_generic_chat::{
-    AccountAddr, ChatClient, ChatClientBuilder, ClientError, Event, GroupV2Config, PanicAuth,
-    PendingInstallation, SqliteStore, StorageConfig, Transport,
+    ChatClient, ChatClientBuilder, ClientError, Event, GroupV2Config, Installation,
+    PendingInstallation, Transport,
 };
+use tracing::info;
 
 /// The endpoint for the account and keypackage registration service.
 pub const REGISTRY_ENDPOINT: &str = "https://devnet.chat-kc.logos.co";
@@ -125,7 +132,7 @@ pub fn open_with_transport<T: Transport + Clone>(
     transport: T,
 ) -> Result<
     (
-        ChatClient<T, ContactRegistry<T>, PanicAuth, SqliteStore>,
+        ChatClient<T, ContactRegistry<T>, HttpAuthClient, SqliteStore>,
         Receiver<Event>,
     ),
     ClientError,
@@ -135,19 +142,23 @@ pub fn open_with_transport<T: Transport + Clone>(
     // this once the platform provides one.
     let registry = ContactRegistry::new(
         transport.clone(),
-        config.registry_url,
+        config.registry_url.clone(),
         config.registry_publish_mode,
     );
-    let mut builder = ChatClientBuilder::new(
-        PendingInstallation::generate().complete(TestLogosAccount::new().addr()),
-    )
-    .transport(transport)
-    .registration(registry)
-    .auth(PanicAuth)
-    .storage_config(StorageConfig::Encrypted {
-        path: config.db_path,
-        key: config.db_key,
-    });
+
+    // Auth uses the same server as registry for the time being
+    let auth = HttpAuthClient::new(config.registry_url);
+
+    let installation = register_account()?;
+
+    let mut builder = ChatClientBuilder::new(installation)
+        .transport(transport)
+        .registration(registry)
+        .auth(auth)
+        .storage_config(StorageConfig::Encrypted {
+            path: config.db_path,
+            key: config.db_key,
+        });
     if let Some(group_v2) = config.group_v2_config {
         builder = builder.group_v2_config(group_v2);
     }
@@ -165,22 +176,22 @@ pub fn open_with_transport<T: Transport + Clone>(
 pub type LogosChatClient = ChatClient<
     EmbeddedLogosDelivery,
     ContactRegistry<EmbeddedLogosDelivery>,
-    PanicAuth,
+    HttpAuthClient,
     SqliteStore,
 >;
 
-/// A stand-in account while the account layer is out: only a well-formed
-/// address.
-struct TestLogosAccount(crypto::Ed25519SigningKey);
+fn register_account() -> Result<Installation, AccountError> {
+    let pending = PendingInstallation::generate();
+    info!("REgisterAccount");
+    let http_auth_client = HttpAuthClient::default();
 
-impl TestLogosAccount {
-    fn new() -> Self {
-        Self(crypto::Ed25519SigningKey::generate())
-    }
+    let mut account = logos_account::Account::new(http_auth_client);
+    let key = Ed25519VerifyingKey::from_canonical_slice(&pending.endorsement_request())
+        .expect("compile time defined");
+    let _ = account
+        .update()
+        .endorse_ed25519_key(SIGNER_CONTEXT.clone(), &key)
+        .publish()?;
 
-    /// This account's address.
-    fn addr(&self) -> AccountAddr {
-        AccountAddr::try_from(self.0.verifying_key().as_ref())
-            .expect("a generated key is an address")
-    }
+    Ok(pending.complete(account.addr()))
 }

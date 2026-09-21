@@ -26,8 +26,8 @@ impl PendingInstallation {
     }
 
     /// The signer the account must endorse.
-    pub fn endorsement_request(&self) -> SignerKey {
-        SignerKey::from(self.verifying_key.clone())
+    pub fn endorsement_request(&self) -> Vec<u8> {
+        self.verifying_key.as_ref().to_vec()
     }
 
     /// This key as an installation of `account`. Nothing is checked here:
@@ -35,7 +35,7 @@ impl PendingInstallation {
     /// endorsement when it builds.
     pub fn complete(self, account: AccountAddr) -> Installation {
         Installation {
-            signer: self.endorsement_request(),
+            signer: SignerKey::from(self.verifying_key),
             signing_key: self.signing_key,
             account,
         }
@@ -127,7 +127,7 @@ mod tests {
         let account = account();
 
         let installation = pending.complete(account.clone());
-        assert_eq!(installation.signer_key(), &signer);
+        assert_eq!(installation.signer_key().as_bytes(), signer);
         assert_eq!(installation.participant_id(), account_id(&account));
     }
 

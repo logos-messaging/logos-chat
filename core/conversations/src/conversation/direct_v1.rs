@@ -2,7 +2,7 @@ use crate::identity::SignerKey;
 use chat_proto::logoschat::encryption::EncryptedPayload;
 
 use crate::{
-    ChatError, ExternalServices, Member, MessageId,
+    ChatError, ExternalServices, Signer, MessageId,
     conversation::{ConversationIdRef, Convo, GroupConvo, GroupV1Convo, Identified},
     service_context::ServiceContext,
 };
@@ -62,7 +62,7 @@ where
         self.inner_group.wakeup(service_ctx)
     }
 
-    fn members(&self) -> Result<Vec<Member>, ChatError> {
+    fn members(&self) -> Result<Vec<Signer>, ChatError> {
         Convo::<S>::members(&self.inner_group)
     }
 

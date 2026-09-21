@@ -12,7 +12,7 @@ use std::collections::{HashSet, VecDeque};
 use tracing::debug;
 
 use crate::conversation::{ConversationIdRef, MessageId};
-use crate::identity::{Member, SignerKey, SignerRef};
+use crate::identity::{Signer, SignerKey, SignerRef};
 use crate::inbox_v2::MlsProvider;
 use crate::service_context::{ExternalServices, ServiceContext};
 use crate::service_traits::AuthService;
@@ -175,7 +175,7 @@ impl GroupV1Convo {
         }
 
         // Ensure that a Keypackage contains a valid member
-        Member::from_leaf(
+        Signer::from_leaf(
             leaf_key.as_slice(),
             keypkg.leaf_node().credential().serialized_content(),
         )
@@ -305,7 +305,7 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
                 cx.causal.on_receive(&self.convo_id, &reliable);
                 sender
                     .map(|leaf| {
-                        Member::from_leaf(&leaf.signature_key, leaf.credential.serialized_content())
+                        Signer::from_leaf(&leaf.signature_key, leaf.credential.serialized_content())
                     })
                     .and_then(|member| member.require_valid(&cx.auth))
                     .map(|sender| Content {
@@ -335,11 +335,11 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
         Ok(ConvoOutcome::empty(self.id().to_string()))
     }
 
-    fn members(&self) -> Result<Vec<Member>, ChatError> {
+    fn members(&self) -> Result<Vec<Signer>, ChatError> {
         Ok(self
             .mls_group
             .members()
-            .map(|m| Member::from_leaf(&m.signature_key, m.credential.serialized_content()))
+            .map(|m| Signer::from_leaf(&m.signature_key, m.credential.serialized_content()))
             .collect())
     }
 
@@ -444,7 +444,7 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
 
     /// Always empty: `add_member` merges its own commit, so an added member is
     /// on the roster by the time the call returns.
-    fn pending_members(&self) -> Result<Vec<Member>, ChatError> {
+    fn pending_members(&self) -> Result<Vec<Signer>, ChatError> {
         Ok(Vec::new())
     }
 

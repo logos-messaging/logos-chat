@@ -32,7 +32,13 @@ impl SignerKey {
 
 impl From<Ed25519VerifyingKey> for SignerKey {
     fn from(key: Ed25519VerifyingKey) -> Self {
-        Self(key.as_ref().to_vec())
+        Self::from(&key)
+    }
+}
+
+impl From<&Ed25519VerifyingKey> for SignerKey {
+    fn from(key: &Ed25519VerifyingKey) -> Self {
+        Self::from(key.as_ref())
     }
 }
 
@@ -102,14 +108,14 @@ impl fmt::Display for ParticipantId {
 
 /// Identity of a entity in a conversation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Member {
+pub struct Signer {
     /// Installation specific signing key
     pub signer: SignerKey,
     /// The participant this signer acts for.
     pub participant_id: ParticipantId,
 }
 
-impl Member {
+impl Signer {
     pub(crate) fn from_leaf(signature_key: &[u8], credential: &[u8]) -> Self {
         Self {
             signer: SignerKey::from(signature_key),
@@ -165,7 +171,7 @@ impl From<AuthResult> for AuthStatus {
 /// [`Member::require_valid`] is the only constructor, so holding one
 /// is proof the check passed.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthenticatedMember(Member);
+pub struct AuthenticatedMember(Signer);
 
 impl AuthenticatedMember {
     pub fn signer(&self) -> &SignerKey {

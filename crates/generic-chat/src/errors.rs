@@ -1,11 +1,12 @@
 use libchat::ChatError;
+use logos_account::AccountError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
     #[error(transparent)]
     Chat(#[from] ChatError),
-    #[error("participant id is not an account address")]
-    InvalidAccount,
+    #[error(transparent)]
+    Account(#[from] AccountError),
     #[error("failed to start the transport: {0}")]
     Transport(String),
     #[error("not an account address: {0}")]

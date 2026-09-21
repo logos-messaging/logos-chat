@@ -1,4 +1,3 @@
-mod auth;
 mod builder;
 mod client;
 mod delivery_in_process;
@@ -7,7 +6,6 @@ mod event;
 mod installation;
 mod members;
 
-pub use auth::PanicAuth;
 pub use builder::{ChatClientBuilder, Unset};
 pub use client::{ChatClient, GroupMetadata, Transport};
 pub use delivery_in_process::{InProcessDelivery, MessageBus};
