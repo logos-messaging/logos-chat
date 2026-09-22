@@ -98,6 +98,9 @@ pub enum ConversationKind {
 }
 
 impl ConversationKind {
+    /// Every kind, for reaching a conversation's state once no record names its kind.
+    pub(crate) const ALL: [Self; 3] = [Self::GroupV1, Self::DirectV1, Self::GroupV2];
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::GroupV1 => "group_v1",
