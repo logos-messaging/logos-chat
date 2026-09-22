@@ -82,7 +82,7 @@ fn init_tracing() {
 fn rosters<const N: usize>(h: &mut TestHarness<N>, convo: &str) -> Vec<Option<Vec<Vec<u8>>>> {
     (0..N)
         .map(|i| {
-            h.client_mut(i).group_members(convo).ok().map(|members| {
+            h.client_mut(i).group_signers(convo).ok().map(|members| {
                 let mut members: Vec<Vec<u8>> = members
                     .iter()
                     .map(|m| m.participant_id().as_bytes().to_vec())
@@ -142,7 +142,7 @@ fn add_members<const N: usize>(
     let budget = settle_budget();
     let mut refusal = String::new();
     while elapsed < budget {
-        match h.client_mut(0).group_add_member(convo, invited) {
+        match h.client_mut(0).group_add_signers(convo, invited) {
             Ok(()) => return Ok(()),
             Err(e) => refusal = format!("{e:?}"),
         }
@@ -236,7 +236,7 @@ fn report<const N: usize>(h: &mut TestHarness<N>, convo: &str) -> String {
     let distinct: BTreeSet<_> = rosters.into_iter().flatten().collect();
     let pending = h
         .client_mut(0)
-        .group_pending_members(convo)
+        .group_pending_signers(convo)
         .map_or("?".to_string(), |p| p.len().to_string());
     let rejections: usize = (0..N).map(|i| h.client(i).inbound_errors().len()).sum();
     let first = (0..N)

@@ -45,11 +45,11 @@ pub(crate) trait Convo<S: ExternalServices>: Identified + Send {
     /// reports what it observed, mirroring [`Self::handle_frame`].
     fn wakeup(&mut self, service_ctx: &mut ServiceContext<S>) -> Result<ConvoOutcome, ChatError>;
 
-    /// Each current member, self included.
-    fn members(&self) -> Result<Vec<Signer>, ChatError>;
+    /// Each current signer, self included.
+    fn signers(&self) -> Result<Vec<Signer>, ChatError>;
 
     /// Whether the local identity may currently submit content: it is still a
-    /// member of this (loaded) conversation with send rights.
+    /// signer of this (loaded) conversation with send rights.
     ///
     /// This is the "can submit new content" capability, kept deliberately
     /// separate from whether the conversation merely *exists* — see
@@ -62,24 +62,24 @@ pub(crate) trait Convo<S: ExternalServices>: Identified + Send {
 
 /// Group-only operations.
 pub(crate) trait GroupConvo<S: ExternalServices>: Convo<S> + std::fmt::Debug + Send {
-    fn add_member(
+    fn add_signer(
         &mut self,
         cx: &mut ServiceContext<S>,
-        members: &[SignerKey],
+        signer: &[SignerKey],
     ) -> Result<(), ChatError>;
 
-    /// Remove members from the group, naming them by signer (installation) id
-    /// exactly as [`Self::add_member`] does.
-    fn remove_member(
+    /// Remove signers from the group, naming them by signer (installation) id
+    /// exactly as [`Self::add_signer`] does.
+    fn remove_signer(
         &mut self,
         cx: &mut ServiceContext<S>,
-        members: &[SignerRef],
+        signer: &[SignerRef],
     ) -> Result<(), ChatError>;
 
-    /// Each member this conversation invited and the group has not committed
-    /// yet. Covers only invites [`Self::add_member`] made here, and is empty for
+    /// Each signer this conversation invited and the group has not committed
+    /// yet. Covers only invites [`Self::add_signer`] made here, and is empty for
     /// a conversation kind whose add takes effect within that call.
-    fn pending_members(&self) -> Result<Vec<Signer>, ChatError>;
+    fn pending_signers(&self) -> Result<Vec<Signer>, ChatError>;
     // All GroupConvos MUST return ConvoMetadata
     // the return type is Option<_> to support legacy ConvoTypes which
     // are being phased out.

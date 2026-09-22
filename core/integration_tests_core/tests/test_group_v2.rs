@@ -86,7 +86,7 @@ fn core_client() {
     let particpants = &[harness.pax().addr()];
     harness
         .raya()
-        .group_add_member(&convo_id, particpants)
+        .group_add_signers(&convo_id, particpants)
         .expect("Raya add Pax");
 
     harness.process_until_label("Raya add Pax", |h| h.pax().convo_count() == 1);
@@ -159,7 +159,7 @@ fn core_client_four_members_two_epochs() {
     let members = &[harness.mira().addr()];
     harness
         .raya()
-        .group_add_member(&convo_id, members)
+        .group_add_signers(&convo_id, members)
         .expect("Add Mira");
 
     // TODO: Add State == Working for all clients
@@ -179,7 +179,7 @@ fn core_client_four_members_two_epochs() {
 }
 
 #[test]
-fn core_client_remove_member() {
+fn core_client_remove_signer() {
     // Saro removes Pax. The removal goes to consensus, so it lands on a later
     // commit: settle until Pax is off every roster, then check Pax knows it
     // can no longer send and the group left behind still works.
@@ -205,7 +205,7 @@ fn core_client_remove_member() {
     assert_eq!(
         harness
             .saro()
-            .group_members(&convo_id)
+            .group_signers(&convo_id)
             .expect("members")
             .len(),
         3
@@ -213,12 +213,12 @@ fn core_client_remove_member() {
 
     harness
         .saro()
-        .group_remove_member(&convo_id, &[&pax_addr])
+        .group_remove_signers(&convo_id, &[&pax_addr])
         .expect("Saro remove Pax");
 
     harness.process_until_label("Pax removed", |h| {
-        h.saro().group_members(&convo_id).map_or(0, |m| m.len()) == 2
-            && h.raya().group_members(&convo_id).map_or(0, |m| m.len()) == 2
+        h.saro().group_signers(&convo_id).map_or(0, |m| m.len()) == 2
+            && h.raya().group_signers(&convo_id).map_or(0, |m| m.len()) == 2
     });
 
     // Pax applied the same commit and sees its own leaf gone.
@@ -254,7 +254,7 @@ fn remove_member_refuses_to_target_self() {
 
     let err = harness
         .saro()
-        .group_remove_member(&convo_id, &[&saro_addr])
+        .group_remove_signer(&convo_id, &[&saro_addr])
         .expect_err("self-removal is refused");
     assert!(matches!(err, ChatError::CannotRemoveSelf), "{err:?}");
 
@@ -263,7 +263,7 @@ fn remove_member_refuses_to_target_self() {
     assert_eq!(
         harness
             .saro()
-            .group_members(&convo_id)
+            .group_signers(&convo_id)
             .expect("members")
             .len(),
         2
@@ -271,7 +271,7 @@ fn remove_member_refuses_to_target_self() {
 }
 
 #[test]
-fn remove_member_rejects_a_non_member() {
+fn remove_signer_rejects_a_non_signer() {
     // Someone who never joined holds no leaf, so the call fails before any
     // round opens.
     let _ = tracing_subscriber::fmt()
@@ -292,7 +292,7 @@ fn remove_member_rejects_a_non_member() {
 
     let err = harness
         .saro()
-        .group_remove_member(&convo_id, &[&pax_addr])
+        .group_remove_signer(&convo_id, &[&pax_addr])
         .expect_err("Pax is not a member");
     assert!(matches!(err, ChatError::NotAGroupMember), "{err:?}");
 }
@@ -343,7 +343,7 @@ fn group_name_propagation() {
     let members = &[harness.pax().addr()];
     harness
         .raya()
-        .group_add_member(&convo_id, members)
+        .group_add_signers(&convo_id, members)
         .expect("Add Pax");
 
     harness.process_until_label("Pax join", |h| h.pax().convo_count() == 1);

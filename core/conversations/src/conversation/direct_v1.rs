@@ -24,7 +24,7 @@ impl DirectV1Convo {
         members: &[SignerKey],
     ) -> Result<Self, ChatError> {
         let mut inner_group = DelegateGroup::new(cx)?;
-        inner_group.add_member(cx, members)?;
+        inner_group.add_signer(cx, members)?;
         Ok(Self { inner_group })
     }
 }
@@ -62,8 +62,8 @@ where
         self.inner_group.wakeup(service_ctx)
     }
 
-    fn members(&self) -> Result<Vec<Signer>, ChatError> {
-        Convo::<S>::members(&self.inner_group)
+    fn signers(&self) -> Result<Vec<Signer>, ChatError> {
+        Convo::<S>::signers(&self.inner_group)
     }
 
     fn can_send(&self) -> bool {

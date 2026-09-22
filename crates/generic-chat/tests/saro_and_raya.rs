@@ -354,7 +354,7 @@ fn direct_conversation_lists_its_participants() {
     assert_eq!(accounts, expected);
 
     let err = saro
-        .add_group_members(&convo_id, &[&raya_addr])
+        .add_group_participants(&convo_id, &[&raya_addr])
         .expect_err("add member is unsupported on a direct conversation");
     assert!(matches!(
         err,
@@ -381,7 +381,7 @@ fn removing_a_member_is_unsupported_on_a_direct_conversation() {
         .expect("convo create");
 
     let err = saro
-        .remove_group_members(&convo_id, &[&raya_addr])
+        .remove_group_participants(&convo_id, &[&raya_addr])
         .expect_err("remove member is unsupported on a direct conversation");
     assert!(matches!(
         err,

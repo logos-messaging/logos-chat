@@ -425,7 +425,7 @@ where
         self.outcome_from_events(ctx, &events)
     }
 
-    fn members(&self) -> Result<Vec<Signer>, ChatError> {
+    fn signers(&self) -> Result<Vec<Signer>, ChatError> {
         Ok(self
             .conversation
             .members_view()
@@ -444,7 +444,7 @@ where
     S: ExternalServices,
 {
     #[instrument(name = "groupv2.add_member", skip_all, fields(user_id = %service_ctx.mls_identity.display_name()))]
-    fn add_member(
+    fn add_signer(
         &mut self,
         service_ctx: &mut ServiceContext<S>,
         members: &[SignerKey],
@@ -501,7 +501,7 @@ where
     /// member is still seated when this returns and the commit ejecting them
     /// surfaces later as a `MembersChanged`.
     #[instrument(name = "groupv2.remove_member", skip_all, fields(user_id = %service_ctx.mls_identity.display_name()))]
-    fn remove_member(
+    fn remove_signer(
         &mut self,
         service_ctx: &mut ServiceContext<S>,
         members: &[SignerRef],
@@ -538,7 +538,7 @@ where
         result.and(flushed)
     }
 
-    fn pending_members(&self) -> Result<Vec<Signer>, ChatError> {
+    fn pending_signers(&self) -> Result<Vec<Signer>, ChatError> {
         Ok(self
             .pending_invites
             .iter()

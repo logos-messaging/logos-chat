@@ -160,7 +160,7 @@ where
     /// accounts. The core resolves each account to its signers through the
     /// auth service; the
     /// group invite goes to every one of them. An empty slice creates a group
-    /// with only this client, to grow via [`Self::add_group_members`].
+    /// with only this client, to grow via [`Self::add_group_participants`].
     /// `metadata` becomes the group's shared name and description, carried to
     /// every joiner in the welcome and readable via [`Self::group_metadata`];
     /// both fields may be empty.
@@ -182,7 +182,7 @@ where
     /// staged as an MLS proposal and merged by the group's next commit (driven
     /// asynchronously by the wakeup loop); each joiner's welcome is sent when
     /// that commit lands, not when this call returns.
-    pub fn add_group_members(
+    pub fn add_group_participants(
         &mut self,
         convo_id: &str,
         accounts: &[AccountAddressRef],
@@ -198,7 +198,7 @@ where
     /// Remove every installation of the given accounts from a group
     /// conversation. Those with no seat are skipped, and the call fails if none
     /// holds one.
-    pub fn remove_group_members(
+    pub fn remove_group_participants(
         &mut self,
         convo_id: &str,
         accounts: &[AccountAddressRef],
@@ -214,10 +214,10 @@ where
     /// The conversation's committed members that pass auth, one per installation,
     /// for a direct conversation as for a group.
     pub fn members(&self, convo_id: &str) -> Result<Vec<Signer>, ClientError> {
-        let members = self.core.lock().group_members(convo_id)?;
+        let members = self.core.lock().group_signers(convo_id)?;
         Ok(members
             .into_iter()
-            .filter_map(decode_member::<_, AuthenticatedSigner>)
+            .filter_map(decode_signer::<_, AuthenticatedSigner>)
             .map(Signer::from)
             .collect())
     }
@@ -225,8 +225,8 @@ where
     /// Installations this client invited whose commit has not landed. A direct
     /// conversation has none.
     pub fn pending_members(&self, convo_id: &str) -> Result<Vec<Signer>, ClientError> {
-        let pending = self.core.lock().group_pending_members(convo_id)?;
-        Ok(pending.into_iter().filter_map(decode_member).collect())
+        let pending = self.core.lock().group_pending_signers(convo_id)?;
+        Ok(pending.into_iter().filter_map(decode_signer).collect())
     }
 
     /// The accounts with at least one member in the conversation.
@@ -453,7 +453,7 @@ fn parse_account(account: AccountAddressRef) -> Result<AccountAddr, ClientError>
 
 /// A core member as the client's type. A credential that doesn't decode is
 /// logged and dropped.
-fn decode_member<T, U>(member: T) -> Option<U>
+fn decode_signer<T, U>(member: T) -> Option<U>
 where
     U: TryFrom<T, Error = ClientError>,
 {
@@ -471,7 +471,7 @@ fn convo_events(outcome: ConvoOutcome) -> Vec<Event> {
     let convo_id: Arc<str> = Arc::from(convo_id);
     let mut events = Vec::new();
     if let Some(c) = content
-        && let Some(sender) = decode_member(c.sender)
+        && let Some(sender) = decode_signer(c.sender)
     {
         events.push(Event::MessageReceived {
             convo_id: Arc::clone(&convo_id),
@@ -497,7 +497,7 @@ fn inbox_events(outcome: InboxOutcome) -> Vec<Event> {
         class: new_conversation.class,
     });
     if let Some(c) = initial.and_then(|co| co.content)
-        && let Some(sender) = decode_member(c.sender)
+        && let Some(sender) = decode_signer(c.sender)
     {
         events.push(Event::MessageReceived {
             convo_id: Arc::clone(&id),
