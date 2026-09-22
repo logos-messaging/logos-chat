@@ -133,7 +133,7 @@ fn remove_group_signer_rejects_a_non_signer() {
     // MLS has no way to commit your own removal.
     let err = harness
         .saro()
-        .group_remove_participants(&convo_id, &[saro_id.clone()])
+        .group_remove_participants(&convo_id, std::slice::from_ref(&saro_id))
         .expect_err("cannot remove self");
     assert!(matches!(err, ChatError::CannotRemoveSelf), "{err:?}");
 
