@@ -20,9 +20,6 @@ pub enum StorageError {
     #[error("database error: {0}")]
     Database(String),
 
-    #[error("not found: {0}")]
-    NotFound(String),
-
     #[error("invalid data: {0}")]
     InvalidData(String),
 }

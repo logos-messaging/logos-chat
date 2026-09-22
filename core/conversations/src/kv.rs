@@ -1,6 +1,6 @@
 //! The transaction over the substrate, and the handle to one scope inside it: `KvTransaction`
 //! opens a transaction over a `KvStore`, and `ScopedKvStore` is the key verbs with one scope
-//! already bound.
+//! already bound. Both are libchat's own; `storage` holds what a store implements.
 
 use crate::storage::{KvPair, KvStore, KvTx, Namespace, Scope, StorageError};
 

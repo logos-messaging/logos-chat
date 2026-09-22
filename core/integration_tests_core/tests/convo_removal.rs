@@ -10,15 +10,12 @@
 use std::time::Duration;
 
 use components::{EphemeralRegistry, LocalBroadcaster};
-use integration_tests_core::{Faults, NoopWakeupService, TestHarness, TestIdent, open_peer};
-use libchat::{ChatError, ConversationKind, Core, KvStore, KvTransaction};
+use integration_tests_core::{Faults, TestHarness, TestIdent, open_core, open_peer, scope_entries};
+use libchat::{ChatError, ConversationKind, KvStore};
 
 /// The keys a GroupV1 conversation's own scope holds.
 fn scope_keys(store: &impl KvStore, convo_id: &str) -> Vec<Vec<u8>> {
-    let tx = KvTransaction::begin(store).unwrap();
-    tx.scope(ConversationKind::GroupV1, convo_id)
-        .scan_prefix(b"")
-        .unwrap()
+    scope_entries(store, ConversationKind::GroupV1, convo_id)
         .into_iter()
         .map(|(key, _)| key)
         .collect()
@@ -67,14 +64,12 @@ fn a_removal_that_fails_partway_can_be_run_again() {
     let raya_id = raya.ident_id().clone();
 
     let faults = Faults::new();
-    let mut saro = Core::new_from_store(
+    let mut saro = open_core(
         TestIdent::new("saro"),
         ds.new_consumer(),
         rs.clone(),
-        NoopWakeupService,
         faults.store(),
-    )
-    .unwrap();
+    );
     let convo_id = saro.create_group_convo_v1(&[&raya_id]).unwrap();
 
     // The record is gone by the time the scope's deletion fails to land, so nothing can rebuild

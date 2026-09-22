@@ -8,7 +8,8 @@ license.workspace = true
 crate-type = ["rlib"]
 
 [features]
-# The in-memory store and the store test assertions, for crates that test against a store.
+# The in-memory store, the store contract suite and the transaction handles, for crates that
+# test against a store.
 test-support = []
 
 [dependencies]
