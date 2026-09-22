@@ -435,7 +435,8 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         info!(convos = ?self.cached_convos.keys().collect::<Vec<_>>(), id = ?self.services.mls_identity.id(), "Cached Convos");
 
         match convo_id {
-            c if c == self.pq_inbox.id() => todo!(),
+            // InboxV2 registers no timer, so nothing wakes it.
+            c if c == self.pq_inbox.id() => Ok(PayloadOutcome::Empty),
             c if self.cached_convos.contains_key(c) => self.wakeup_convo(c).map(Into::into),
             _ => Ok(PayloadOutcome::Empty),
         }
