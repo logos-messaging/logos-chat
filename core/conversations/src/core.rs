@@ -480,7 +480,11 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         info!(convos = ?self.cached_convos.keys().collect::<Vec<_>>(), id = ?self.services.mls_identity.signer_key(), "Cached Convos");
 
         match convo_id {
-            c if c == self.pq_inbox.id() => todo!(),
+            // InboxV2 registers no timer, so a wakeup naming it comes from a
+            // conversation that took the inbox's id.
+            c if c == self.pq_inbox.id() => {
+                Err(ChatError::UnsupportedFunction(c.into(), "wakeup".into()))
+            }
             c if self.cached_convos.contains_key(c) => self.wakeup_convo(c).map(Into::into),
             _ => Ok(PayloadOutcome::Empty),
         }

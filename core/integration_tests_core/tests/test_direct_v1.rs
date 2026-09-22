@@ -107,6 +107,29 @@ fn invite_for_another_installation_is_rejected() {
 }
 
 #[test]
+fn wakeup_naming_the_inbox_is_an_error() {
+    let mut harness = TestHarness::<2>::new(|_, _| {});
+
+    let raya_account = harness.raya().account();
+    harness
+        .saro()
+        .create_direct_convo_v1(raya_account)
+        .expect("saro create convo");
+
+    // An invite's hint is its recipient's inbox id.
+    let invite = harness.raya().ds().poll().expect("invite for raya");
+    let inbox_id = EnvelopeV1::decode(invite.as_slice())
+        .expect("envelope")
+        .conversation_hint;
+
+    let err = harness
+        .raya()
+        .wakeup(&inbox_id)
+        .expect_err("the inbox arms no timer");
+    assert!(matches!(err, ChatError::UnsupportedFunction(..)), "{err:?}");
+}
+
+#[test]
 fn direct_convo_with_yourself_is_refused() {
     let mut harness = TestHarness::<1>::new(|_, _| {});
 
