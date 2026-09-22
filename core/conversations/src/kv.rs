@@ -25,8 +25,16 @@ impl<'a> KvTransaction<'a> {
         }
     }
 
-    pub fn delete_scope(&self, scope: &Scope) -> Result<(), StorageError> {
-        self.tx.delete_scope(scope)
+    /// Empties one scope, named the way [`Self::scope`] names it.
+    pub fn delete_scope(
+        &self,
+        ns: impl Into<Namespace>,
+        instance: &str,
+    ) -> Result<(), StorageError> {
+        self.tx.delete_scope(&Scope {
+            ns: ns.into(),
+            instance,
+        })
     }
 
     pub fn commit(self) -> Result<(), StorageError> {

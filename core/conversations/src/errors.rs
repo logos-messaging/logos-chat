@@ -47,6 +47,9 @@ pub enum ChatError {
     // Used when a core function is called with a convo_id which is unsupported
     #[error("convo:{0} does not support {1}")]
     UnsupportedFunction(ConversationId, String),
+    // A conversation rebuilt under a signer other than the one its own leaf names.
+    #[error("convo:{0} knows this installation by another signer")]
+    ForeignSigner(ConversationId),
     // Removal outcomes, surfaced to the UI as-is.
     #[error("you can't remove yourself from a group")]
     CannotRemoveSelf,

@@ -85,27 +85,46 @@ pub trait KvTx {
     fn commit(self: Box<Self>) -> Result<(), StorageError>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A conversation's kind, which also names the namespace its state is filed under.
+///
+/// `#[non_exhaustive]` so a crate outside libchat matches with a fallback arm, and a kind added
+/// here costs it no break.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConversationKind {
-    Unknown(String),
     GroupV1,
+    DirectV1,
+    GroupV2,
 }
 
 impl ConversationKind {
-    pub fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Unknown(value) => value.as_str(),
             Self::GroupV1 => "group_v1",
+            Self::DirectV1 => "direct_v1",
+            Self::GroupV2 => "group_v2",
         }
     }
 }
 
-impl From<&str> for ConversationKind {
-    fn from(value: &str) -> Self {
+impl TryFrom<&str> for ConversationKind {
+    type Error = StorageError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
-            "group_v1" => Self::GroupV1,
-            other => Self::Unknown(other.to_string()),
+            "group_v1" => Ok(Self::GroupV1),
+            "direct_v1" => Ok(Self::DirectV1),
+            "group_v2" => Ok(Self::GroupV2),
+            other => Err(StorageError::InvalidData(format!(
+                "unknown conversation kind: {other}"
+            ))),
         }
+    }
+}
+
+impl From<ConversationKind> for Namespace {
+    fn from(kind: ConversationKind) -> Self {
+        Namespace::new(kind.as_str())
     }
 }
 

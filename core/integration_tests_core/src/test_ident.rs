@@ -20,6 +20,18 @@ impl TestIdent {
             verifying_key,
         }
     }
+
+    /// Derives the signing key from `seed` instead of generating one, so two identities built
+    /// from the same seed sign and are addressed alike.
+    pub fn from_seed(explicit_id: impl Into<String>, seed: &[u8; 32]) -> Self {
+        let signing_key = Ed25519SigningKey::from_seed(seed);
+        let verifying_key = signing_key.verifying_key();
+        Self {
+            id: IdentId::new(explicit_id.into()),
+            signing_key,
+            verifying_key,
+        }
+    }
 }
 
 impl IdentityProvider for TestIdent {
