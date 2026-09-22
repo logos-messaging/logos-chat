@@ -16,22 +16,14 @@
 
 use chat_sqlite::{SqliteStore, StorageConfig};
 use components::{EphemeralRegistry, LocalBroadcaster};
-use integration_tests_core::{NoopWakeupService, PeerCore, TestIdent, open_peer};
+use integration_tests_core::{NoopWakeupService, PeerCore, TestIdent, open_core, open_peer};
 use libchat::test_support::MemStore;
-use libchat::{ChatError, ConversationKind, ConversationMeta, ConversationStore, Core};
-
-type SaroCore = Core<(
-    TestIdent,
-    LocalBroadcaster,
-    EphemeralRegistry,
-    NoopWakeupService,
-    SqliteStore,
-)>;
+use libchat::{ChatError, ConversationKind, ConversationMeta, ConversationStore};
 
 const SARO_SEED: [u8; 32] = [1; 32];
 
 /// Opens Saro over `db_path`; calling it again after a drop reopens the same installation.
-fn open_saro(ds: LocalBroadcaster, rs: EphemeralRegistry, db_path: &str) -> SaroCore {
+fn open_saro(ds: LocalBroadcaster, rs: EphemeralRegistry, db_path: &str) -> PeerCore<SqliteStore> {
     open_saro_as(TestIdent::from_seed("saro", &SARO_SEED), ds, rs, db_path)
 }
 
@@ -40,9 +32,9 @@ fn open_saro_as(
     ds: LocalBroadcaster,
     rs: EphemeralRegistry,
     db_path: &str,
-) -> SaroCore {
+) -> PeerCore<SqliteStore> {
     let store = SqliteStore::new(StorageConfig::File(db_path.to_string())).unwrap();
-    Core::new_from_store(ident, ds, rs, NoopWakeupService, store).unwrap()
+    open_core(ident, ds, rs, store)
 }
 
 /// Raya is here to publish a key package Saro can invite; she never processes a payload.

@@ -13,16 +13,8 @@
 
 use chat_sqlite::{SqliteStore, StorageConfig};
 use components::{EphemeralRegistry, LocalBroadcaster};
-use integration_tests_core::{NoopWakeupService, TestIdent};
-use libchat::{ChatError, ConvoOutcome, Core, PayloadOutcome};
-
-type TestCore = Core<(
-    TestIdent,
-    LocalBroadcaster,
-    EphemeralRegistry,
-    NoopWakeupService,
-    SqliteStore,
-)>;
+use integration_tests_core::{PeerCore, TestIdent, content, drain, open_core};
+use libchat::{ChatError, ConvoOutcome, PayloadOutcome};
 
 const SARO_SEED: [u8; 32] = [1; 32];
 const RAYA_SEED: [u8; 32] = [2; 32];
@@ -35,37 +27,9 @@ fn open(
     ds: LocalBroadcaster,
     rs: EphemeralRegistry,
     db_path: &str,
-) -> TestCore {
+) -> PeerCore<SqliteStore> {
     let store = SqliteStore::new(StorageConfig::File(db_path.to_string())).unwrap();
-    Core::new_from_store(
-        TestIdent::from_seed(name, seed),
-        ds,
-        rs,
-        NoopWakeupService,
-        store,
-    )
-    .unwrap()
-}
-
-/// Handles everything the transport is holding for `core`, returning the conversation content it
-/// decrypted.
-fn drain(core: &mut TestCore) -> Vec<Vec<u8>> {
-    let payloads: Vec<_> = {
-        let ds = core.ds();
-        std::iter::from_fn(|| ds.poll()).collect()
-    };
-
-    let mut received = vec![];
-    for payload in payloads {
-        if let PayloadOutcome::Convo(ConvoOutcome {
-            content: Some(content),
-            ..
-        }) = core.handle_payload(&payload).unwrap()
-        {
-            received.push(content.bytes);
-        }
-    }
-    received
+    open_core(TestIdent::from_seed(name, seed), ds, rs, store)
 }
 
 #[test]
@@ -89,14 +53,14 @@ fn a_direct_v1_creator_resumes_after_a_restart() {
 
     raya.send_content(&convo_id, b"while you were out").unwrap();
     assert_eq!(
-        drain(&mut saro),
+        content(&drain(&mut saro)),
         vec![b"while you were out".to_vec()],
         "the reopened core has sent nothing, so only a conversation rebuilt at open can be \
          listening for this"
     );
 
     saro.send_content(&convo_id, b"back now").unwrap();
-    assert_eq!(drain(&mut raya), vec![b"back now".to_vec()]);
+    assert_eq!(content(&drain(&mut raya)), vec![b"back now".to_vec()]);
 }
 
 #[test]
@@ -120,14 +84,14 @@ fn a_direct_v1_joiner_resumes_after_a_restart() {
 
     saro.send_content(&convo_id, b"still there?").unwrap();
     assert_eq!(
-        drain(&mut raya),
+        content(&drain(&mut raya)),
         vec![b"still there?".to_vec()],
         "the reopened core has sent nothing, so only a conversation rebuilt at open can be \
          listening for this"
     );
 
     raya.send_content(&convo_id, b"still here").unwrap();
-    assert_eq!(drain(&mut saro), vec![b"still here".to_vec()]);
+    assert_eq!(content(&drain(&mut saro)), vec![b"still here".to_vec()]);
 }
 
 #[test]
@@ -154,11 +118,9 @@ fn a_resumed_conversation_passes_over_its_own_message() {
     drop(saro);
     let mut saro = open("saro", &SARO_SEED, echoing, rs.clone(), &saro_db);
 
-    let echoes: Vec<_> = std::iter::from_fn(|| saro.ds().poll()).collect();
-    assert_eq!(echoes.len(), 1);
     assert!(matches!(
-        saro.handle_payload(&echoes[0]).unwrap(),
-        PayloadOutcome::Convo(ConvoOutcome { content: None, .. })
+        drain(&mut saro).as_slice(),
+        [PayloadOutcome::Convo(ConvoOutcome { content: None, .. })]
     ));
 }
 

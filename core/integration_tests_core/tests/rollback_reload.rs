@@ -12,63 +12,10 @@
 
 use components::{EphemeralRegistry, LocalBroadcaster};
 use integration_tests_core::{
-    FaultStore, Faults, NoopWakeupService, PeerCore, TestIdent, open_peer,
+    FaultStore, Faults, PeerCore, TestIdent, content, drain, open_core, open_peer, scope_entries,
 };
-use libchat::{ChatError, ConversationKind, Core, KvPair, KvTransaction, PayloadOutcome};
+use libchat::{ChatError, ConversationKind};
 use shared_traits::IdentId;
-
-type FaultyCore = Core<(
-    TestIdent,
-    LocalBroadcaster,
-    EphemeralRegistry,
-    NoopWakeupService,
-    FaultStore,
-)>;
-
-/// The same peer over a store that refuses what `faults` names.
-fn open_faulty_peer(
-    name: &str,
-    ds: LocalBroadcaster,
-    rs: EphemeralRegistry,
-    faults: &Faults,
-) -> FaultyCore {
-    Core::new_from_store(
-        TestIdent::new(name),
-        ds,
-        rs,
-        NoopWakeupService,
-        faults.store(),
-    )
-    .unwrap()
-}
-
-/// Hands `core` every payload published since the last call.
-fn drain(core: &mut PeerCore) -> Vec<PayloadOutcome> {
-    let mut payloads = Vec::new();
-    while let Some(payload) = core.ds().poll() {
-        payloads.push(payload);
-    }
-    payloads
-        .iter()
-        .map(|payload| core.handle_payload(payload).unwrap())
-        .collect()
-}
-
-/// Everything a conversation's own scope holds.
-fn scope_entries(store: &FaultStore, ns: ConversationKind, convo_id: &str) -> Vec<KvPair> {
-    let tx = KvTransaction::begin(store).unwrap();
-    tx.scope(ns, convo_id).scan_prefix(b"").unwrap()
-}
-
-fn received(outcomes: &[PayloadOutcome], content: &[u8]) -> bool {
-    outcomes.iter().any(|outcome| match outcome {
-        PayloadOutcome::Convo(convo) => convo
-            .content
-            .as_ref()
-            .is_some_and(|received| received.bytes.as_slice() == content),
-        _ => false,
-    })
-}
 
 #[test]
 fn a_failed_operation_keeps_the_store_and_reloads_the_conversation() {
@@ -81,7 +28,12 @@ fn a_failed_operation_keeps_the_store_and_reloads_the_conversation() {
     let pax_id = pax.ident_id().clone();
 
     let faults = Faults::new();
-    let mut saro = open_faulty_peer("saro", ds.new_consumer(), rs.clone(), &faults);
+    let mut saro = open_core(
+        TestIdent::new("saro"),
+        ds.new_consumer(),
+        rs.clone(),
+        faults.store(),
+    );
 
     let convo_id = saro.create_group_convo_v1(&[&raya_id]).unwrap();
     drain(&mut raya);
@@ -103,7 +55,10 @@ fn a_failed_operation_keeps_the_store_and_reloads_the_conversation() {
     );
 
     saro.send_content(&convo_id, b"after the rollback").unwrap();
-    assert!(received(&drain(&mut raya), b"after the rollback"));
+    assert_eq!(
+        content(&drain(&mut raya)),
+        vec![b"after the rollback".to_vec()]
+    );
 }
 
 #[test]
@@ -117,7 +72,12 @@ fn a_reloaded_conversation_reports_the_roster_the_store_kept() {
     let pax_id = pax.ident_id().clone();
 
     let faults = Faults::new();
-    let mut saro = open_faulty_peer("saro", ds.new_consumer(), rs.clone(), &faults);
+    let mut saro = open_core(
+        TestIdent::new("saro"),
+        ds.new_consumer(),
+        rs.clone(),
+        faults.store(),
+    );
 
     let convo_id = saro.create_group_convo_v1(&[&raya_id]).unwrap();
     drain(&mut raya);
@@ -145,7 +105,12 @@ fn a_conversation_whose_reload_fails_is_rebuilt_by_the_next_call() {
     let pax_id = pax.ident_id().clone();
 
     let faults = Faults::new();
-    let mut saro = open_faulty_peer("saro", ds.new_consumer(), rs.clone(), &faults);
+    let mut saro = open_core(
+        TestIdent::new("saro"),
+        ds.new_consumer(),
+        rs.clone(),
+        faults.store(),
+    );
 
     let convo_id = saro.create_group_convo_v1(&[&raya_id]).unwrap();
     drain(&mut raya);
@@ -161,13 +126,16 @@ fn a_conversation_whose_reload_fails_is_rebuilt_by_the_next_call() {
     fail_add_and_its_reload(&mut saro, &faults, &convo_id, &pax_id);
     saro.send_content(&convo_id, b"after the failed reload")
         .unwrap();
-    assert!(received(&drain(&mut raya), b"after the failed reload"));
+    assert_eq!(
+        content(&drain(&mut raya)),
+        vec![b"after the failed reload".to_vec()]
+    );
 }
 
 /// Fails an add as its transaction lands, and the reload after it as it reads the record naming
 /// the conversation's kind, which leaves the conversation out of the cache.
 fn fail_add_and_its_reload(
-    saro: &mut FaultyCore,
+    saro: &mut PeerCore<FaultStore>,
     faults: &Faults,
     convo_id: &str,
     member: &IdentId,
@@ -190,7 +158,12 @@ fn a_call_the_conversation_does_not_support_costs_it_nothing() {
     let pax_id = pax.ident_id().clone();
 
     let faults = Faults::new();
-    let mut saro = open_faulty_peer("saro", ds.new_consumer(), rs.clone(), &faults);
+    let mut saro = open_core(
+        TestIdent::new("saro"),
+        ds.new_consumer(),
+        rs.clone(),
+        faults.store(),
+    );
     let convo_id = saro.create_direct_convo_v1(&[&raya_id]).unwrap();
     drain(&mut raya);
 
@@ -204,5 +177,8 @@ fn a_call_the_conversation_does_not_support_costs_it_nothing() {
 
     assert_eq!(saro.group_members(&convo_id).unwrap().len(), 2);
     saro.send_content(&convo_id, b"after the refusal").unwrap();
-    assert!(received(&drain(&mut raya), b"after the refusal"));
+    assert_eq!(
+        content(&drain(&mut raya)),
+        vec![b"after the refusal".to_vec()]
+    );
 }

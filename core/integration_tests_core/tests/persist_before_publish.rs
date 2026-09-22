@@ -10,7 +10,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use components::{EphemeralRegistry, LocalBroadcaster};
-use integration_tests_core::{Faults, NoopWakeupService, TestIdent, open_peer};
+use integration_tests_core::{Faults, NoopWakeupService, TestIdent, open_core, open_peer};
 use libchat::test_support::MemStore;
 use libchat::{AddressedEnvelope, Core, DeliveryService, RegistrationService};
 
@@ -43,14 +43,12 @@ fn a_key_package_is_not_registered_when_its_transaction_does_not_land() {
     let rs = EphemeralRegistry::new();
     let faults = Faults::new();
 
-    let mut saro = Core::new_from_store(
+    let mut saro = open_core(
         TestIdent::new("saro"),
         ds.new_consumer(),
         rs.clone(),
-        NoopWakeupService,
         faults.store(),
-    )
-    .unwrap();
+    );
     let device_id = saro.ident_id().to_string();
     let published = rs.retrieve(&device_id).unwrap();
     assert!(published.is_some());
