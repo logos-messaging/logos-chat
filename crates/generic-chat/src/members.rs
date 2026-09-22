@@ -23,9 +23,9 @@ impl TryFrom<libchat::Signer> for Signer {
 
 /// A member the core's auth service vouched for.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthenticatedMember(Signer);
+pub struct AuthenticatedSigner(Signer);
 
-impl AuthenticatedMember {
+impl AuthenticatedSigner {
     pub fn signer(&self) -> &SignerKey {
         &self.0.signer_key
     }
@@ -35,19 +35,19 @@ impl AuthenticatedMember {
     }
 }
 
-impl TryFrom<libchat::AuthenticatedMember> for AuthenticatedMember {
+impl TryFrom<libchat::AuthenticatedSigner> for AuthenticatedSigner {
     type Error = ClientError;
 
-    fn try_from(value: libchat::AuthenticatedMember) -> Result<Self, Self::Error> {
-        Ok(AuthenticatedMember(Signer {
+    fn try_from(value: libchat::AuthenticatedSigner) -> Result<Self, Self::Error> {
+        Ok(AuthenticatedSigner(Signer {
             signer_key: value.signer().clone(),
             account: account_of(value.participant_id())?,
         }))
     }
 }
 
-impl From<AuthenticatedMember> for Signer {
-    fn from(value: AuthenticatedMember) -> Self {
+impl From<AuthenticatedSigner> for Signer {
+    fn from(value: AuthenticatedSigner) -> Self {
         value.0
     }
 }

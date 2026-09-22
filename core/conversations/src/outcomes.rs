@@ -10,12 +10,12 @@ use crate::storage::ConversationKind;
 use serde::{Deserialize, Serialize};
 
 use crate::conversation::ConversationId;
-use crate::identity::AuthenticatedMember;
+use crate::identity::AuthenticatedSigner;
 
 #[derive(Debug, Clone)]
 pub struct Content {
     pub bytes: Vec<u8>,
-    pub sender: AuthenticatedMember,
+    pub sender: AuthenticatedSigner,
 }
 
 #[derive(Debug, Clone)]

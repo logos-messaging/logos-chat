@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use libchat::{ConversationClass, SignerKey};
 
-use crate::AuthenticatedMember;
+use crate::AuthenticatedSigner;
 
 /// A discrete chat event.
 #[non_exhaustive]
@@ -25,7 +25,7 @@ pub enum Event {
     MessageReceived {
         convo_id: Arc<str>,
         content: Vec<u8>,
-        sender: AuthenticatedMember,
+        sender: AuthenticatedSigner,
     },
 
     MessageAcked {
@@ -38,7 +38,7 @@ pub enum Event {
     /// and the gap is reported once.
     ///
     /// `sender_hint` is self-asserted, so it names a signer, not an
-    /// [`AuthenticatedMember`].
+    /// [`AuthenticatedSigner`].
     MessageMissing {
         convo_id: Arc<str>,
         message_id: String,

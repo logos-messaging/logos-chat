@@ -2,7 +2,7 @@ use crate::causal_history::{CausalHistoryStore, DeliveryAck, MissingMessage};
 use crate::conversation::{
     ConversationIdRef, DirectV1Convo, GroupV1Convo, GroupV2Convo, Identified, MessageId,
 };
-use crate::identity::{AuthenticatedMember, ParticipantId, Signer, SignerKey, SignerRef};
+use crate::identity::{AuthenticatedSigner, ParticipantId, Signer, SignerKey, SignerRef};
 use crate::service_context::{ExternalServices, ServiceContext};
 use crate::service_traits::AuthService;
 use crate::storage::{ConversationKind, ConversationMeta, ConversationStore};
@@ -303,7 +303,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     /// Committed members that pass auth, for a direct conversation as for a
     /// group. Auth is checked on each call; a member that fails is left out.
-    pub fn group_members(&self, convo_id: &str) -> Result<Vec<AuthenticatedMember>, ChatError> {
+    pub fn group_members(&self, convo_id: &str) -> Result<Vec<AuthenticatedSigner>, ChatError> {
         let convo = self
             .cached_convos
             .get(convo_id)

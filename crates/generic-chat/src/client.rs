@@ -15,7 +15,7 @@ use parking_lot::Mutex;
 use crate::errors::ClientError;
 use crate::event::Event;
 use crate::installation::Installation;
-use crate::members::{AuthenticatedMember, Signer, account_id};
+use crate::members::{AuthenticatedSigner, Signer, account_id};
 
 type ClientCore<T, R, A, S> = Core<(Installation, A, T, R, ThreadedWakeupService, S)>;
 type AccountAddressRef<'a> = &'a str;
@@ -217,7 +217,7 @@ where
         let members = self.core.lock().group_members(convo_id)?;
         Ok(members
             .into_iter()
-            .filter_map(decode_member::<_, AuthenticatedMember>)
+            .filter_map(decode_member::<_, AuthenticatedSigner>)
             .map(Signer::from)
             .collect())
     }

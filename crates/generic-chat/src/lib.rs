@@ -12,7 +12,7 @@ pub use delivery_in_process::{InProcessDelivery, MessageBus};
 pub use errors::ClientError;
 pub use event::Event;
 pub use installation::{Installation, PendingInstallation};
-pub use members::{AuthenticatedMember, Signer};
+pub use members::{AuthenticatedSigner, Signer};
 
 // Re-export types callers need to interact with ChatClient.
 pub use chat_sqlite::{SqliteStore, StorageConfig};

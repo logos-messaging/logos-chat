@@ -5,7 +5,7 @@
 //! ParticipantId                       a participant: the user an installation acts for
 //! Signer { signer_key, participant_id }   one installation of one participant, in a conversation
 //!   │  AuthService
-//!   └──► AuthenticatedMember          a member the service vouched for
+//!   └──► AuthenticatedSigner          a signer who has been verfied as valid
 //! ```
 //!
 //! The model and the reasoning behind it: `docs/adr/0003-identity-model.md`.
@@ -133,9 +133,9 @@ impl Signer {
         }
     }
 
-    pub(crate) fn require_valid<A: AuthService>(self, auth: &A) -> Option<AuthenticatedMember> {
+    pub(crate) fn require_valid<A: AuthService>(self, auth: &A) -> Option<AuthenticatedSigner> {
         match self.auth_status(auth) {
-            AuthStatus::Valid => Some(AuthenticatedMember(self)),
+            AuthStatus::Valid => Some(AuthenticatedSigner(self)),
             status => {
                 tracing::warn!(signer = %self.signer, ?status, "member failed auth");
                 None
@@ -171,9 +171,9 @@ impl From<AuthResult> for AuthStatus {
 /// [`Signer::require_valid`] is the only constructor, so holding one
 /// is proof the check passed.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthenticatedMember(Signer);
+pub struct AuthenticatedSigner(Signer);
 
-impl AuthenticatedMember {
+impl AuthenticatedSigner {
     pub fn signer(&self) -> &SignerKey {
         &self.0.signer
     }
