@@ -1,7 +1,9 @@
 //! SQLite storage backend.
 
+use std::time::Duration;
+
 use libchat::StorageError;
-use rusqlite::{Connection, ffi::ErrorCode};
+use rusqlite::{Connection, TransactionBehavior, ffi::ErrorCode};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::errors::map_rusqlite_error;
@@ -89,7 +91,7 @@ impl SqliteDb {
     /// Creates a new SQLite database with the given configuration.
     pub fn new(config: StorageConfig) -> Result<Self, StorageError> {
         let encrypted = !matches!(config, StorageConfig::InMemory | StorageConfig::File(_));
-        let conn = match config {
+        let mut conn = match config {
             StorageConfig::InMemory => Connection::open_in_memory().map_err(map_rusqlite_error)?,
             StorageConfig::File(ref path) => Connection::open(path).map_err(map_rusqlite_error)?,
             StorageConfig::Encrypted { ref path, ref key } => {
@@ -109,6 +111,10 @@ impl SqliteDb {
             }
         };
 
+        // Pinned here: rusqlite documents its own default as subject to change.
+        conn.busy_timeout(Duration::from_secs(5))
+            .map_err(map_rusqlite_error)?;
+
         if encrypted {
             verify_key(&conn)?;
         }
@@ -116,6 +122,22 @@ impl SqliteDb {
         // Enable foreign keys
         conn.execute_batch("PRAGMA foreign_keys = ON;")
             .map_err(map_rusqlite_error)?;
+
+        // WAL keeps -wal and -shm sidecars beside the database, so the database file alone is not
+        // a copy of it, and it wants a local filesystem. SQLite answers with the mode it ends on
+        // rather than failing when it cannot set the one asked for.
+        conn.execute_batch("PRAGMA journal_mode = WAL;")
+            .map_err(map_rusqlite_error)?;
+
+        // Under WAL this fsyncs at a checkpoint rather than at every commit: a process crash keeps
+        // every committed transaction, a power cut can cost the most recent ones.
+        conn.execute_batch("PRAGMA synchronous = NORMAL;")
+            .map_err(map_rusqlite_error)?;
+
+        // KvStore::begin holds &self and cannot pick a behaviour per transaction, so rusqlite takes
+        // it from the connection. IMMEDIATE claims the write lock at BEGIN, so a transaction that
+        // reads before it writes cannot fail to upgrade with its reads already staged.
+        conn.set_transaction_behavior(TransactionBehavior::Immediate);
 
         Ok(Self { conn })
     }
@@ -242,9 +264,13 @@ mod tests {
             key: key(1),
         })
         .unwrap();
+        // Under WAL a writer does not block readers; the exclusive locking mode does.
         holder
             .connection()
-            .execute_batch("CREATE TABLE t (v TEXT); BEGIN EXCLUSIVE; INSERT INTO t VALUES ('x');")
+            .execute_batch(
+                "PRAGMA locking_mode = EXCLUSIVE; CREATE TABLE t (v TEXT); BEGIN EXCLUSIVE; \
+                 INSERT INTO t VALUES ('x');",
+            )
             .unwrap();
 
         let Err(err) = SqliteDb::new(StorageConfig::EncryptedWithKey { path, key: key(1) }) else {
@@ -299,5 +325,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         SqliteDb::new(StorageConfig::File(db_path(&dir))).unwrap();
         SqliteDb::new(StorageConfig::InMemory).unwrap();
+    }
+
+    #[test]
+    fn a_file_database_runs_in_wal() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let db = SqliteDb::new(StorageConfig::File(db_path(&dir))).unwrap();
+
+        let mode: String = db
+            .connection()
+            .pragma_query_value(None, "journal_mode", |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode, "wal");
     }
 }
