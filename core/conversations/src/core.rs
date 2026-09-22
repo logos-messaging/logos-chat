@@ -287,9 +287,18 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         convo_id: &str,
         participants: &[ParticipantId],
     ) -> Result<(), ChatError> {
-        let signers = self.get_signers_for_participants(participants)?;
-        let signers: Vec<SignerRef> = signers.iter().collect();
-        self.group_remove_member(convo_id, &signers)
+        let convo = self
+            .cached_convos
+            .get(convo_id)
+            .ok_or_else(|| ChatError::NoConvo(convo_id.to_string()))?;
+        let seated: Vec<SignerKey> = convo
+            .members()?
+            .into_iter()
+            .filter(|s| participants.contains(&s.participant_id))
+            .map(|s| s.signer)
+            .collect();
+        let seated: Vec<SignerRef> = seated.iter().collect();
+        self.group_remove_member(convo_id, &seated)
     }
 
     /// Committed members that pass auth, for a direct conversation as for a
