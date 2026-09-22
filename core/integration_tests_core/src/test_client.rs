@@ -58,7 +58,7 @@ impl TestClient {
         }
     }
 
-    pub fn addr(&self) -> SignerKey {
+    pub fn signer_key(&self) -> SignerKey {
         self.inner.signer().clone()
     }
 

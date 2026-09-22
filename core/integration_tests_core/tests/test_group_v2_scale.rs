@@ -271,7 +271,7 @@ fn run<const N: usize>(batch: usize) {
     while joined < N {
         let upto = (joined + batch).min(N);
         let invited: Vec<SignerKey> = (joined..upto)
-            .map(|i| harness.client_mut(i).addr())
+            .map(|i| harness.client_mut(i).signer_key())
             .collect();
         if let Err(refusal) = add_members(&mut harness, &convo, &invited) {
             panic!(
