@@ -323,7 +323,7 @@ mod tests {
 
         let first = account
             .update()
-            .endorse_ed25519_key(SIGNER_CONTEXT.clone(), &device())
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &device())
             .publish()
             .unwrap();
 
@@ -333,7 +333,7 @@ mod tests {
 
         let second = imported
             .update()
-            .endorse_ed25519_key(SIGNER_CONTEXT.clone(), &device())
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &device())
             .publish()
             .unwrap();
 
