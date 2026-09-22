@@ -12,4 +12,6 @@ pub enum ClientError {
     AccountResolution(String),
     #[error("device bundle publish failed: {0}")]
     BundlePublish(String),
+    #[error("failed to encode message content: {0}")]
+    ContentEncode(#[from] message_types::Error),
 }

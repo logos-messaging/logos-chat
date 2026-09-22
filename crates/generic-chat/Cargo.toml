@@ -15,6 +15,7 @@ crossbeam-channel = { workspace = true }
 crypto = { workspace = true }
 libchat = { workspace = true }
 logos-account = { workspace = true, features = ["dev"]}
+message-types = { workspace = true }
 shared-traits = { workspace =  true }
 
 # External dependencies (sorted)

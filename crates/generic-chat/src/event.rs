@@ -32,11 +32,16 @@ pub enum Event {
         convo_id: Arc<str>,
         class: ConversationClass,
     },
-    /// User content arrived on an existing conversation.
+    /// User content arrived. `content` is the raw body — decode with
+    /// [`crate::content::decode`]; it stays raw so a consumer with its own format
+    /// is not forced through ours.
+    #[non_exhaustive]
     MessageReceived {
         convo_id: Arc<str>,
         content: Vec<u8>,
         sender: MessageSender,
+        /// Cross-peer id of this message; reply to it by naming this id.
+        message_id: String,
     },
     /// A peer acknowledged a message this client sent: it referenced that
     /// message in the causal history of a message of its own, so it held ours
