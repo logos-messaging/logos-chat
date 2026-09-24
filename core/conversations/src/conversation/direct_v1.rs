@@ -1,5 +1,5 @@
 use chat_proto::logoschat::encryption::EncryptedPayload;
-use shared_traits::IdentIdRef;
+use shared_traits::SignerRef;
 
 use crate::{
     ChatError, ExternalServices, MessageId,
@@ -16,12 +16,12 @@ pub struct DirectV1Convo {
 }
 
 impl DirectV1Convo {
-    // Constructor must accept multiple IdentId's
+    // Constructor must accept multiple Signer's
     // While the conversation is limited to 2 participants, each participants may
     // have multiple Installations.
     pub fn new<S: ExternalServices>(
         cx: &mut ServiceContext<S>,
-        members: &[IdentIdRef],
+        members: &[SignerRef],
     ) -> Result<Self, ChatError> {
         let mut inner_group = DelegateGroup::new(cx)?;
         inner_group.add_member(cx, members)?;

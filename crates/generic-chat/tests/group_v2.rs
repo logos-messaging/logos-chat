@@ -10,7 +10,8 @@ use chat_sqlite::SqliteStore;
 use components::EphemeralRegistry;
 use crossbeam_channel::Receiver;
 use libchat::ChatError;
-use logos_account::TestLogosAccount;
+use logos_account::AccountAddr;
+use logos_account_legacy::TestLogosAccount;
 use logos_generic_chat::{
     ChatClient, ChatClientBuilder, ClientError, ConversationClass, DelegateSigner, Event,
     GroupMetadata, GroupV2Config, InProcessDelivery, MessageBus,
@@ -114,14 +115,14 @@ fn wait_for_group_started(events: &Receiver<Event>, label: &str) -> String {
 /// skipped so an invite alone never reads as convergence.
 fn wait_for_members(client: &mut TestClient, convo_id: &str, expected: &[&str]) {
     use std::collections::BTreeSet;
-    let want: BTreeSet<&str> = expected.iter().copied().collect();
+    let want: BTreeSet<String> = expected.iter().map(|a| a.to_string()).collect();
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
         let roster = client.group_members(convo_id).expect("group_members");
-        let got: BTreeSet<&str> = roster
+        let got: BTreeSet<String> = roster
             .iter()
             .filter(|m| !m.pending)
-            .filter_map(|m| m.account.as_ref().map(|a| a.as_str()))
+            .filter_map(|m| m.account.as_ref().map(AccountAddr::to_string))
             .collect();
         if got == want {
             return;
@@ -141,7 +142,7 @@ fn wait_for_message(events: &Receiver<Event>, content: &[u8]) -> Option<String> 
             content: got,
             sender,
             ..
-        } if got == content => Some(sender.account.as_ref().map(|a| a.as_str().to_string())),
+        } if got == content => Some(sender.account.as_ref().map(AccountAddr::to_string)),
         _ => None,
     })
 }
@@ -291,11 +292,11 @@ fn group_creator_is_in_own_roster() {
         .create_group_conversation(&[], unnamed_group())
         .expect("empty group");
     let roster = saro.group_members(&convo_id).expect("group_members");
-    let accounts: Vec<Option<&str>> = roster
+    let accounts: Vec<Option<String>> = roster
         .iter()
-        .map(|m| m.account.as_ref().map(|a| a.as_str()))
+        .map(|m| m.account.as_ref().map(AccountAddr::to_string))
         .collect();
-    assert_eq!(accounts, vec![Some(saro_addr.as_str())]);
+    assert_eq!(accounts, vec![Some(saro_addr.clone())]);
 }
 
 /// An invited member joins the roster immediately, flagged pending: the add is
@@ -322,15 +323,15 @@ fn invited_member_is_pending_until_the_group_commits() {
         .expect("saro invites raya");
 
     let roster = saro.group_members(&convo_id).expect("group_members");
-    let accounts = |pending: bool| -> Vec<&str> {
+    let accounts = |pending: bool| -> Vec<String> {
         roster
             .iter()
             .filter(|m| m.pending == pending)
-            .filter_map(|m| m.account.as_ref().map(|a| a.as_str()))
+            .filter_map(|m| m.account.as_ref().map(AccountAddr::to_string))
             .collect()
     };
-    assert_eq!(accounts(false), vec![saro_addr.as_str()]);
-    assert_eq!(accounts(true), vec![raya_addr.as_str()]);
+    assert_eq!(accounts(false), vec![saro_addr.clone()]);
+    assert_eq!(accounts(true), vec![raya_addr.clone()]);
 }
 
 /// The pending flag is transient: once the group commits the add, the invitee
@@ -622,6 +623,9 @@ fn a_sent_message_is_acknowledged_by_the_peers_that_reply() {
         .expect("raya reply");
     pax.send_message(&convo_id, b"pax here").expect("pax reply");
 
+    // An acknowledgement names the replying *device*: it is carried by the
+    // causal history, which records a sender by its signer, so there is no
+    // account claim to verify against the directory.
     let mut holders = Vec::new();
     while holders.len() < 2 {
         let peer = wait_for_event(
@@ -633,20 +637,17 @@ fn a_sent_message_is_acknowledged_by_the_peers_that_reply() {
                     convo_id: id,
                     message_id: acked,
                     acked_by,
-                } if **id == *convo_id && *acked == message_id => Some(
-                    acked_by
-                        .as_ref()
-                        .and_then(|a| a.account.as_ref())
-                        .map(|a| a.as_str().to_string()),
-                ),
+                } if **id == *convo_id && *acked == message_id => {
+                    Some(acked_by.as_ref().map(|a| a.local_identity.to_string()))
+                }
                 _ => None,
             },
         );
-        holders.push(peer.expect("the acknowledging peer's account should be directory-verified"));
+        holders.push(peer.expect("an acknowledgement names the device that replied"));
     }
     holders.sort();
 
-    let mut expected = vec![raya_addr.clone(), pax_addr.clone()];
+    let mut expected = vec![raya.installation_name(), pax.installation_name()];
     expected.sort();
     assert_eq!(holders, expected, "both replying peers should be listed");
 }

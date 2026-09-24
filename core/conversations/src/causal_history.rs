@@ -28,6 +28,8 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use shared_traits::SignerKey;
+
 use crate::proto::{Bytes, HistoryEntry, ReliablePayload};
 use crate::utils::{blake2b_hex, hash_size};
 
@@ -153,13 +155,18 @@ impl CausalHistoryStore {
     /// Build the reliability envelope for an outbound message: advance the
     /// Lamport clock, derive a deterministic ID, and attach the causal
     /// frontier.
-    pub fn on_send(&self, conversation_id: &str, sender: &str, content: &[u8]) -> ReliablePayload {
+    pub fn on_send(
+        &self,
+        conversation_id: &str,
+        sender: &SignerKey,
+        content: &[u8],
+    ) -> ReliablePayload {
         let mut inner = self.inner.borrow_mut();
         let state = inner.convos.entry(conversation_id.to_owned()).or_default();
 
         state.lamport_clock += 1;
         let lamport = state.lamport_clock;
-        let message_id = derive_message_id(conversation_id, sender, lamport, content);
+        let message_id = derive_message_id(conversation_id, &sender.to_string(), lamport, content);
         let frontier = Frontier::new(sender.to_string(), message_id.clone());
 
         let causal_history = state
@@ -180,7 +187,7 @@ impl CausalHistoryStore {
 
         ReliablePayload {
             message_id,
-            sender_id: sender.to_owned(),
+            sender_id: sender.to_string(),
             channel_id: conversation_id.to_owned(),
             lamport_timestamp: lamport,
             causal_history,
@@ -283,22 +290,29 @@ fn derive_message_id(channel_id: &str, sender: &str, lamport: i32, content: &[u8
 
 #[cfg(test)]
 mod tests {
+    use crypto::Ed25519SigningKey;
+
     use super::*;
 
     fn payload(
         store: &CausalHistoryStore,
         convo: &str,
-        sender: &str,
+        sender: &SignerKey,
         body: &[u8],
     ) -> ReliablePayload {
         store.on_send(convo, sender, body)
     }
 
+    fn new_signer() -> SignerKey {
+        SignerKey::from(Ed25519SigningKey::generate().verifying_key())
+    }
+
     #[test]
     fn lamport_clock_increments_per_send() {
+        let alice = new_signer();
         let s = CausalHistoryStore::new();
-        let a = payload(&s, "c", "alice", b"1");
-        let b = payload(&s, "c", "alice", b"2");
+        let a = payload(&s, "c", &alice, b"1");
+        let b = payload(&s, "c", &alice, b"2");
         assert_eq!(a.lamport_timestamp, 1);
         assert_eq!(b.lamport_timestamp, 2);
         // Second message's causal history references the first.
@@ -308,10 +322,11 @@ mod tests {
 
     #[test]
     fn detects_a_gap_when_a_referenced_message_was_never_seen() {
+        let alice = new_signer();
         let sender = CausalHistoryStore::new();
-        let m1 = payload(&sender, "c", "alice", b"first");
-        let m2 = payload(&sender, "c", "alice", b"second (dropped)");
-        let m3 = payload(&sender, "c", "alice", b"third");
+        let m1 = payload(&sender, "c", &alice, b"first");
+        let m2 = payload(&sender, "c", &alice, b"second (dropped)");
+        let m3 = payload(&sender, "c", &alice, b"third");
 
         let receiver = CausalHistoryStore::new();
         assert!(receiver.on_receive("c", &m1).is_empty());
@@ -326,9 +341,10 @@ mod tests {
 
     #[test]
     fn no_gap_when_all_messages_are_delivered_in_order() {
+        let alice = new_signer();
         let sender = CausalHistoryStore::new();
-        let m1 = payload(&sender, "c", "alice", b"a");
-        let m2 = payload(&sender, "c", "alice", b"b");
+        let m1 = payload(&sender, "c", &alice, b"a");
+        let m2 = payload(&sender, "c", &alice, b"b");
 
         let receiver = CausalHistoryStore::new();
         receiver.on_receive("c", &m1);
@@ -338,81 +354,85 @@ mod tests {
 
     #[test]
     fn missing_message_carries_sender_id_of_the_original_author() {
-        let alice = CausalHistoryStore::new();
-        let m1 = payload(&alice, "c", "alice", b"first");
-        let _m2 = payload(&alice, "c", "alice", b"second (dropped)");
-        let m3 = payload(&alice, "c", "alice", b"third");
+        let alice = new_signer();
+        let alice_store = CausalHistoryStore::new();
+        let m1 = payload(&alice_store, "c", &alice, b"first");
+        let _m2 = payload(&alice_store, "c", &alice, b"second (dropped)");
+        let m3 = payload(&alice_store, "c", &alice, b"third");
 
         let receiver = CausalHistoryStore::new();
         receiver.on_receive("c", &m1);
         let missing = receiver.on_receive("c", &m3);
 
         assert_eq!(missing.len(), 1);
-        assert_eq!(missing[0].frontier.sender_id(), "alice");
+        assert_eq!(missing[0].frontier.sender_id(), alice.to_string());
     }
 
     /// Bob replies after receiving Alice's message, so his causal history
     /// names it — that reference is the acknowledgement.
     #[test]
     fn a_peer_referencing_our_message_acknowledges_it() {
-        let alice = CausalHistoryStore::new();
-        let bob = CausalHistoryStore::new();
+        let (alice, bob) = (new_signer(), new_signer());
+        let alice_store = CausalHistoryStore::new();
+        let bob_store = CausalHistoryStore::new();
 
-        let a1 = payload(&alice, "c", "alice", b"hello");
-        bob.on_receive("c", &a1);
-        let b1 = payload(&bob, "c", "bob", b"hi back");
-        alice.on_receive("c", &b1);
+        let a1 = payload(&alice_store, "c", &alice, b"hello");
+        bob_store.on_receive("c", &a1);
+        let b1 = payload(&bob_store, "c", &bob, b"hi back");
+        alice_store.on_receive("c", &b1);
 
         assert_eq!(
-            alice.take_acks(),
+            alice_store.take_acks(),
             vec![DeliveryAck {
                 conversation_id: "c".to_owned(),
                 message_id: a1.message_id.clone(),
-                acked_by: "bob".to_owned(),
+                acked_by: bob.to_string(),
             }]
         );
         // Draining clears the report.
-        assert!(alice.take_acks().is_empty());
+        assert!(alice_store.take_acks().is_empty());
     }
 
     /// Every member that replies acknowledges separately, which is what lets an
     /// application list the peers that hold a message.
     #[test]
     fn each_peer_acknowledges_separately() {
-        let alice = CausalHistoryStore::new();
-        let bob = CausalHistoryStore::new();
-        let carol = CausalHistoryStore::new();
+        let (alice, bob, carol) = (new_signer(), new_signer(), new_signer());
+        let alice_store = CausalHistoryStore::new();
+        let bob_store = CausalHistoryStore::new();
+        let carol_store = CausalHistoryStore::new();
 
-        let a1 = payload(&alice, "c", "alice", b"hello all");
-        bob.on_receive("c", &a1);
-        carol.on_receive("c", &a1);
-        alice.on_receive("c", &payload(&bob, "c", "bob", b"bob here"));
-        alice.on_receive("c", &payload(&carol, "c", "carol", b"carol here"));
+        let a1 = payload(&alice_store, "c", &alice, b"hello all");
+        bob_store.on_receive("c", &a1);
+        carol_store.on_receive("c", &a1);
+        alice_store.on_receive("c", &payload(&bob_store, "c", &bob, b"bob here"));
+        alice_store.on_receive("c", &payload(&carol_store, "c", &carol, b"carol here"));
 
-        let holders: Vec<String> = alice
+        let holders: Vec<String> = alice_store
             .take_acks()
             .into_iter()
             .filter(|a| a.message_id == a1.message_id)
             .map(|a| a.acked_by)
             .collect();
-        assert_eq!(holders, vec!["bob".to_owned(), "carol".to_owned()]);
+        assert_eq!(holders, vec![bob.to_string(), carol.to_string()]);
     }
 
     /// Bob keeps naming the message in later sends; the application is told
     /// once.
     #[test]
     fn a_peer_acknowledges_a_message_only_once() {
-        let alice = CausalHistoryStore::new();
-        let bob = CausalHistoryStore::new();
+        let (alice, bob) = (new_signer(), new_signer());
+        let alice_store = CausalHistoryStore::new();
+        let bob_store = CausalHistoryStore::new();
 
-        let a1 = payload(&alice, "c", "alice", b"hello");
-        bob.on_receive("c", &a1);
-        alice.on_receive("c", &payload(&bob, "c", "bob", b"first reply"));
-        alice.take_acks();
-        alice.on_receive("c", &payload(&bob, "c", "bob", b"second reply"));
+        let a1 = payload(&alice_store, "c", &alice, b"hello");
+        bob_store.on_receive("c", &a1);
+        alice_store.on_receive("c", &payload(&bob_store, "c", &bob, b"first reply"));
+        alice_store.take_acks();
+        alice_store.on_receive("c", &payload(&bob_store, "c", &bob, b"second reply"));
 
         assert!(
-            alice.take_acks().is_empty(),
+            alice_store.take_acks().is_empty(),
             "a peer's acknowledgement of one message is reported once"
         );
     }
@@ -420,24 +440,26 @@ mod tests {
     /// Carol's reply names Bob's message, not ours — nothing for us to report.
     #[test]
     fn a_reference_to_someone_elses_message_is_not_our_acknowledgement() {
-        let alice = CausalHistoryStore::new();
-        let bob = CausalHistoryStore::new();
-        let carol = CausalHistoryStore::new();
+        let (bob, carol) = (new_signer(), new_signer());
+        let alice_store = CausalHistoryStore::new();
+        let bob_store = CausalHistoryStore::new();
+        let carol_store = CausalHistoryStore::new();
 
-        let b1 = payload(&bob, "c", "bob", b"bob speaks");
-        carol.on_receive("c", &b1);
+        let b1 = payload(&bob_store, "c", &bob, b"bob speaks");
+        carol_store.on_receive("c", &b1);
         // Alice observes Carol's reply, which references Bob's message only.
-        alice.on_receive("c", &payload(&carol, "c", "carol", b"carol replies"));
+        alice_store.on_receive("c", &payload(&carol_store, "c", &carol, b"carol replies"));
 
-        assert!(alice.take_acks().is_empty());
+        assert!(alice_store.take_acks().is_empty());
     }
 
     #[test]
     fn a_gap_is_reported_only_once() {
+        let alice = new_signer();
         let sender = CausalHistoryStore::new();
-        let m1 = payload(&sender, "c", "alice", b"a");
-        let m2 = payload(&sender, "c", "alice", b"b");
-        let m3 = payload(&sender, "c", "alice", b"c");
+        let m1 = payload(&sender, "c", &alice, b"a");
+        let m2 = payload(&sender, "c", &alice, b"b");
+        let m3 = payload(&sender, "c", &alice, b"c");
 
         let receiver = CausalHistoryStore::new();
         // Neither m1 nor m2 delivered; both m2 and m3 reference m1.

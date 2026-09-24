@@ -1,5 +1,5 @@
 use crypto::{Ed25519SigningKey, Ed25519VerifyingKey};
-use libchat::{IdentId, IdentityProvider, trunc};
+use libchat::{IdentityProvider, SignerKey, trunc};
 
 use crate::ClientError;
 
@@ -38,34 +38,39 @@ impl DelegateSigner {
 /// association is client state; neither the signer nor the core knows it.
 pub(crate) struct DelegateIdentity {
     signer: DelegateSigner,
-    identifier: IdentId,
+    /// The delegate key, which is what this identity signs under.
+    identity: SignerKey,
+    /// The account claim, serialized — carried in the MLS leaf credential and
+    /// opaque to the core.
+    credential: Vec<u8>,
 }
 
 impl DelegateIdentity {
     pub(crate) fn new(signer: DelegateSigner, account: &str) -> Self {
-        let credential = DelegateCredential::associated(signer.public_key(), account);
+        let credential = DelegateCredential::associated(signer.public_key(), account).serialize();
         Self {
-            identifier: credential.into(),
+            identity: SignerKey::from(signer.public_key().clone()),
+            credential,
             signer,
         }
     }
 }
 
 impl IdentityProvider for DelegateIdentity {
-    fn id(&self) -> libchat::IdentIdRef<'_> {
-        &self.identifier
+    fn signer_key(&self) -> libchat::SignerRef<'_> {
+        &self.identity
+    }
+
+    fn participant_id(&self) -> shared_traits::ParticipantId {
+        shared_traits::ParticipantId::from(self.credential.as_slice())
     }
 
     fn display_name(&self) -> String {
-        trunc(self.identifier.as_str())
+        trunc(&self.identity.to_string())
     }
 
     fn sign(&self, payload: &[u8]) -> crypto::Ed25519Signature {
         self.signer.sign(payload)
-    }
-
-    fn public_key(&self) -> &Ed25519VerifyingKey {
-        self.signer.public_key()
     }
 }
 
@@ -182,22 +187,6 @@ impl TryFrom<Vec<u8>> for DelegateCredential {
     }
 }
 
-impl From<DelegateCredential> for IdentId {
-    fn from(value: DelegateCredential) -> Self {
-        IdentId::new(hex::encode(value.serialize()))
-    }
-}
-
-impl TryFrom<IdentId> for DelegateCredential {
-    type Error = ClientError;
-
-    fn try_from(value: IdentId) -> Result<Self, Self::Error> {
-        hex::decode(value.as_str())
-            .map_err(|_| ClientError::BadlyFormedCredential)?
-            .try_into()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,25 +210,6 @@ mod tests {
         let bytes = DelegateCredential::associated(&key, "user@example.com").serialize();
         let recovered: DelegateCredential = bytes.clone().try_into().unwrap();
         assert_eq!(recovered.serialize(), bytes);
-    }
-
-    #[test]
-    fn ident_id_roundtrip_unassociated() {
-        let key = test_key();
-        let original = DelegateCredential::unassociated(&key).serialize();
-        let ident_id: IdentId = DelegateCredential::unassociated(&key).into();
-        let recovered: DelegateCredential = ident_id.try_into().unwrap();
-        assert_eq!(recovered.serialize(), original);
-    }
-
-    #[test]
-    fn ident_id_roundtrip_associated() {
-        let key = test_key();
-        let addr = "user@example.com";
-        let original = DelegateCredential::associated(&key, addr).serialize();
-        let ident_id: IdentId = DelegateCredential::associated(&key, addr).into();
-        let recovered: DelegateCredential = ident_id.try_into().unwrap();
-        assert_eq!(recovered.serialize(), original);
     }
 
     #[test]

@@ -11,8 +11,8 @@ fn create_group() {
 
     let mut harness = TestHarness::<3>::new(|_, _| {});
 
-    let raya_id = harness.raya().ident_id().clone();
-    let pax_id = harness.pax().ident_id().clone();
+    let raya_id = harness.raya().signer().clone();
+    let pax_id = harness.pax().signer().clone();
 
     const M_R1: &[u8; 12] = b"Hi From Raya";
     const M_P1: &[u8; 13] = b"Hey it's Pax!";
@@ -74,8 +74,8 @@ fn remove_group_member() {
 
     let mut harness = TestHarness::<3>::new(|_, _| {});
 
-    let raya_id = harness.raya().ident_id().clone();
-    let pax_id = harness.pax().ident_id().clone();
+    let raya_id = harness.raya().addr().clone();
+    let pax_id = harness.pax().addr().clone();
 
     let convo_id = harness
         .saro()
@@ -114,9 +114,9 @@ fn remove_group_member_rejects_a_non_member() {
 
     let mut harness = TestHarness::<3>::new(|_, _| {});
 
-    let raya_id = harness.raya().ident_id().clone();
-    let pax_id = harness.pax().ident_id().clone();
-    let saro_id = harness.saro().ident_id().clone();
+    let raya_id = harness.raya().addr().clone();
+    let pax_id = harness.pax().addr().clone();
+    let saro_id = harness.saro().addr().clone();
 
     let convo_id = harness
         .saro()

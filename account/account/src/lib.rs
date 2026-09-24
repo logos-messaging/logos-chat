@@ -7,7 +7,8 @@ use std::fmt::{Debug, Display};
 pub use crate::account::Account;
 pub use crate::error::AccountError;
 pub use crate::resolver::AccountResolver;
-use account_log::{AccountAddr, SignedAccountLog};
+pub use account_log::AccountAddr;
+use account_log::SignedAccountLog;
 
 /// Read access to published account logs.
 ///

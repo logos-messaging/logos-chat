@@ -2,7 +2,7 @@ use crate::test_ident::TestIdent;
 use libchat::test_support::MemStore;
 use libchat::{ConversationId, Core, IdentityProvider, PayloadOutcome};
 use libchat::{GroupV2Clock, GroupV2Config};
-use shared_traits::IdentId;
+use shared_traits::SignerKey;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
@@ -49,8 +49,8 @@ impl TestClient {
         }
     }
 
-    pub fn addr(&self) -> IdentId {
-        self.inner.ident_id().clone()
+    pub fn addr(&self) -> SignerKey {
+        self.inner.signer().clone()
     }
 
     /// Inbound payloads this client rejected, in arrival order. Only recorded
@@ -70,13 +70,13 @@ impl TestClient {
             let outcome = match self.inner.handle_payload(&data) {
                 Ok(outcome) => outcome,
                 Err(e) if self.tolerate_inbound_errors => {
-                    warn!(id = ?self.ident_id(), error = ?e, "INBOUND ERROR");
+                    warn!(id = ?self.signer(), error = ?e, "INBOUND ERROR");
                     self.inbound_errors.push(format!("{e:?}"));
                     continue;
                 }
-                Err(e) => panic!("{:?} rejected an inbound payload: {e:?}", self.ident_id()),
+                Err(e) => panic!("{:?} rejected an inbound payload: {e:?}", self.signer()),
             };
-            warn!(id= ?self.ident_id(),?outcome, "DRAIN CLIENT");
+            warn!(id= ?self.signer(),?outcome, "DRAIN CLIENT");
             // Copy Convo Messages to received buffer
 
             match &outcome {
@@ -144,13 +144,13 @@ impl DerefMut for TestClient {
 
 #[allow(unused)]
 pub struct Observation {
-    ident: IdentId,
+    ident: SignerKey,
     outcome: PayloadOutcome,
 }
 
 #[allow(unused)]
 pub struct TestHarness<const N: usize> {
-    addresses: HashMap<usize, IdentId>,
+    addresses: HashMap<usize, SignerKey>,
     clients: Vec<TestClient>,
     wakeup_service: WS,
     cb: Box<OnMessageCallback>,
@@ -174,7 +174,7 @@ impl<const N: usize> TestHarness<N> {
             let wp = ws.new_provider(i);
             let ident = TestIdent::new(Self::names(i));
 
-            addresses.insert(i, ident.id().clone());
+            addresses.insert(i, ident.signer_key().clone());
             let mut core_client =
                 ClientType::new_with_name(ident, ds.clone(), rs.clone(), wp, MemStore::new())
                     .unwrap();
@@ -261,12 +261,12 @@ impl<const N: usize> TestHarness<N> {
         // Process existing payloads for all clients.
         for client in self.clients.iter_mut() {
             for outcome in client.drain_outcomes() {
-                info!(id = ?client.ident_id(), ?outcome, "Process drain");
+                info!(id = ?client.signer(), ?outcome, "Process drain");
                 self.observed_outcomes.push(Observation {
-                    ident: client.ident_id().clone(),
+                    ident: client.signer().clone(),
                     outcome: outcome.clone(),
                 });
-                info!(id = ?client.ident_id(), ?outcome, "Process drain");
+                info!(id = ?client.signer(), ?outcome, "Process drain");
                 (self.cb)(client, outcome)
             }
         }
@@ -356,7 +356,7 @@ mod tests {
             .try_init();
 
         let mut harness = TestHarness::<2>::new(|client, outcome| {
-            info!( id=?&client.ident_id(), outcome = ?outcome, "Result");
+            info!( id=?&client.signer(), outcome = ?outcome, "Result");
         });
 
         //Create Convo

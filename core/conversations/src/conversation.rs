@@ -11,7 +11,7 @@ use crate::types::ConvoMetadata;
 pub use direct_v1::DirectV1Convo;
 pub use group_v1::GroupV1Convo;
 pub use group_v2::{GroupV2Clock, GroupV2Convo};
-use shared_traits::IdentIdRef;
+use shared_traits::SignerRef;
 
 pub type ConversationId = String;
 pub type ConversationIdRef<'a> = &'a str;
@@ -66,7 +66,7 @@ pub(crate) trait GroupConvo<S: ExternalServices>: Convo<S> + std::fmt::Debug + S
     fn add_member(
         &mut self,
         cx: &mut ServiceContext<S>,
-        members: &[IdentIdRef],
+        members: &[SignerRef],
     ) -> Result<(), ChatError>;
 
     /// Remove members from the group, naming them by signer (installation) id
@@ -74,7 +74,7 @@ pub(crate) trait GroupConvo<S: ExternalServices>: Convo<S> + std::fmt::Debug + S
     fn remove_member(
         &mut self,
         cx: &mut ServiceContext<S>,
-        members: &[IdentIdRef],
+        members: &[SignerRef],
     ) -> Result<(), ChatError>;
 
     /// Each member this conversation invited and the group has not committed

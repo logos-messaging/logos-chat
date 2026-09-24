@@ -6,7 +6,7 @@ use std::{
 
 use crypto::Ed25519VerifyingKey;
 use libchat::{IdentityProvider, RegistrationService};
-use logos_account::{AccountDirectory, DeviceSet, SignedDeviceBundle, verify_bundle};
+use logos_account_legacy::{AccountDirectory, DeviceSet, SignedDeviceBundle, verify_bundle};
 
 /// A Contact Registry used for Tests.
 /// This implementation stores bundle bytes and then returns them when
@@ -64,7 +64,7 @@ impl RegistrationService for EphemeralRegistry {
         self.key_packages
             .lock()
             .unwrap()
-            .insert(hex::encode(identity.public_key().as_ref()), key_bundle);
+            .insert(hex::encode(identity.signer_key().as_bytes()), key_bundle);
         Ok(())
     }
 

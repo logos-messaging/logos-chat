@@ -7,3 +7,5 @@ license.workspace = true
 
 [dependencies]
 crypto = { workspace = true }
+hex = "0.4.3"
+thiserror = "2"
