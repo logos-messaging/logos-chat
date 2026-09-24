@@ -11,8 +11,8 @@ fn create_group() {
 
     let mut harness = TestHarness::<3>::new(|_, _| {});
 
-    let raya_id = harness.raya().signer().clone();
-    let pax_id = harness.pax().signer().clone();
+    let raya_account = harness.raya().account();
+    let pax_id = harness.pax().addr();
 
     const M_R1: &[u8; 12] = b"Hi From Raya";
     const M_P1: &[u8; 13] = b"Hey it's Pax!";
@@ -21,7 +21,7 @@ fn create_group() {
 
     let convo_id = harness
         .saro()
-        .create_group_convo_v1(&[&raya_id])
+        .create_group_convo_v1(&[raya_account])
         .expect("Saro invite Raya ");
     harness.process_until(|h| h.raya().list_all_conversations().unwrap().len() == 1);
 
@@ -38,7 +38,7 @@ fn create_group() {
 
     harness
         .saro()
-        .group_add_member(&convo_id, &[&pax_id])
+        .group_add_member(&convo_id, &[pax_id])
         .expect("Saro invite pax");
     harness.process_until(|h| h.pax().list_all_conversations().unwrap().len() == 1);
 
@@ -74,12 +74,12 @@ fn remove_group_member() {
 
     let mut harness = TestHarness::<3>::new(|_, _| {});
 
-    let raya_id = harness.raya().addr().clone();
     let pax_id = harness.pax().addr().clone();
+    let (raya_account, pax_account) = (harness.raya().account(), harness.pax().account());
 
     let convo_id = harness
         .saro()
-        .create_group_convo_v1(&[&raya_id, &pax_id])
+        .create_group_convo_v1(&[raya_account, pax_account])
         .expect("Saro create with Raya and Pax");
     harness.process_until(|h| h.raya().convo_count() == 1 && h.pax().convo_count() == 1);
 
@@ -117,10 +117,11 @@ fn remove_group_member_rejects_a_non_member() {
     let raya_id = harness.raya().addr().clone();
     let pax_id = harness.pax().addr().clone();
     let saro_id = harness.saro().addr().clone();
+    let raya_account = harness.raya().account();
 
     let convo_id = harness
         .saro()
-        .create_group_convo_v1(&[&raya_id])
+        .create_group_convo_v1(&[raya_account])
         .expect("Saro create with Raya");
     harness.process_until(|h| h.raya().convo_count() == 1);
 

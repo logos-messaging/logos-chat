@@ -77,13 +77,18 @@ fn init_tracing() {
         .try_init();
 }
 
-/// The members each client reports, sorted, `None` while it has not joined.
+/// The committed members each client reports, sorted, `None` while it has not
+/// joined.
 fn rosters<const N: usize>(h: &mut TestHarness<N>, convo: &str) -> Vec<Option<Vec<Vec<u8>>>> {
     (0..N)
         .map(|i| {
-            h.client_mut(i).group_members(convo).ok().map(|mut m| {
-                m.sort();
-                m
+            h.client_mut(i).group_members(convo).ok().map(|members| {
+                let mut members: Vec<Vec<u8>> = members
+                    .iter()
+                    .map(|m| m.participant_id().as_bytes().to_vec())
+                    .collect();
+                members.sort();
+                members
             })
         })
         .collect()
@@ -131,7 +136,7 @@ fn settle<const N: usize>(
 fn add_members<const N: usize>(
     h: &mut TestHarness<N>,
     convo: &str,
-    invited: &[&SignerKey],
+    invited: &[SignerKey],
 ) -> Result<(), String> {
     let mut elapsed = Duration::ZERO;
     let budget = settle_budget();
@@ -265,10 +270,9 @@ fn run<const N: usize>(batch: usize) {
     let mut joined = 1;
     while joined < N {
         let upto = (joined + batch).min(N);
-        let addresses: Vec<SignerKey> = (joined..upto)
+        let invited: Vec<SignerKey> = (joined..upto)
             .map(|i| harness.client_mut(i).addr())
             .collect();
-        let invited: Vec<&SignerKey> = addresses.iter().collect();
         if let Err(refusal) = add_members(&mut harness, &convo, &invited) {
             panic!(
                 "adding members {joined}..{upto} kept being refused: {refusal} :: {}",

@@ -80,6 +80,14 @@ impl Ed25519VerifyingKey {
         Ok(Self(key))
     }
 
+    pub fn from_canonical_slice(bytes: &[u8]) -> Result<Self, AccountLogError> {
+        let Some(bytes) = bytes.as_array() else {
+            return Err(AccountLogError::Malformed("incorrect length".into()));
+        };
+
+        Ed25519VerifyingKey::from_canonical_bytes(bytes)
+    }
+
     pub fn to_bytes(&self) -> [u8; KEY_LEN] {
         self.0.to_bytes()
     }

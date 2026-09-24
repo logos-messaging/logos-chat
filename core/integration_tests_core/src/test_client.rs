@@ -1,8 +1,8 @@
 use crate::test_ident::{AcceptAllAuth, TestIdent};
-use libchat::SignerKey;
 use libchat::test_support::MemStore;
 use libchat::{ConversationId, Core, IdentityProvider, PayloadOutcome};
 use libchat::{GroupV2Clock, GroupV2Config};
+use libchat::{ParticipantId, SignerKey};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
@@ -41,15 +41,17 @@ pub struct ReceivedMessage<T> {
 
 pub struct TestClient {
     inner: ClientType,
+    account: ParticipantId,
     received_messages: Vec<ReceivedMessage<Vec<u8>>>,
     inbound_errors: Vec<String>,
     tolerate_inbound_errors: bool,
 }
 
 impl TestClient {
-    fn init(client: ClientType) -> Self {
+    fn init(client: ClientType, account: ParticipantId) -> Self {
         Self {
             inner: client,
+            account,
             received_messages: vec![],
             inbound_errors: vec![],
             tolerate_inbound_errors: false,
@@ -58,6 +60,11 @@ impl TestClient {
 
     pub fn addr(&self) -> SignerKey {
         self.inner.signer().clone()
+    }
+
+    /// The account group creation resolves to this client's signer.
+    pub fn account(&self) -> ParticipantId {
+        self.account.clone()
     }
 
     /// Inbound payloads this client rejected, in arrival order. Only recorded
@@ -176,15 +183,18 @@ impl<const N: usize> TestHarness<N> {
         let ds = LocalBroadcaster::new();
         let rs = EphemeralRegistry::new();
         let ws = TestWakeupService::new();
+        let auth = AcceptAllAuth::default();
 
         for i in 0..N {
             let wp = ws.new_provider(i);
             let ident = TestIdent::new(Self::names(i));
 
             addresses.insert(i, ident.signer_key().clone());
+            auth.register(&ident);
+            let account = ident.participant_id();
             let mut core_client = ClientType::new_with_name(
                 ident,
-                AcceptAllAuth,
+                auth.clone(),
                 ds.clone(),
                 rs.clone(),
                 wp,
@@ -194,7 +204,7 @@ impl<const N: usize> TestHarness<N> {
             core_client.set_group_v2_clock(GroupV2Clock::Mock(ws.clock()));
             core_client.set_group_v2_config(fast_group_v2_config());
 
-            let client = TestClient::init(core_client);
+            let client = TestClient::init(core_client, account);
 
             clients.push(client);
         }
@@ -373,7 +383,7 @@ mod tests {
         });
 
         //Create Convo
-        let particpants = &[&harness.raya().addr()];
+        let particpants = &[harness.raya().account()];
         let convo_id = harness
             .saro()
             .create_group_convo(particpants)

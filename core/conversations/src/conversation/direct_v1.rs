@@ -1,8 +1,8 @@
-use crate::identity::SignerRef;
+use crate::identity::SignerKey;
 use chat_proto::logoschat::encryption::EncryptedPayload;
 
 use crate::{
-    ChatError, ExternalServices, MessageId,
+    ChatError, ExternalServices, MessageId, Signer,
     conversation::{ConversationIdRef, Convo, GroupConvo, GroupV1Convo, Identified},
     service_context::ServiceContext,
 };
@@ -16,12 +16,12 @@ pub struct DirectV1Convo {
 }
 
 impl DirectV1Convo {
-    // Constructor must accept multiple Signer's
+    // Constructor must accept multiple SignerKey's
     // While the conversation is limited to 2 participants, each participants may
     // have multiple Installations.
     pub fn new<S: ExternalServices>(
         cx: &mut ServiceContext<S>,
-        members: &[SignerRef],
+        members: &[SignerKey],
     ) -> Result<Self, ChatError> {
         let mut inner_group = DelegateGroup::new(cx)?;
         inner_group.add_member(cx, members)?;
@@ -62,7 +62,7 @@ where
         self.inner_group.wakeup(service_ctx)
     }
 
-    fn members(&self) -> Result<Vec<Vec<u8>>, ChatError> {
+    fn members(&self) -> Result<Vec<Signer>, ChatError> {
         Convo::<S>::members(&self.inner_group)
     }
 

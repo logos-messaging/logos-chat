@@ -9,7 +9,7 @@ use std::ops::{Deref, DerefMut};
 use components::{EphemeralRegistry, LocalBroadcaster};
 use integration_tests_core::{AcceptAllAuth, TestIdent};
 use libchat::test_support::MemStore;
-use libchat::{Core, MissingMessage, WakeupService};
+use libchat::{Core, IdentityProvider, MissingMessage, WakeupService};
 
 #[derive(Debug)]
 struct NoopWakeupService {}
@@ -85,11 +85,13 @@ impl DerefMut for Client {
 fn missing_group_message_is_detected() {
     let ds = LocalBroadcaster::new();
     let rs = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
     let saro_ident = TestIdent::new("saro");
+    auth.register(&saro_ident);
     let saro_ctx = Core::new_with_name(
         saro_ident,
-        AcceptAllAuth,
+        auth.clone(),
         ds.new_consumer(),
         rs.clone(),
         NoopWakeupService {},
@@ -98,9 +100,11 @@ fn missing_group_message_is_detected() {
     .unwrap();
 
     let raya_ident = TestIdent::new("raya");
+    let raya_account = raya_ident.participant_id();
+    auth.register(&raya_ident);
     let raya_ctx = Core::new_with_name(
         raya_ident,
-        AcceptAllAuth,
+        auth,
         ds.clone(),
         rs.clone(),
         NoopWakeupService {},
@@ -112,8 +116,10 @@ fn missing_group_message_is_detected() {
     let mut raya = Client::init(raya_ctx);
 
     // Saro creates a group with Raya.
-    let raya_id = raya.signer().clone();
-    let convo_id = saro.create_group_convo_v1(&[&raya_id]).unwrap().to_string();
+    let convo_id = saro
+        .create_group_convo_v1(&[raya_account])
+        .unwrap()
+        .to_string();
 
     // Raya joins (processes the Welcome + commit).
     raya.process_messages();

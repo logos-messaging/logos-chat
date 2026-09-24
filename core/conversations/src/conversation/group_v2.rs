@@ -5,7 +5,7 @@
 use crate::conversation::mls_extensions::{
     ConvoMetaInfo, GROUP_METADATA_EXTENSION_TYPE, capabilities_with_group_metadata,
 };
-use crate::identity::{SignerKey, SignerRef};
+use crate::identity::{Signer, SignerKey, SignerRef};
 use crate::types::{AddressedEncryptedPayload, ConvoMetadata};
 use crate::{Content, WakeupService};
 use alloy::signers::local::PrivateKeySigner;
@@ -16,8 +16,8 @@ use de_mls::protos::de_mls::messages::v1::{
     AppMessage as AppMessageProto, MemberWelcome, app_message,
 };
 use de_mls::{
-    Conversation, ConversationError, ConversationEvent, Member, MemberId, MockClock,
-    PeerScoringService, ScoringConfig, WallClock, default_score_deltas,
+    Conversation, ConversationError, ConversationEvent, MemberId, MockClock, PeerScoringService,
+    ScoringConfig, WallClock, default_score_deltas,
     defaults::{DefaultConsensusPlugin, DefaultPeerScoring, InMemoryPeerScoreStorage},
 };
 use hashgraph_like_consensus::signing::EthereumConsensusSigner;
@@ -68,12 +68,8 @@ fn rand_app_id() -> Arc<[u8]> {
 
 /// The signer we name a member by — its MLS signature key, the same id
 /// `add_member` takes and, hex-encoded, what the registry is keyed on.
-///
-/// Infallible in practice: the bytes come from a validated MLS leaf, so they
-/// are a key by the time de-mls reports them as a member.
-fn signer_of(member: &Member) -> SignerKey {
-    SignerKey::try_from(member.signature_key.as_slice())
-        .expect("an MLS member's signature key is an Ed25519 key")
+fn signer_of(member: &de_mls::Member) -> SignerKey {
+    SignerKey::from(member.signature_key.as_slice())
 }
 
 /// Peer-scoring plug-in: the library default over in-memory storage.
@@ -144,17 +140,16 @@ struct FetchedMember {
 /// Fails if anyone lacks one, before any member is admitted.
 fn fetch_key_packages<S: ExternalServices>(
     service_ctx: &ServiceContext<S>,
-    participants: &[SignerRef],
+    signers: &[SignerKey],
 ) -> Result<Vec<FetchedMember>, ChatError> {
     let mut seen = HashSet::new();
-    participants
+    signers
         .iter()
-        .copied()
-        .filter(|m| seen.insert(m.as_bytes()))
-        .map(|member| {
+        .filter(|s| seen.insert(s.as_bytes()))
+        .map(|signer| {
             let key_package = service_ctx
                 .registry
-                .retrieve(&member.to_string())
+                .retrieve(&signer.to_string())
                 .map_err(ChatError::generic)?
                 .ok_or_else(|| ChatError::generic("No key package"))?;
             let validated = KeyPackageIn::tls_deserialize(&mut key_package.as_slice())?
@@ -166,9 +161,9 @@ fn fetch_key_packages<S: ExternalServices>(
             // so bind the leaf's signature_key to it; the credential is
             // self-asserted and can't be trusted for this.
             let signature_key = validated.leaf_node().signature_key().as_slice().to_vec();
-            if signature_key != member.as_bytes() {
+            if signature_key != signer.as_bytes() {
                 return Err(ChatError::generic(format!(
-                    "key package for {member} is bound to a different signing key ({})",
+                    "key package for {signer} is bound to a different signing key ({})",
                     hex::encode(&signature_key)
                 )));
             }
@@ -177,6 +172,11 @@ fn fetch_key_packages<S: ExternalServices>(
                 .credential()
                 .serialized_content()
                 .to_vec();
+
+            Signer::from_leaf(&signature_key, &credential)
+                .require_valid(&service_ctx.auth)
+                .ok_or(ChatError::BadBundleValue("invalid credential".into()))?;
+
             Ok(FetchedMember {
                 signature_key,
                 credential,
@@ -191,11 +191,11 @@ impl GroupV2Convo {
         service_ctx: &mut ServiceContext<S>,
         name: &str,
         desc: &str,
-        participants: &[SignerRef],
+        signers: &[SignerKey],
     ) -> Result<Self, ChatError> {
         let convo_id = rand_string(5);
         let group_config = group_config(name, desc);
-        let invites = fetch_key_packages(service_ctx, participants)?;
+        let invites = fetch_key_packages(service_ctx, signers)?;
         let initial_members: Vec<&[u8]> =
             invites.iter().map(|m| m.key_package.as_slice()).collect();
         let conversation = Conversation::create(
@@ -335,7 +335,12 @@ impl GroupV2Convo {
             .conversation
             .members_view()
             .iter()
-            .map(|m| (MemberId::from(m), signer_of(m)))
+            .map(|m| {
+                (
+                    MemberId::from(m),
+                    SignerKey::from(m.signature_key.as_slice()),
+                )
+            })
             .collect();
     }
 }
@@ -420,12 +425,12 @@ where
         self.outcome_from_events(ctx, &events)
     }
 
-    fn members(&self) -> Result<Vec<Vec<u8>>, ChatError> {
+    fn members(&self) -> Result<Vec<Signer>, ChatError> {
         Ok(self
             .conversation
             .members_view()
             .into_iter()
-            .map(|m| m.credential.serialized_content().to_vec())
+            .map(|m| Signer::from_leaf(&m.signature_key, m.credential.serialized_content()))
             .collect())
     }
 
@@ -442,7 +447,7 @@ where
     fn add_member(
         &mut self,
         service_ctx: &mut ServiceContext<S>,
-        members: &[SignerRef],
+        members: &[SignerKey],
     ) -> Result<(), ChatError> {
         // Fetch every signer's key package + joiner credential up front (deduped),
         // failing before any proposal opens if one has no key package.
@@ -533,8 +538,12 @@ where
         result.and(flushed)
     }
 
-    fn pending_members(&self) -> Result<Vec<Vec<u8>>, ChatError> {
-        Ok(self.pending_invites.values().cloned().collect())
+    fn pending_members(&self) -> Result<Vec<Signer>, ChatError> {
+        Ok(self
+            .pending_invites
+            .iter()
+            .map(|(signature_key, credential)| Signer::from_leaf(signature_key, credential))
+            .collect())
     }
 
     fn metadata(&self) -> Option<ConvoMetadata> {
@@ -578,16 +587,17 @@ impl GroupV2Convo {
                 ConversationEvent::WelcomeReady { welcome, .. } => {
                     for joiner in &welcome.joiner_identities {
                         if self.pending_invites.remove(joiner).is_some() {
-                            let signer = SignerKey::try_from(joiner.as_slice())
-                                .expect("a joiner identity is an Ed25519 key");
+                            let signer = SignerKey::from(joiner.as_slice());
                             crate::inbox_v2::invite_user_v2(&mut service_ctx.ds, &signer, welcome)?;
                         }
                     }
                 }
                 ConversationEvent::MembersChanged { added, removed } => {
                     for m in added {
-                        self.member_directory
-                            .insert(MemberId::from(m), signer_of(m));
+                        self.member_directory.insert(
+                            MemberId::from(m),
+                            SignerKey::from(m.signature_key.as_slice()),
+                        );
                     }
                     for mid in removed {
                         self.member_directory.remove(mid);
@@ -649,18 +659,24 @@ impl GroupV2Convo {
                 } => Some((cm, sender)),
                 _ => None,
             })
-            .map(|(cm, sender)| -> Result<Content, ChatError> {
+            .map(|(cm, sender)| -> Result<Option<Content>, ChatError> {
                 let reliable =
                     ReliablePayload::decode(cm.message.as_slice()).map_err(ChatError::generic)?;
                 service_ctx.causal.on_receive(&self.convo_id, &reliable);
-                Ok(Content {
-                    bytes: reliable.content.to_vec(),
-                    // `sender` is the MLS-authenticated signer of the frame; its
-                    // credential content is the account identity to attribute to.
-                    encoded_credential: sender.credential.serialized_content().to_vec(),
-                })
+                // `sender` is the MLS-verified signer of the frame.
+                let member = Signer::from_leaf(
+                    &sender.signature_key,
+                    sender.credential.serialized_content(),
+                );
+                Ok(member
+                    .require_valid(&service_ctx.auth)
+                    .map(|sender| Content {
+                        bytes: reliable.content.to_vec(),
+                        sender,
+                    }))
             })
-            .transpose()?;
+            .transpose()?
+            .flatten();
 
         // `Leaving` is de-mls's "your own removal just committed". Listed in
         // its own right rather than inferred from the `CommitApplied` beside

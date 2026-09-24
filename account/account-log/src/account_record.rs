@@ -114,7 +114,7 @@ impl AccountRecord {
 mod tests {
     use super::*;
     use crate::account_log::{AccountEntry, EncodedAccountLog, EntryData};
-    use crate::context::SIGNER_CONTEXT;
+    use crate::context::CHATSIGNER_CONTEXT;
     use crate::crypto::Ed25519SigningKey;
 
     fn key_bytes() -> [u8; 32] {
@@ -133,7 +133,10 @@ mod tests {
     }
 
     fn entry() -> AccountEntry {
-        AccountEntry::add(SIGNER_CONTEXT.clone(), EntryData::Ed25519Key(key_bytes()))
+        AccountEntry::add(
+            CHATSIGNER_CONTEXT.clone(),
+            EntryData::Ed25519Key(key_bytes()),
+        )
     }
 
     /// A record holding a one-entry log, plus the account that signed it.

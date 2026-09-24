@@ -14,7 +14,7 @@ use crate::error::AccountLogError;
 ///
 /// Allocated by libchat, not by the account-log format: the format defines
 /// only that every endorsement carries a context.
-pub static SIGNER_CONTEXT: LazyLock<Context> =
+pub static CHATSIGNER_CONTEXT: LazyLock<Context> =
     LazyLock::new(|| Context::new("chat.signer").expect("valid context"));
 
 /// Longest namespace and label, in octets.
@@ -156,6 +156,6 @@ mod tests {
     /// The pinned context is valid, so its LazyLock cannot panic at first use.
     #[test]
     fn signer_context_is_valid() {
-        assert_eq!(SIGNER_CONTEXT.as_str(), "chat.signer");
+        assert_eq!(CHATSIGNER_CONTEXT.as_str(), "chat.signer");
     }
 }

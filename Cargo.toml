@@ -19,7 +19,6 @@ members = [
 ]
 
 default-members = [
-    "core/account",
     "core/conversations",
     "core/crypto",
     "core/integration_tests_core",
@@ -33,12 +32,13 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 # TODO: (P4) Prefix crypto, components and shared-traits with a project name to avoid conflicts
 # Internal Workspace dependency declarations (sorted)
+account-log = { path = "account/account-log" }
 logos-account = { path = "account/account", package = "account" }
-logos-account-legacy = { path = "core/account", package= "logos-account" }
 chat-sqlite = { path = "extensions/sqlite" }
 components = { path = "extensions/components" }
 crypto = { path = "core/crypto" }
 embedded-logos-delivery = { path = "extensions/embedded-logos-delivery" }
+integration_tests_core = { path = "core/integration_tests_core" }
 libchat = { path = "core/conversations" }
 logos-chat = { path = "crates/logos-chat" }
 logos-delivery = { path = "extensions/logos-delivery-rust"}

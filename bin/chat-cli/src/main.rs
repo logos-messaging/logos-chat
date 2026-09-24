@@ -10,8 +10,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use crossbeam_channel::Receiver;
 use logos_chat::{
-    AccountDirectory, ChatClient, ConversationStore, Event, GroupV2Config, LogosConfig, P2pConfig,
-    RegistrationService, RegistryPublishMode, Transport, UncheckedAuth,
+    AuthService, ChatClient, ConversationStore, Event, GroupV2Config, LogosConfig, P2pConfig,
+    RegistrationService, RegistryPublishMode, Transport,
 };
 
 use app::ChatApp;
@@ -220,14 +220,15 @@ fn db_path(cli: &Cli) -> Result<String> {
         .to_string())
 }
 
-fn launch_tui<T, R, S>(
-    client: ChatClient<T, R, UncheckedAuth, S>,
+fn launch_tui<T, R, A, S>(
+    client: ChatClient<T, R, A, S>,
     events: Receiver<Event>,
     cli: &Cli,
 ) -> Result<()>
 where
     T: Transport,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send,
 {
     let mut app = ChatApp::new(client, events, &cli.name, &cli.data)?;
@@ -242,10 +243,11 @@ where
     result
 }
 
-fn run_app<T, R, S>(terminal: &mut ui::Tui, app: &mut ChatApp<T, R, S>) -> Result<()>
+fn run_app<T, R, A, S>(terminal: &mut ui::Tui, app: &mut ChatApp<T, R, A, S>) -> Result<()>
 where
     T: Transport,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send,
 {
     loop {

@@ -37,6 +37,12 @@ impl From<&Ed25519VerifyingKey> for AccountAddr {
     }
 }
 
+impl From<Ed25519VerifyingKey> for AccountAddr {
+    fn from(value: Ed25519VerifyingKey) -> Self {
+        Self { pubkey: value }
+    }
+}
+
 /// The string form is exactly what [`Display`](fmt::Display) produces: 64
 /// lowercase hex characters, unprefixed. Uppercase and prefixed variants are
 /// rejected rather than accepted-and-normalized, so one address has one

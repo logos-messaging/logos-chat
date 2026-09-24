@@ -15,10 +15,10 @@ fn happypath_roundtrip() {
     let mut harness = TestHarness::<2>::new(|_, _| {});
 
     //Saro Create Convo
-    let particpant = harness.raya().addr();
+    let particpant = harness.raya().account();
     let convo_id = harness
         .saro()
-        .create_direct_convo_v1(&[&particpant])
+        .create_direct_convo_v1(particpant)
         .expect("saro create group");
 
     // Carry the invite through (commit, WelcomeReady, routing to Raya's inbox,
