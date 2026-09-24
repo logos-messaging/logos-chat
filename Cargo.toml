@@ -6,11 +6,9 @@ members = [
     "account/account",
     "account/account-log",
     "bin/chat-cli",
-    "core/account",
     "core/conversations",
     "core/crypto",
     "core/integration_tests_core",
-    "core/shared-traits",
     "crates/logos-chat",
     "crates/generic-chat",
     "extensions/components",
@@ -21,11 +19,9 @@ members = [
 ]
 
 default-members = [
-    "core/account",
     "core/conversations",
     "core/crypto",
     "core/integration_tests_core",
-    "core/shared-traits",
     "crates/generic-chat",
     "extensions/message-types",
     "extensions/sqlite",
@@ -37,17 +33,18 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 # TODO: (P4) Prefix crypto, components and shared-traits with a project name to avoid conflicts
 # Internal Workspace dependency declarations (sorted)
-logos-account = { path = "core/account" }
+account-log = { path = "account/account-log" }
+logos-account = { path = "account/account", package = "account" }
 chat-sqlite = { path = "extensions/sqlite" }
 components = { path = "extensions/components" }
 crypto = { path = "core/crypto" }
 embedded-logos-delivery = { path = "extensions/embedded-logos-delivery" }
+integration_tests_core = { path = "core/integration_tests_core" }
 libchat = { path = "core/conversations" }
 logos-chat = { path = "crates/logos-chat" }
 logos-delivery = { path = "extensions/logos-delivery-rust"}
 logos-generic-chat = { path = "crates/generic-chat" }
 message-types = { path = "extensions/message-types" }
-shared-traits = { path = "core/shared-traits" }
 chat-proto = { git = "https://github.com/logos-messaging/chat_proto", rev = "948f4ad6dedb01b44e279204d8eb30a1eda5a330" }
 
 # External Workspace dependency declarations (sorted)

@@ -2,7 +2,7 @@
 //!
 //! [`open`] commits to the Logos service stack so independently built clients
 //! share the same production services instead of each re-deriving them: a
-//! delegate identity, the keypackage + account registry (queried over HTTP,
+//! installation identity, the keypackage + account registry (queried over HTTP,
 //! with submissions over HTTP or the delivery network), and encrypted
 //! on-disk storage. The stack is generic over the transport — any
 //! [`Transport`] can be injected via [`open_with_transport`] — and the
@@ -15,14 +15,20 @@
 //! constructors off the alias; they are crate-level functions ([`open`],
 //! [`open_with_transport`]) taking the all-inclusive [`LogosConfig`] instead.
 
-use components::{ContactRegistry, RegistryPublishMode};
+use components::{ContactRegistry, HttpAuthClient, RegistryPublishMode};
 use crossbeam_channel::Receiver;
 use embedded_logos_delivery::{EmbeddedLogosDelivery, P2pConfig};
-use logos_account::TestLogosAccount;
+use logos_account::AccountError;
+use logos_account::AccountProvider;
+use logos_account::AccountPublisher;
+use logos_account::Ed25519VerifyingKey;
 
+use logos_account::CHATSIGNER_CONTEXT;
+use logos_generic_chat::SqliteStore;
+use logos_generic_chat::StorageConfig;
 use logos_generic_chat::{
-    ChatClient, ChatClientBuilder, ClientError, DelegateSigner, Event, GroupV2Config, SqliteStore,
-    StorageConfig, Transport,
+    ChatClient, ChatClientBuilder, ClientError, Event, GroupV2Config, Installation,
+    PendingInstallation, Transport,
 };
 
 /// The endpoint for the account and keypackage registration service.
@@ -127,29 +133,30 @@ pub fn open_with_transport<T: Transport + Clone>(
     transport: T,
 ) -> Result<
     (
-        ChatClient<T, ContactRegistry<T>, SqliteStore>,
+        ChatClient<T, ContactRegistry<T>, HttpAuthClient, SqliteStore>,
         Receiver<Event>,
     ),
     ClientError,
 > {
-    // A fresh account endorsing a fresh delegate each open: the account
-    // key is dropped after publishing the bundle, so devices cannot be
-    // added later. A caller-supplied, custody-holding account replaces
+    // A fresh account and installation each open: the account key is dropped,
+    // so installations cannot be added later. A caller-supplied, custody-holding account replaces
     // this once the platform provides one.
-    let account = TestLogosAccount::new();
-    let delegate = DelegateSigner::random();
-    let mut registry = ContactRegistry::new(
+    let registry = ContactRegistry::new(
         transport.clone(),
-        config.registry_url,
+        config.registry_url.clone(),
         config.registry_publish_mode,
     );
-    account
-        .add_delegate_signer(&mut registry, delegate.public_key())
-        .map_err(|e| ClientError::BundlePublish(e.to_string()))?;
-    let mut builder = ChatClientBuilder::new(account.address())
-        .ident(delegate)
+
+    // Auth uses the same server as registry for the time being
+    let auth = HttpAuthClient::new(config.registry_url);
+
+    // TODO: (P2) Load existing account once persistence is in place
+    let installation = register_account(auth.clone())?;
+
+    let mut builder = ChatClientBuilder::new(installation)
         .transport(transport)
         .registration(registry)
+        .auth(auth)
         .storage_config(StorageConfig::Encrypted {
             path: config.db_path,
             key: config.db_key,
@@ -160,13 +167,33 @@ pub fn open_with_transport<T: Transport + Clone>(
     builder.build()
 }
 
-/// The Logos client: a [`ChatClient`] wired to the Logos service stack — a
-/// [`DelegateSigner`] identity acting for a fresh dev account, the keypackage +
-/// account registry ([`ContactRegistry`], which is both the keypackage store
-/// and the account → device directory; it queries over HTTP and submits over
-/// HTTP or the delivery network per [`LogosConfig::set_registry_publish_mode`]),
+/// The Logos client: a [`ChatClient`] wired to the Logos service stack —
+/// an [`Installation`](logos_generic_chat::Installation) of a fresh dev account, the keypackage +
+/// account registry ([`ContactRegistry`], the keypackage store; it queries
+/// over HTTP and submits over HTTP or the delivery network per
+/// [`LogosConfig::set_registry_publish_mode`]),
 /// and encrypted [`SqliteStore`] — running an embedded logos-delivery node as
 /// its transport. Open one with [`open`], or swap the transport via
 /// [`open_with_transport`].
-pub type LogosChatClient =
-    ChatClient<EmbeddedLogosDelivery, ContactRegistry<EmbeddedLogosDelivery>, SqliteStore>;
+pub type LogosChatClient = ChatClient<
+    EmbeddedLogosDelivery,
+    ContactRegistry<EmbeddedLogosDelivery>,
+    HttpAuthClient,
+    SqliteStore,
+>;
+
+fn register_account<A: AccountPublisher + AccountProvider>(
+    auth_client: A,
+) -> Result<Installation, AccountError> {
+    let pending = PendingInstallation::generate();
+
+    let mut account = logos_account::Account::new(auth_client);
+    let key = Ed25519VerifyingKey::from_canonical_slice(&pending.endorsement_request())?;
+
+    let _ = account
+        .update()
+        .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &key)
+        .publish()?;
+
+    Ok(pending.complete(account.addr()))
+}

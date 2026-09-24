@@ -116,7 +116,7 @@ impl<AP: AccountProvider + AccountPublisher> AccountUpdate<'_, AP> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use account_log::{AccountRecord, Outcome, SIGNER_CONTEXT};
+    use account_log::{AccountRecord, CHATSIGNER_CONTEXT, Outcome};
     use std::collections::HashMap;
 
     /// Stores whatever it is given; does not enforce append-only.
@@ -176,9 +176,9 @@ mod tests {
 
         let signed = account
             .update()
-            .endorse_ed25519_key(SIGNER_CONTEXT.clone(), &first)
-            .endorse_ed25519_key(SIGNER_CONTEXT.clone(), &second)
-            .endorse_text(SIGNER_CONTEXT.clone(), "alice")
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &first)
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &second)
+            .endorse_text(CHATSIGNER_CONTEXT.clone(), "alice")
             .publish()
             .unwrap();
 
@@ -186,8 +186,11 @@ mod tests {
         assert_eq!(stored, signed);
 
         let log = signed.verify(&addr).unwrap();
-        assert_eq!(log.ed25519_keys_for(&SIGNER_CONTEXT), vec![first, second]);
-        assert_eq!(log.text_for(&SIGNER_CONTEXT), vec!["alice"]);
+        assert_eq!(
+            log.ed25519_keys_for(&CHATSIGNER_CONTEXT),
+            vec![first, second]
+        );
+        assert_eq!(log.text_for(&CHATSIGNER_CONTEXT), vec!["alice"]);
     }
 
     /// Successive publishes extend rather than fork — what a store checks by
@@ -199,12 +202,12 @@ mod tests {
 
         let first = account
             .update()
-            .endorse_ed25519_key(SIGNER_CONTEXT.clone(), &device())
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &device())
             .publish()
             .unwrap();
         let second = account
             .update()
-            .endorse_ed25519_key(SIGNER_CONTEXT.clone(), &device())
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &device())
             .publish()
             .unwrap();
 
@@ -230,7 +233,7 @@ mod tests {
 
         let first = account
             .update()
-            .endorse_ed25519_key(SIGNER_CONTEXT.clone(), &ours)
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &ours)
             .publish()
             .unwrap();
 
@@ -239,7 +242,7 @@ mod tests {
         let mut elsewhere = AccountLogDraft::from_log(&first.verify(&addr).unwrap()).unwrap();
         elsewhere
             .add(
-                SIGNER_CONTEXT.clone(),
+                CHATSIGNER_CONTEXT.clone(),
                 EntryData::Ed25519Key(theirs.to_bytes()),
             )
             .unwrap();
@@ -254,7 +257,7 @@ mod tests {
         let mine = device();
         let latest = account
             .update()
-            .endorse_ed25519_key(SIGNER_CONTEXT.clone(), &mine)
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &mine)
             .publish()
             .unwrap();
 
@@ -262,7 +265,7 @@ mod tests {
             latest
                 .verify(&addr)
                 .unwrap()
-                .ed25519_keys_for(&SIGNER_CONTEXT),
+                .ed25519_keys_for(&CHATSIGNER_CONTEXT),
             vec![ours, theirs, mine]
         );
     }
@@ -275,14 +278,14 @@ mod tests {
 
         account
             .update()
-            .endorse_ed25519_key(SIGNER_CONTEXT.clone(), &device())
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &device())
             .publish()
             .unwrap();
         let after = account.update().revoke(0).publish().unwrap();
 
         let log = after.verify(&addr).unwrap();
-        assert!(log.ed25519_keys_for(&SIGNER_CONTEXT).is_empty());
-        assert_eq!(log.entries_for(&SIGNER_CONTEXT).len(), 0);
+        assert!(log.ed25519_keys_for(&CHATSIGNER_CONTEXT).is_empty());
+        assert_eq!(log.entries_for(&CHATSIGNER_CONTEXT).len(), 0);
     }
 
     /// One bad entry fails the whole publish; earlier ones are discarded too.
@@ -294,7 +297,7 @@ mod tests {
 
         let before = account
             .update()
-            .endorse_ed25519_key(SIGNER_CONTEXT.clone(), &key)
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &key)
             .publish()
             .unwrap();
 
@@ -302,8 +305,8 @@ mod tests {
         assert!(
             account
                 .update()
-                .endorse_ed25519_key(SIGNER_CONTEXT.clone(), &device())
-                .endorse_ed25519_key(SIGNER_CONTEXT.clone(), &key)
+                .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &device())
+                .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &key)
                 .publish()
                 .is_err()
         );
@@ -320,7 +323,7 @@ mod tests {
 
         let first = account
             .update()
-            .endorse_ed25519_key(SIGNER_CONTEXT.clone(), &device())
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &device())
             .publish()
             .unwrap();
 
@@ -330,7 +333,7 @@ mod tests {
 
         let second = imported
             .update()
-            .endorse_ed25519_key(SIGNER_CONTEXT.clone(), &device())
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &device())
             .publish()
             .unwrap();
 

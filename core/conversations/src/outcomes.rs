@@ -10,13 +10,12 @@ use crate::storage::ConversationKind;
 use serde::{Deserialize, Serialize};
 
 use crate::conversation::ConversationId;
+use crate::identity::AuthenticatedSigner;
 
 #[derive(Debug, Clone)]
 pub struct Content {
     pub bytes: Vec<u8>,
-    /// Hex-encoded [`DelegateCredential`] of the sender, if present in the message.
-    /// Empty when the sender did not attach a credential.
-    pub encoded_credential: Vec<u8>,
+    pub sender: AuthenticatedSigner,
     /// Cross-peer id of this message, from the reliability envelope — the same id
     /// `send_content` returns. Lets a consumer reference it, e.g. a reply.
     pub message_id: String,

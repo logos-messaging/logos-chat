@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 # Workspace dependencies (sorted)
+account-log = { workspace = true }
 crypto = { workspace = true }
 libchat = { workspace = true }
 logos-account = { workspace = true }

@@ -48,7 +48,7 @@ to decide.
 ### `logos-chat` — the opinionated stack
 
 One call commits to the whole Logos service stack: an embedded logos-delivery
-node as the transport, the Logos keypackage + account registry, a delegate
+node as the transport, the Logos keypackage + account registry, an installation
 identity, and SQLCipher-encrypted storage on disk. Independently built clients
 that call `open` are interoperable by construction.
 
@@ -78,12 +78,17 @@ parameters. Nothing about Logos is baked in; implement `Transport` over your own
 network and the client works unchanged.
 
 ```rust
-use logos_generic_chat::{ChatClientBuilder, DelegateSigner, StorageConfig};
+use logos_generic_chat::{ChatClientBuilder, PendingInstallation, StorageConfig};
 
-let (mut client, events) = ChatClientBuilder::new(account.address())
-    .ident(DelegateSigner::random())
+let pending = PendingInstallation::generate();
+// ... the account endorses `pending.endorsement_request()` ...
+let installation = pending.complete(account_addr);
+
+// `build` fails unless `my_auth` confirms the endorsement.
+let (mut client, events) = ChatClientBuilder::new(installation)
     .transport(my_transport)      // any `Transport` impl
-    .registration(my_registry)    // any `RegistrationService` + `AccountDirectory`
+    .registration(my_registry)    // any `RegistrationService`
+    .auth(my_auth)                // any `AuthService`
     .storage_config(StorageConfig::Encrypted { path, key })
     .build()?;
 ```
@@ -111,13 +116,15 @@ reaches it as an injected service.
 ## Repository map
 
 ```
+account/       account identity, shared with the rest of Logos
+  account-log/     append-only signed account log: entries, invariants, encoding
+  account/         crate `account`: accounts and the resolver over published logs
+
 core/          protocol and storage components. All code is synchronous.
   conversations/   crate `libchat`: the synchronous core, conversation types, causal history
   crypto/          key types, HKDF, XEdDSA
-  account/         accounts, delegate signers, the device directory
   storage/         store traits
   sqlite/          SQLCipher-backed store
-  shared-traits/   traits shared across the Logos ecosystem
   integration_tests_core/  multi-client test harness
 
 crates/        the client layer

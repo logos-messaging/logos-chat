@@ -53,6 +53,10 @@ pub enum ChatError {
     // Also covers a pending invite: it holds no seat either.
     #[error("no one named is a member of this group")]
     NotAGroupMember,
+    #[error("authentication failed: SignerKey({0}) is not valid for participant_id({1})")]
+    Auth(String, String),
+    #[error("participant resolution failed: {0}")]
+    ParticipantResolution(String),
 }
 
 impl ChatError {

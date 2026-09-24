@@ -1,17 +1,18 @@
 use libchat::ChatError;
+use logos_account::AccountError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
     #[error(transparent)]
     Chat(#[from] ChatError),
-    #[error("received credential could not be parsed")]
-    BadlyFormedCredential,
+    #[error(transparent)]
+    Account(#[from] AccountError),
     #[error("failed to start the transport: {0}")]
     Transport(String),
-    #[error("account resolution failed: {0}")]
-    AccountResolution(String),
-    #[error("device bundle publish failed: {0}")]
-    BundlePublish(String),
+    #[error("not an account address: {0}")]
+    InvalidAccountAddress(String),
+    #[error("installation is not endorsed by its account: {0}")]
+    NotEndorsed(String),
     #[error("failed to encode message content: {0}")]
     ContentEncode(#[from] message_types::Error),
 }

@@ -2,7 +2,9 @@ use crate::causal_history::{CausalHistoryStore, DeliveryAck, MissingMessage};
 use crate::conversation::{
     ConversationIdRef, DirectV1Convo, GroupV1Convo, GroupV2Convo, Identified, MessageId,
 };
+use crate::identity::{AuthenticatedSigner, ParticipantId, Signer, SignerKey, SignerRef};
 use crate::service_context::{ExternalServices, ServiceContext};
+use crate::service_traits::AuthService;
 use crate::storage::{ConversationKind, ConversationMeta, ConversationStore};
 use crate::types::ConvoMetadata;
 use crate::{
@@ -17,7 +19,6 @@ use crate::{
     proto::{EncryptedPayload, EnvelopeV1, Message},
 };
 use openmls::group::GroupId;
-use shared_traits::{IdentId, IdentIdRef};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use tracing::{info, instrument};
@@ -39,9 +40,10 @@ pub struct Core<S: ExternalServices> {
 
 // Constructors live on the `(DS, RS, CS)` form: `S` can't be inferred backwards
 // through `S::DS`, so the bundle is built from the three args here.
-impl<IP, DS, RS, WS, CS> Core<(IP, DS, RS, WS, CS)>
+impl<IP, AS, DS, RS, WS, CS> Core<(IP, AS, DS, RS, WS, CS)>
 where
     IP: IdentityProvider + 'static,
+    AS: AuthService + Send + 'static,
     DS: DeliveryService + 'static,
     RS: RegistrationService + 'static,
     WS: WakeupService + 'static,
@@ -50,12 +52,13 @@ where
     /// Opens or creates a `Core` over the given store.
     pub fn new_from_store(
         ident: IP,
+        auth: AS,
         delivery: DS,
         registration: RS,
         wakeup_service: WS,
         store: CS,
     ) -> Result<Self, ChatError> {
-        Self::assemble(ident, delivery, registration, wakeup_service, store)
+        Self::assemble(ident, auth, delivery, registration, wakeup_service, store)
     }
 
     /// Creates a new in-memory `Core` (for testing).
@@ -63,12 +66,13 @@ where
     /// Uses in-memory SQLite database. Each call creates a new isolated database.
     pub fn new_with_name(
         ident: IP,
+        auth: AS,
         delivery: DS,
         registration: RS,
         wakeup_service: WS,
         store: CS,
     ) -> Result<Self, ChatError> {
-        let mut core = Self::assemble(ident, delivery, registration, wakeup_service, store)?;
+        let mut core = Self::assemble(ident, auth, delivery, registration, wakeup_service, store)?;
 
         core.register_keypackage()?;
         Ok(core)
@@ -89,21 +93,22 @@ where
     /// addresses, and assembles the service bundle — shared by both constructors.
     fn assemble(
         ident: IP,
+        auth: AS,
         mut delivery: DS,
         registration: RS,
         wakeup_service: WS,
         store: CS,
     ) -> Result<Self, ChatError> {
         // InboxV2 rendezvous is signer-scoped: it subscribes under the hex of
-        // the signer's verifying key — the same string the account → device
-        // directory lists and the registries key key-packages under, so it is
-        // exactly what an inviter can derive for this installation. The MLS
-        // credential below still carries the full `id()`.
-        let ident_id = IdentId::new(hex::encode(ident.public_key().as_ref()));
+        // the signer's verifying key — the same string the registries key
+        // key-packages under, so it is exactly what an inviter resolving this
+        // participant arrives at. The MLS credential below carries the
+        // participant id.
+        let signer = ident.signer_key().clone();
         let mls_identity = MlsIdentityProvider::new(ident);
         let mls_provider = MlsEphemeralPqProvider::new().map_err(ChatError::generic)?;
         let causal = CausalHistoryStore::new();
-        let pq_inbox = InboxV2::new(ident_id);
+        let pq_inbox = InboxV2::new(signer);
 
         // Subscribe to the InboxV2 rendezvous address.
         delivery
@@ -116,6 +121,7 @@ where
                 registry: registration,
                 store,
                 mls_identity,
+                auth,
                 mls_provider,
                 causal,
                 wakeup_service,
@@ -139,8 +145,8 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     /// The signer id this core receives InboxV2 invites under — the hex of the
     /// signer's verifying key.
-    pub fn ident_id(&'a self) -> IdentIdRef<'a> {
-        self.pq_inbox.ident_id()
+    pub fn signer(&'a self) -> SignerRef<'a> {
+        self.pq_inbox.signer()
     }
 
     /// Submit the local account's MLS KeyPackage to the registration service.
@@ -150,22 +156,24 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         self.pq_inbox.register(&mut self.services)
     }
 
-    pub fn installation_name(&self) -> &str {
-        self.services.mls_identity.id().as_str()
+    pub fn installation_name(&self) -> String {
+        self.services.mls_identity.signer_key().to_string()
     }
 
     pub fn create_direct_convo(
         &mut self,
-        members: &[IdentIdRef],
+        participants: ParticipantId,
     ) -> Result<ConversationId, ChatError> {
-        self.create_direct_convo_v1(members)
+        self.create_direct_convo_v1(participants)
     }
 
     pub fn create_direct_convo_v1(
         &mut self,
-        members: &[IdentIdRef],
+        participant: ParticipantId,
     ) -> Result<ConversationId, ChatError> {
-        let convo = DirectV1Convo::new(&mut self.services, members)?;
+        let signers = self.get_signers_for_participants(&[participant])?;
+
+        let convo = DirectV1Convo::new(&mut self.services, &signers)?;
         let convo_id = convo.id().to_string();
         self.register_convo(ConvoTypeOwned::Direct(Box::new(convo)))?;
 
@@ -174,24 +182,25 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     pub fn create_group_convo(
         &mut self,
-        participants: &[IdentIdRef],
+        participants: &[ParticipantId],
     ) -> Result<ConversationId, ChatError> {
         self.create_group_convo_v2(participants, "", "")
     }
 
     pub fn create_group_convo_v1(
         &mut self,
-        participants: &[IdentIdRef],
+        participants: &[ParticipantId],
     ) -> Result<ConversationId, ChatError> {
         // TODO: (P1) Ensure errors are handled properly. This is a high chance for
         // desynchronized state: MlsGroup persistence, conversation persistence, and
         // invite delivery all happen separately.
+        let signers = self.get_signers_for_participants(participants)?;
         let mut convo = GroupV1Convo::new(&mut self.services)?;
         self.services.store.save_conversation(&ConversationMeta {
             local_convo_id: convo.id().to_string(),
             kind: ConversationKind::GroupV1,
         })?;
-        convo.add_member(&mut self.services, participants)?;
+        convo.add_signer(&mut self.services, &signers)?;
         let convo_id = convo.id().to_string();
 
         self.register_convo(ConvoTypeOwned::Group(Box::new(convo)))?;
@@ -201,14 +210,16 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     pub fn create_group_convo_v2(
         &mut self,
-        participants: &[IdentIdRef],
+        participants: &[ParticipantId],
         name: &str,
         desc: &str,
     ) -> Result<ConversationId, ChatError> {
         // TODO: (P1) Ensure errors are handled properly. This is a high chance for
         // desynchronized state: MlsGroup persistence, conversation persistence, and
         // invite delivery all happen separately.
-        let convo = GroupV2Convo::new(&mut self.services, name, desc, participants)?;
+
+        let signers = self.get_signers_for_participants(participants)?;
+        let convo = GroupV2Convo::new(&mut self.services, name, desc, &signers)?;
         let convo_id = convo.id().to_string();
 
         self.register_convo(ConvoTypeOwned::Group(Box::new(convo)))?;
@@ -216,11 +227,20 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         Ok(convo_id)
     }
 
-    /// Add members to an existing group conversation.
-    pub fn group_add_member(
+    /// Add signers to an existing group conversation.
+    pub fn group_add_participants(
         &mut self,
         convo_id: &str,
-        members: &[IdentIdRef],
+        participants: &[ParticipantId],
+    ) -> Result<(), ChatError> {
+        let signers = self.get_signers_for_participants(participants)?;
+        self.group_add_signers(convo_id, &signers)
+    }
+
+    pub fn group_add_signers(
+        &mut self,
+        convo_id: &str,
+        members: &[SignerKey],
     ) -> Result<(), ChatError> {
         let convo = self
             .cached_convos
@@ -229,7 +249,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
         match convo {
             ConvoTypeOwned::Group(group_convo) => {
-                group_convo.add_member(&mut self.services, members)
+                group_convo.add_signer(&mut self.services, members)
             }
             ConvoTypeOwned::Direct(convo) => Err(ChatError::UnsupportedFunction(
                 convo.id().into(),
@@ -240,10 +260,10 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     /// Remove members from an existing group conversation, naming them by
     /// signer (installation) id exactly as [`Self::group_add_member`] does.
-    pub fn group_remove_member(
+    pub fn group_remove_signers(
         &mut self,
         convo_id: &str,
-        members: &[IdentIdRef],
+        signers: &[SignerRef],
     ) -> Result<(), ChatError> {
         let convo = self
             .cached_convos
@@ -252,7 +272,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
         match convo {
             ConvoTypeOwned::Group(group_convo) => {
-                group_convo.remove_member(&mut self.services, members)
+                group_convo.remove_signer(&mut self.services, signers)
             }
             ConvoTypeOwned::Direct(_) => Err(ChatError::UnsupportedFunction(
                 convo.id().into(),
@@ -261,30 +281,60 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         }
     }
 
-    /// Each member's MLS leaf-credential content (hex-encoded), for a direct
-    /// conversation as for a group.
-    pub fn group_members(&mut self, convo_id: &str) -> Result<Vec<Vec<u8>>, ChatError> {
+    /// Remove every installation of the given participants from a group conversation.
+    pub fn group_remove_participants(
+        &mut self,
+        convo_id: &str,
+        participants: &[ParticipantId],
+    ) -> Result<(), ChatError> {
         let convo = self
             .cached_convos
             .get(convo_id)
             .ok_or_else(|| ChatError::NoConvo(convo_id.to_string()))?;
-
-        convo.members()
+        let seated: Vec<SignerKey> = convo
+            .signers()?
+            .into_iter()
+            .filter(|s| participants.contains(&s.participant_id))
+            .map(|s| s.signer)
+            .collect();
+        let seated: Vec<SignerRef> = seated.iter().collect();
+        self.group_remove_signers(convo_id, &seated)
     }
 
-    /// Each member invited here and still awaiting the group's commit, in the
-    /// same encoding as [`Self::group_members`]. A direct conversation has no
-    /// pending members and reports none.
-    pub fn group_pending_members(&mut self, convo_id: &str) -> Result<Vec<Vec<u8>>, ChatError> {
+    /// Committed members that pass auth, for a direct conversation as for a
+    /// group. Auth is checked on each call; a member that fails is left out.
+    pub fn group_signers(&self, convo_id: &str) -> Result<Vec<AuthenticatedSigner>, ChatError> {
         let convo = self
             .cached_convos
             .get(convo_id)
             .ok_or_else(|| ChatError::NoConvo(convo_id.to_string()))?;
 
-        match convo {
-            ConvoTypeOwned::Group(group_convo) => group_convo.pending_members(),
-            ConvoTypeOwned::Direct(_) => Ok(Vec::new()),
-        }
+        let auth = &self.services.auth;
+        Ok(convo
+            .signers()?
+            .into_iter()
+            .filter_map(|member| member.require_valid(auth))
+            .collect())
+    }
+
+    /// Invites sent here whose commit has not landed. A direct conversation has
+    /// none.
+    pub fn group_pending_signers(&self, convo_id: &str) -> Result<Vec<Signer>, ChatError> {
+        let convo = self
+            .cached_convos
+            .get(convo_id)
+            .ok_or_else(|| ChatError::NoConvo(convo_id.to_string()))?;
+
+        let ConvoTypeOwned::Group(group_convo) = convo else {
+            return Ok(Vec::new());
+        };
+        // An installation whose commit has landed is a member, not pending.
+        let committed = convo.signers()?;
+        Ok(group_convo
+            .pending_signers()?
+            .into_iter()
+            .filter(|p| !committed.iter().any(|c| c.signer == p.signer))
+            .collect())
     }
 
     /// Every conversation this client knows — persisted or loaded this session.
@@ -432,7 +482,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
     }
 
     pub fn wakeup(&mut self, convo_id: ConversationIdRef) -> Result<PayloadOutcome, ChatError> {
-        info!(convos = ?self.cached_convos.keys().collect::<Vec<_>>(), id = ?self.services.mls_identity.id(), "Cached Convos");
+        info!(convos = ?self.cached_convos.keys().collect::<Vec<_>>(), id = ?self.services.mls_identity.signer_key(), "Cached Convos");
 
         match convo_id {
             c if c == self.pq_inbox.id() => todo!(),
@@ -506,6 +556,22 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
             None => Err(ChatError::NoConvo(convo_id.into())),
         }
     }
+
+    fn get_signers_for_participants(
+        &self,
+        participants: &[ParticipantId],
+    ) -> Result<Vec<SignerKey>, ChatError> {
+        let signers = participants
+            .iter()
+            .map(|eid| self.services.auth.signers_for_participant(eid))
+            .collect::<Result<Vec<Vec<SignerKey>>, _>>()
+            .map_err(|e| ChatError::ParticipantResolution(e.to_string()))?
+            .into_iter()
+            .flatten()
+            .collect();
+
+        Ok(signers)
+    }
 }
 
 enum ConvoTypeOwned<S: ExternalServices> {
@@ -561,10 +627,10 @@ impl<S: ExternalServices> Convo<S> for ConvoTypeOwned<S> {
         }
     }
 
-    fn members(&self) -> Result<Vec<Vec<u8>>, ChatError> {
+    fn signers(&self) -> Result<Vec<Signer>, ChatError> {
         match self {
-            ConvoTypeOwned::Group(group_convo) => group_convo.members(),
-            ConvoTypeOwned::Direct(convo) => convo.members(),
+            ConvoTypeOwned::Group(group_convo) => group_convo.signers(),
+            ConvoTypeOwned::Direct(convo) => convo.signers(),
         }
     }
 

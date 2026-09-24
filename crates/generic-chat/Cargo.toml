@@ -14,9 +14,8 @@ components = { workspace = true }
 crossbeam-channel = { workspace = true }
 crypto = { workspace = true }
 libchat = { workspace = true }
-logos-account = { workspace = true, features = ["dev"]}
+logos-account = { workspace = true }
 message-types = { workspace = true }
-shared-traits = { workspace =  true }
 
 # External dependencies (sorted)
 hex = "0.4.3"
@@ -25,5 +24,8 @@ thiserror = "2"
 tracing = "0.1"
 
 [dev-dependencies]
+# Workspace dependencies (sorted)
+integration_tests_core = { workspace = true }
+
 # External dependencies (sorted)
 tempfile = "3"

@@ -1,45 +1,40 @@
+// `expect_event` hands a non-matching event back through `Err`, and an `Event`
+// carrying an `AccountAddr` is 272 bytes — enough to trip `result_large_err`,
+// which is about error paths, not this match-or-return one.
+#![allow(clippy::result_large_err)]
+
 use std::time::Duration;
 
 use components::EphemeralRegistry;
 use crossbeam_channel::{Receiver, Sender};
-use crypto::Ed25519VerifyingKey;
-use logos_account::TestLogosAccount;
+use integration_tests_core::AcceptAllAuth;
+use libchat::ChatError;
+use logos_account::AccountAddr;
 use logos_generic_chat::{
-    AddressedEnvelope, ChatClient, ChatClientBuilder, ConversationClass, DelegateSigner,
-    DeliveryService, Event, InProcessDelivery, MessageBus, Transport,
+    AddressedEnvelope, ChatClient, ChatClientBuilder, ConversationClass, DeliveryService, Event,
+    InProcessDelivery, MessageBus, PendingInstallation, Transport,
 };
 
-/// Publish a signed device bundle endorsing `device` as a device of `account`,
-/// so a receiver can verify the sender's account → device mapping.
-fn publish_device_bundle(
-    reg: &mut EphemeralRegistry,
-    account: &TestLogosAccount,
-    device: &Ed25519VerifyingKey,
-) {
-    account.add_delegate_signer(reg, device).unwrap();
-}
-
-/// A client for a fresh account: mints the account and a delegate, publishes
-/// the endorsing bundle, and builds the client on the shared bus/registry.
+/// A client for a fresh account: mints the account and an installation, then builds
+/// the client on the shared bus/registry.
 #[allow(clippy::type_complexity)]
 fn create_test_client(
     message_bus: MessageBus,
-    mut reg: EphemeralRegistry,
+    reg: EphemeralRegistry,
+    auth: &AcceptAllAuth,
 ) -> Result<
     (
-        ChatClient<InProcessDelivery, EphemeralRegistry, chat_sqlite::SqliteStore>,
+        ChatClient<InProcessDelivery, EphemeralRegistry, AcceptAllAuth, chat_sqlite::SqliteStore>,
         Receiver<Event>,
     ),
     logos_generic_chat::ClientError,
 > {
-    let account = TestLogosAccount::new();
-    let delegate = DelegateSigner::random();
-    publish_device_bundle(&mut reg, &account, delegate.public_key());
-    let d = InProcessDelivery::new(message_bus);
-    ChatClientBuilder::new(account.address())
-        .ident(delegate)
-        .transport(d)
+    let installation = PendingInstallation::generate().complete(TestLogosAccount::new().addr());
+    auth.register(&installation);
+    ChatClientBuilder::new(installation)
+        .transport(InProcessDelivery::new(message_bus))
         .registration(reg)
+        .auth(auth.clone())
         .build()
 }
 
@@ -77,11 +72,12 @@ where
 fn direct_v1_integration() {
     let bus = MessageBus::default();
     let reg_service = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
     let (mut saro, _saro_events) =
-        create_test_client(bus.clone(), reg_service.clone()).expect("client create");
+        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
     let (raya, raya_events) =
-        create_test_client(bus.clone(), reg_service.clone()).expect("client create");
+        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
 
     let convo_id = saro.create_direct_conversation(raya.addr()).unwrap();
 
@@ -106,27 +102,28 @@ fn direct_v1_integration() {
 fn direct_v1_standalone_integration() {
     let bus = MessageBus::default();
 
-    let mut reg_service = EphemeralRegistry::new();
+    let reg_service = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
-    // Create accounts and delegates, and publish device bundles so the
-    // receiver can verify the account → device mapping carried in the
-    // sender's credential.
+    // Create accounts and their installations, and register each installation
+    // with the auth service so a peer can resolve the account to it.
     let saro_account = TestLogosAccount::new();
     let saro_account_id = saro_account.address();
-    let saro_delegate = DelegateSigner::random();
-    let saro_device_id = hex::encode(saro_delegate.public_key().as_ref());
-    publish_device_bundle(&mut reg_service, &saro_account, saro_delegate.public_key());
+    let saro_pending = PendingInstallation::generate();
+    let saro_device_id = saro_pending.endorsement_request();
 
     // Build saro's client with its account so its outbound messages carry a
     // credential the receiver can verify against the published bundle.
-    let (mut saro, _saro_events) = ChatClientBuilder::new(saro_account_id.clone())
-        .ident(saro_delegate)
+    let saro_installation = saro_pending.complete(saro_account.addr());
+    auth.register(&saro_installation);
+    let (mut saro, _saro_events) = ChatClientBuilder::new(saro_installation)
         .transport(InProcessDelivery::new(bus.clone()))
         .registration(reg_service.clone())
+        .auth(auth.clone())
         .build()
         .expect("client create");
     let (raya, raya_events) =
-        create_test_client(bus.clone(), reg_service.clone()).expect("client create");
+        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
 
     let raya_addr = raya.addr();
     let convo_id = saro.create_direct_conversation(raya_addr).unwrap();
@@ -145,12 +142,9 @@ fn direct_v1_standalone_integration() {
         } => {
             assert_eq!(content.as_slice(), b"Hey from saro");
             // saro associated an account and published a matching bundle, so the
-            // sender surfaces with a verified account and its device.
-            assert_eq!(
-                sender.account.as_ref().map(|a| a.as_str()),
-                Some(saro_account_id.as_str())
-            );
-            assert_eq!(sender.local_identity.as_str(), saro_device_id.as_str());
+            // sender surfaces with a verified account and its installation.
+            assert_eq!(sender.account().to_string(), saro_account_id);
+            assert_eq!(sender.signer().as_bytes(), saro_device_id);
             Ok(())
         }
         other => Err(other),
@@ -165,21 +159,22 @@ fn direct_v1_standalone_integration() {
 #[test]
 fn direct_v1_by_account_address() {
     let bus = MessageBus::default();
-    let mut reg_service = EphemeralRegistry::new();
+    let reg_service = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
     let raya_account = TestLogosAccount::new();
     let raya_account_addr = raya_account.address();
-    let raya_delegate = DelegateSigner::random();
-    publish_device_bundle(&mut reg_service, &raya_account, raya_delegate.public_key());
 
-    let (mut raya, raya_events) = ChatClientBuilder::new(raya_account_addr.clone())
-        .ident(raya_delegate)
+    let raya_installation = PendingInstallation::generate().complete(raya_account.addr());
+    auth.register(&raya_installation);
+    let (mut raya, raya_events) = ChatClientBuilder::new(raya_installation)
         .transport(InProcessDelivery::new(bus.clone()))
         .registration(reg_service.clone())
+        .auth(auth.clone())
         .build()
         .expect("client create");
     let (mut saro, saro_events) =
-        create_test_client(bus.clone(), reg_service.clone()).expect("client create");
+        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
 
     // Raya's shared address is her account address, not her signer id.
     assert_eq!(raya.addr(), raya_account_addr.as_str());
@@ -212,10 +207,7 @@ fn direct_v1_by_account_address() {
             assert_eq!(content.as_slice(), b"hi saro");
             // raya's bundle endorses her delegate, so her sender surfaces with
             // the verified account.
-            assert_eq!(
-                sender.account.as_ref().map(|a| a.as_str()),
-                Some(raya_account_addr.as_str())
-            );
+            assert_eq!(sender.account().to_string(), raya_account_addr);
             Ok(())
         }
         other => Err(other),
@@ -226,11 +218,12 @@ fn direct_v1_by_account_address() {
 fn saro_raya_message_exchange() {
     let bus = MessageBus::default();
     let reg_service = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
     let (mut saro, saro_events) =
-        create_test_client(bus.clone(), reg_service.clone()).expect("client create");
+        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
     let (mut raya, raya_events) =
-        create_test_client(bus.clone(), reg_service.clone()).expect("client create");
+        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
 
     let saro_convo_id = saro
         .create_direct_conversation(raya.addr())
@@ -254,10 +247,7 @@ fn saro_raya_message_exchange() {
         } => {
             assert_eq!(convo_id, raya_convo_id);
             assert_eq!(content.as_slice(), b"hello raya");
-            // saro's account published a bundle endorsing its delegate, so the
-            // sender surfaces a verified account.
-            assert!(sender.account.is_some());
-            assert!(!sender.local_identity.as_str().is_empty());
+            assert!(!sender.signer().as_bytes().is_empty());
             Ok(())
         }
         other => Err(other),
@@ -323,10 +313,12 @@ fn saro_raya_message_exchange() {
 fn group_metadata_on_direct_conversation_errors() {
     let bus = MessageBus::default();
     let reg = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
     let (mut saro, _saro_events) =
-        create_test_client(bus.clone(), reg.clone()).expect("client create");
-    let (raya, _raya_events) = create_test_client(bus.clone(), reg.clone()).expect("client create");
+        create_test_client(bus.clone(), reg.clone(), &auth).expect("client create");
+    let (raya, _raya_events) =
+        create_test_client(bus.clone(), reg.clone(), &auth).expect("client create");
 
     let convo_id = saro
         .create_direct_conversation(raya.addr())
@@ -342,10 +334,12 @@ fn group_metadata_on_direct_conversation_errors() {
 fn direct_conversation_lists_its_participants() {
     let bus = MessageBus::default();
     let reg = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
     let (mut saro, _saro_events) =
-        create_test_client(bus.clone(), reg.clone()).expect("client create");
-    let (raya, _raya_events) = create_test_client(bus.clone(), reg.clone()).expect("client create");
+        create_test_client(bus.clone(), reg.clone(), &auth).expect("client create");
+    let (raya, _raya_events) =
+        create_test_client(bus.clone(), reg.clone(), &auth).expect("client create");
 
     let saro_addr = saro.addr().to_string();
     let raya_addr = raya.addr().to_string();
@@ -353,18 +347,15 @@ fn direct_conversation_lists_its_participants() {
         .create_direct_conversation(&raya_addr)
         .expect("convo create");
 
-    let roster = saro.group_members(&convo_id).expect("group_members");
-    let mut accounts: Vec<Option<&str>> = roster
-        .iter()
-        .map(|m| m.account.as_ref().map(|a| a.as_str()))
-        .collect();
+    let participants = saro.participants(&convo_id).expect("participants");
+    let mut accounts: Vec<String> = participants.iter().map(AccountAddr::to_string).collect();
     accounts.sort();
-    let mut expected = vec![Some(saro_addr.as_str()), Some(raya_addr.as_str())];
+    let mut expected = vec![saro_addr.clone(), raya_addr.clone()];
     expected.sort();
     assert_eq!(accounts, expected);
 
     let err = saro
-        .add_group_members(&convo_id, &[&raya_addr])
+        .add_group_participants(&convo_id, &[&raya_addr])
         .expect_err("add member is unsupported on a direct conversation");
     assert!(matches!(
         err,
@@ -378,10 +369,12 @@ fn direct_conversation_lists_its_participants() {
 fn removing_a_member_is_unsupported_on_a_direct_conversation() {
     let bus = MessageBus::default();
     let reg = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
     let (mut saro, _saro_events) =
-        create_test_client(bus.clone(), reg.clone()).expect("client create");
-    let (raya, _raya_events) = create_test_client(bus.clone(), reg.clone()).expect("client create");
+        create_test_client(bus.clone(), reg.clone(), &auth).expect("client create");
+    let (raya, _raya_events) =
+        create_test_client(bus.clone(), reg.clone(), &auth).expect("client create");
 
     let raya_addr = raya.addr().to_string();
     let convo_id = saro
@@ -389,7 +382,7 @@ fn removing_a_member_is_unsupported_on_a_direct_conversation() {
         .expect("convo create");
 
     let err = saro
-        .remove_group_members(&convo_id, &[&raya_addr])
+        .remove_group_participants(&convo_id, &[&raya_addr])
         .expect_err("remove member is unsupported on a direct conversation");
     assert!(matches!(
         err,
@@ -441,8 +434,12 @@ impl Transport for FailingDelivery {
 
 #[test]
 fn dropping_client_shuts_down_worker() {
-    let (client, events) =
-        create_test_client(MessageBus::default(), EphemeralRegistry::new()).expect("client create");
+    let (client, events) = create_test_client(
+        MessageBus::default(),
+        EphemeralRegistry::new(),
+        &AcceptAllAuth::default(),
+    )
+    .expect("client create");
 
     drop(client);
     // Drop joins the worker; once joined its Sender<Event> is gone, so recv
@@ -461,10 +458,13 @@ fn malformed_inbound_surfaces_as_error_event() {
     let delivery = FailingDelivery::new();
     let inbound_tx = delivery.inbound_sender();
 
-    let (_client, events) = ChatClientBuilder::new(TestLogosAccount::new().address())
-        .transport(delivery)
-        .build()
-        .expect("client create");
+    let (_client, events) = ChatClientBuilder::new(
+        PendingInstallation::generate().complete(TestLogosAccount::new().addr()),
+    )
+    .transport(delivery)
+    .auth(AcceptAllAuth::default())
+    .build()
+    .expect("client create");
 
     inbound_tx.send(b"not a valid payload".to_vec()).unwrap();
 
@@ -477,23 +477,24 @@ fn malformed_inbound_surfaces_as_error_event() {
     });
 }
 
-/// Opening a conversation by an address whose account never published a
-/// device bundle fails at resolution, not with a late key-package miss.
+/// Opening a conversation by an address the auth service cannot resolve to
+/// any installation fails at resolution, not with a late key-package miss.
 #[test]
 fn unpublished_account_address_is_an_error() {
     let bus = MessageBus::default();
     let reg_service = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
     let (mut saro, _saro_events) =
-        create_test_client(bus.clone(), reg_service.clone()).expect("client create");
+        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
 
     let unpublished = TestLogosAccount::new();
     let err = saro
         .create_direct_conversation(&unpublished.address())
-        .expect_err("no bundle published for the account");
+        .expect_err("the account is unknown");
     assert!(matches!(
         err,
-        logos_generic_chat::ClientError::AccountResolution(_)
+        logos_generic_chat::ClientError::Chat(ChatError::ParticipantResolution(_))
     ));
 
     let err = saro
@@ -501,7 +502,7 @@ fn unpublished_account_address_is_an_error() {
         .expect_err("not an account key");
     assert!(matches!(
         err,
-        logos_generic_chat::ClientError::AccountResolution(_)
+        logos_generic_chat::ClientError::InvalidAccountAddress(_)
     ));
 }
 
@@ -517,11 +518,12 @@ fn text_and_reply_round_trip_between_clients() {
 
     let bus = MessageBus::default();
     let reg_service = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
     let (mut saro, saro_events) =
-        create_test_client(bus.clone(), reg_service.clone()).expect("client create");
+        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
     let (mut raya, raya_events) =
-        create_test_client(bus.clone(), reg_service.clone()).expect("client create");
+        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
 
     let saro_convo_id = saro
         .create_direct_conversation(raya.addr())
@@ -575,11 +577,12 @@ fn an_untyped_body_still_decodes_as_text() {
 
     let bus = MessageBus::default();
     let reg_service = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
     let (mut saro, _saro_events) =
-        create_test_client(bus.clone(), reg_service.clone()).expect("client create");
+        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
     let (raya, raya_events) =
-        create_test_client(bus.clone(), reg_service.clone()).expect("client create");
+        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
 
     let convo_id = saro.create_direct_conversation(raya.addr()).unwrap();
     expect_event(&raya_events, "ConversationStarted", |e| match e {
@@ -600,4 +603,24 @@ fn an_untyped_body_still_decodes_as_text() {
         }
         other => Err(other),
     });
+}
+
+/// A stand-in account while the account layer is out: only a well-formed
+/// address.
+struct TestLogosAccount(crypto::Ed25519SigningKey);
+
+impl TestLogosAccount {
+    fn new() -> Self {
+        Self(crypto::Ed25519SigningKey::generate())
+    }
+
+    fn address(&self) -> String {
+        hex::encode(self.0.verifying_key().as_ref())
+    }
+
+    /// This account's address.
+    fn addr(&self) -> AccountAddr {
+        AccountAddr::try_from(self.0.verifying_key().as_ref())
+            .expect("a generated key is an address")
+    }
 }

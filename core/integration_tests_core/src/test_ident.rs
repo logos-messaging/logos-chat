@@ -1,41 +1,95 @@
-use crypto::{Ed25519SigningKey, Ed25519VerifyingKey};
-use libchat::IdentityProvider;
-use shared_traits::{IdentId, IdentIdRef};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
-/// Test identity with a fixed, human-readable id ("saro"). Stands in for a
-/// device signer so core tests can address peers by name.
+use crypto::Ed25519SigningKey;
+use libchat::IdentityProvider;
+use libchat::{ParticipantId, SignerKey, SignerRef};
+
+/// Test identity with a human-readable name ("saro"). Stands in for an installation
+/// signer so core tests can address peers by name.
+///
+/// The name is a label, not the signer: a signer is an Ed25519 key, so the
+/// name travels as the credential and in [`display_name`] while the signer is
+/// generated.
 pub struct TestIdent {
-    id: IdentId,
+    name: String,
+    signer: SignerKey,
     signing_key: Ed25519SigningKey,
-    verifying_key: Ed25519VerifyingKey,
 }
 
 impl TestIdent {
-    pub fn new(explicit_id: impl Into<String>) -> Self {
+    pub fn new(name: impl Into<String>) -> Self {
         let signing_key = Ed25519SigningKey::generate();
-        let verifying_key = signing_key.verifying_key();
+        let signer = SignerKey::from(signing_key.verifying_key());
         Self {
-            id: IdentId::new(explicit_id.into()),
+            name: name.into(),
+            signer,
             signing_key,
-            verifying_key,
         }
     }
 }
 
 impl IdentityProvider for TestIdent {
-    fn id(&self) -> IdentIdRef<'_> {
-        &self.id
+    fn signer_key(&self) -> SignerRef<'_> {
+        &self.signer
+    }
+
+    fn participant_id(&self) -> ParticipantId {
+        self.name.as_bytes().into()
     }
 
     fn display_name(&self) -> String {
-        self.id.to_string()
-    }
-
-    fn public_key(&self) -> &Ed25519VerifyingKey {
-        &self.verifying_key
+        self.name.clone()
     }
 
     fn sign(&self, payload: &[u8]) -> crypto::Ed25519Signature {
         self.signing_key.sign(payload)
+    }
+}
+
+/// Accepts every identifier without checking it, and resolves an account to
+/// the signers [registered](Self::register) under it. An account nobody
+/// registered does not resolve.
+///
+/// Test-only: this asserts nothing about a sender, and must never stand in for
+/// a real [`AuthService`](libchat::AuthService). Clones share one registry.
+#[derive(Debug, Clone, Default)]
+pub struct AcceptAllAuth {
+    signers: Arc<Mutex<HashMap<ParticipantId, Vec<SignerKey>>>>,
+}
+
+impl AcceptAllAuth {
+    /// Makes `ident`'s signer resolvable from its participant id.
+    pub fn register(&self, ident: &impl IdentityProvider) {
+        self.signers
+            .lock()
+            .unwrap()
+            .entry(ident.participant_id())
+            .or_default()
+            .push(ident.signer_key().clone());
+    }
+}
+
+impl libchat::AuthService for AcceptAllAuth {
+    type Error = String;
+
+    fn validate_signer(
+        &self,
+        _signer: SignerKey,
+        _participant_id: libchat::ParticipantId,
+    ) -> Result<libchat::AuthResult, Self::Error> {
+        Ok(libchat::AuthResult::Valid)
+    }
+
+    fn signers_for_participant(
+        &self,
+        ident: &ParticipantId,
+    ) -> Result<Vec<SignerKey>, Self::Error> {
+        self.signers
+            .lock()
+            .unwrap()
+            .get(ident)
+            .cloned()
+            .ok_or_else(|| format!("no signers registered for {ident}"))
     }
 }

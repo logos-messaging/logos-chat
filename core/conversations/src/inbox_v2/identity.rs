@@ -1,18 +1,18 @@
 use std::ops::Deref;
 
+use crate::identity::{ParticipantId, SignerRef};
 use openmls::credentials::{BasicCredential, CredentialWithKey};
 use openmls_traits::{
     signatures::{Signer, SignerError},
     types::SignatureScheme,
 };
-use shared_traits::IdentIdRef;
 
 use crate::IdentityProvider;
 
 /// A Wrapper for an IdentityProvider which provides MLS specific functionality
 ///
 /// This type stops OpenMLS internal from leaking outside the crate.
-/// Developers provider a simple IdentityProvider, and Signer and Credential generation
+/// Developers provider a simple IdentityProvider, and SignerKey and Credential generation
 /// is provided
 pub struct MlsIdentityProvider<T: IdentityProvider>(T);
 
@@ -23,8 +23,8 @@ impl<T: IdentityProvider> MlsIdentityProvider<T> {
 
     pub fn get_credential(&self) -> CredentialWithKey {
         CredentialWithKey {
-            credential: BasicCredential::new(self.id().as_str().as_bytes().to_vec()).into(),
-            signature_key: self.public_key().as_ref().into(),
+            credential: BasicCredential::new(self.participant_id().as_bytes().to_vec()).into(),
+            signature_key: self.signer_key().as_bytes().into(),
         }
     }
 }
@@ -38,8 +38,12 @@ impl<T: IdentityProvider> Deref for MlsIdentityProvider<T> {
 }
 
 impl<T: IdentityProvider> IdentityProvider for MlsIdentityProvider<T> {
-    fn id(&self) -> IdentIdRef<'_> {
-        self.0.id()
+    fn signer_key(&self) -> SignerRef<'_> {
+        self.0.signer_key()
+    }
+
+    fn participant_id(&self) -> ParticipantId {
+        self.0.participant_id()
     }
 
     fn display_name(&self) -> String {
@@ -48,10 +52,6 @@ impl<T: IdentityProvider> IdentityProvider for MlsIdentityProvider<T> {
 
     fn sign(&self, payload: &[u8]) -> crypto::Ed25519Signature {
         self.0.sign(payload)
-    }
-
-    fn public_key(&self) -> &crypto::Ed25519VerifyingKey {
-        self.0.public_key()
     }
 }
 
