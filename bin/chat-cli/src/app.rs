@@ -39,10 +39,10 @@ impl DisplayMessage {
     }
 }
 
-/// Attribution of a displayed message. `Own` is our own account (any of our
-/// devices); `Foreign` carries the sender's resolved account address, which the
-/// app maps to a display name. (Client resolves credential → account; the app
-/// resolves account → name.)
+/// Attribution of a displayed message. `Own` is our own account (any of its
+/// installations); `Foreign` carries the sender's account address, which the
+/// app maps to a display name. (The client decodes participant → account; the
+/// app resolves account → name.)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MessageOrigin {
     Own,
@@ -550,7 +550,7 @@ where
                     .client
                     .pending_members(&chat_id)
                     .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-                // One row per account; an account with a committed device is not
+                // One row per account; an account with a committed installation is not
                 // also listed as pending.
                 let joined: BTreeSet<String> =
                     participants.iter().map(AccountAddr::to_string).collect();

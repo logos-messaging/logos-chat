@@ -5,7 +5,7 @@ use crypto::Ed25519SigningKey;
 use libchat::IdentityProvider;
 use libchat::{ParticipantId, SignerKey, SignerRef};
 
-/// Test identity with a human-readable name ("saro"). Stands in for a device
+/// Test identity with a human-readable name ("saro"). Stands in for an installation
 /// signer so core tests can address peers by name.
 ///
 /// The name is a label, not the signer: a signer is an Ed25519 key, so the
