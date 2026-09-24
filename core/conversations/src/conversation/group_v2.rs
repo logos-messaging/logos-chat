@@ -673,6 +673,7 @@ impl GroupV2Convo {
                     .map(|sender| Content {
                         bytes: reliable.content.to_vec(),
                         sender,
+                        message_id: reliable.message_id.clone(),
                     }))
             })
             .transpose()?

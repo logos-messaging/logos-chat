@@ -311,6 +311,7 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
                     .map(|sender| Content {
                         bytes: reliable.content.to_vec(),
                         sender,
+                        message_id: reliable.message_id.clone(),
                     })
             }
             ProcessedMessageContent::StagedCommitMessage(commit) => {

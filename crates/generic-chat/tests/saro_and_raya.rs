@@ -243,6 +243,7 @@ fn saro_raya_message_exchange() {
             convo_id,
             content,
             sender,
+            ..
         } => {
             assert_eq!(convo_id, raya_convo_id);
             assert_eq!(content.as_slice(), b"hello raya");
@@ -503,6 +504,47 @@ fn unpublished_account_address_is_an_error() {
         err,
         logos_generic_chat::ClientError::InvalidAccountAddress(_)
     ));
+}
+
+/// The id `send_message` returns is the id the receiver is handed.
+///
+/// Nothing in the client enforces this — the sender computes its id locally and
+/// the receiver recomputes one from the reliability envelope. An application
+/// naming a message (a reply, a reaction) addresses it by that id, so if the
+/// two ever diverge every such reference resolves to nothing on the far side.
+#[test]
+fn a_send_returns_the_id_the_receiver_sees() {
+    let bus = MessageBus::default();
+    let reg_service = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
+
+    let (mut saro, _saro_events) =
+        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
+    let (raya, raya_events) =
+        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
+
+    let convo_id = saro
+        .create_direct_conversation(raya.addr())
+        .expect("convo create");
+    expect_event(&raya_events, "ConversationStarted", |e| match e {
+        Event::ConversationStarted { convo_id, .. } => Ok(convo_id),
+        other => Err(other),
+    });
+
+    let sent_id = saro.send_message(&convo_id, b"hello raya").unwrap();
+
+    let received_id = expect_event(&raya_events, "MessageReceived", |e| match e {
+        Event::MessageReceived {
+            content,
+            message_id,
+            ..
+        } => {
+            assert_eq!(content.as_slice(), b"hello raya");
+            Ok(message_id)
+        }
+        other => Err(other),
+    });
+    assert_eq!(received_id, sent_id);
 }
 
 /// A stand-in account while the account layer is out: only a well-formed

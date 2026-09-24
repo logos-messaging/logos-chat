@@ -91,6 +91,19 @@ where
     frame.render_widget(header, area);
 }
 
+/// Break `line` into pieces of at most `width` chars, never splitting a
+/// multi-byte char. An empty line yields one empty piece so it still takes a row.
+fn wrap_line(line: &str, width: usize) -> Vec<String> {
+    if line.is_empty() {
+        return vec![String::new()];
+    }
+    let chars: Vec<char> = line.chars().collect();
+    chars
+        .chunks(width.max(1))
+        .map(|piece| piece.iter().collect())
+        .collect()
+}
+
 fn draw_messages<D, R, A, S>(frame: &mut Frame, app: &ChatApp<D, R, A, S>, area: Rect)
 where
     D: Transport + Send + 'static,
@@ -133,45 +146,26 @@ where
             let prefix_str = format!("{}: ", prefix);
             let prefix_len = prefix_str.len();
 
-            // Split content into lines that fit within inner_width.
-            let content = &msg.content;
-            if content.is_empty() {
-                return vec![ListItem::new(Line::from(vec![Span::styled(
-                    prefix_str,
-                    style.add_modifier(Modifier::BOLD),
-                )]))];
-            }
-
+            // Honour embedded newlines (a reply's `↩ preview` sits on its own
+            // line), wrapping each to width. Prefix leads the first line; the
+            // rest are indented under it.
             let mut items = Vec::new();
-            let first_line_width = inner_width.saturating_sub(prefix_len).max(1);
-
-            // First line includes the prefix.
-            let (first_chunk, rest): (&str, &str) = if content.len() <= first_line_width {
-                (content.as_str(), "")
-            } else {
-                content.split_at(first_line_width)
-            };
-
-            items.push(ListItem::new(Line::from(vec![
-                Span::styled(prefix_str, style.add_modifier(Modifier::BOLD)),
-                Span::raw(first_chunk),
-            ])));
-
-            // Continuation lines are indented to align with content.
+            let content_width = inner_width.saturating_sub(prefix_len).max(1);
             let indent = " ".repeat(prefix_len);
-            let mut remaining: &str = rest;
-            while !remaining.is_empty() {
-                let chunk_width = inner_width.saturating_sub(prefix_len).max(1);
-                let (chunk, tail) = if remaining.len() <= chunk_width {
-                    (remaining, "")
-                } else {
-                    remaining.split_at(chunk_width)
-                };
-                items.push(ListItem::new(Line::from(vec![
-                    Span::raw(indent.clone()),
-                    Span::raw(chunk),
-                ])));
-                remaining = tail;
+            let mut first = true;
+            for logical_line in msg.content.split('\n') {
+                for piece in wrap_line(logical_line, content_width) {
+                    let line = if first {
+                        first = false;
+                        Line::from(vec![
+                            Span::styled(prefix_str.clone(), style.add_modifier(Modifier::BOLD)),
+                            Span::raw(piece),
+                        ])
+                    } else {
+                        Line::from(vec![Span::raw(indent.clone()), Span::raw(piece)])
+                    };
+                    items.push(ListItem::new(line));
+                }
             }
 
             // Delivery receipts for our own sends: the peers whose later

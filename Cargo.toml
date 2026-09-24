@@ -14,6 +14,7 @@ members = [
     "extensions/components",
     "extensions/embedded-logos-delivery",
     "extensions/logos-delivery-rust",
+    "extensions/message-types",
     "extensions/sqlite",
 ]
 
@@ -22,6 +23,7 @@ default-members = [
     "core/crypto",
     "core/integration_tests_core",
     "crates/generic-chat",
+    "extensions/message-types",
     "extensions/sqlite",
 ]
 
@@ -42,6 +44,7 @@ libchat = { path = "core/conversations" }
 logos-chat = { path = "crates/logos-chat" }
 logos-delivery = { path = "extensions/logos-delivery-rust"}
 logos-generic-chat = { path = "crates/generic-chat" }
+message-types = { path = "extensions/message-types" }
 chat-proto = { git = "https://github.com/logos-messaging/chat_proto", rev = "948f4ad6dedb01b44e279204d8eb30a1eda5a330" }
 
 # External Workspace dependency declarations (sorted)

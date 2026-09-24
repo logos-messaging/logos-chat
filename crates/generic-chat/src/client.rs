@@ -291,8 +291,14 @@ where
     /// Encrypt and send `content` to an existing conversation. The core
     /// publishes the outbound envelope.
     ///
+    /// `content` is opaque here: what the bytes *mean* is the application's
+    /// concern, encoded before this call (see the `message-types` extension)
+    /// and decoded from [`Event::MessageReceived`]. The client deliberately
+    /// knows nothing about content types.
+    ///
     /// Returns the message's id, which later [`Event::MessageAcked`] events
-    /// carry — hold onto it to show which peers have the message.
+    /// carry — hold onto it to show which peers have the message, or to name
+    /// it as the target of a reply.
     pub fn send_message(
         &mut self,
         convo_id: &str,
@@ -477,6 +483,7 @@ fn convo_events(outcome: ConvoOutcome) -> Vec<Event> {
             convo_id: Arc::clone(&convo_id),
             content: c.bytes,
             sender,
+            message_id: c.message_id,
         });
     }
     if members_changed {
@@ -503,6 +510,7 @@ fn inbox_events(outcome: InboxOutcome) -> Vec<Event> {
             convo_id: Arc::clone(&id),
             content: c.bytes,
             sender,
+            message_id: c.message_id,
         });
     }
     events

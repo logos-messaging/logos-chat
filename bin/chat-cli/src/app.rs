@@ -9,9 +9,27 @@ use logos_chat::{
     AccountAddr, AuthService, ChatClient, ConversationClass, ConversationStore, Event,
     GroupMetadata, RegistrationService, Transport,
 };
+use message_types::ContentId;
 use serde::{Deserialize, Serialize};
 
 use crate::utils::now;
+
+/// One-line snippet of a message body, for the reply preview.
+fn snippet_of(body: &str) -> String {
+    let line = body.lines().next().unwrap_or("");
+    let short: String = line.chars().take(24).collect();
+    if line.chars().count() > 24 {
+        format!("{short}…")
+    } else {
+        short
+    }
+}
+
+/// A reply's display body: the `↩ preview` line above the reply text. The one
+/// place this shape is built, so inbound render and outbound echo match.
+fn reply_body(preview: &str, body: &str) -> String {
+    format!("↩ {preview}\n{body}")
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DisplayMessage {
@@ -279,8 +297,10 @@ where
             }
             Event::MessageReceived {
                 convo_id,
-                content,
+                content: bytes,
                 sender,
+                message_id,
+                ..
             } => {
                 let chat_id = convo_id.to_string();
                 // The client resolved the credential to an account; classify by it.
@@ -290,14 +310,28 @@ where
                 } else {
                     MessageOrigin::Foreign(account)
                 };
+                // The client hands us opaque bytes; the content format is ours
+                // to apply. Decoding never fails — every body renders as
+                // something.
+                let decoded = message_types::decode(&bytes);
                 let Some(session) = self.state.chats.get_mut(&chat_id) else {
                     return;
                 };
-                let message = DisplayMessage::new(
-                    false,
-                    String::from_utf8_lossy(&content).into_owned(),
-                    origin,
-                );
+                let mut body = decoded.content.to_string();
+                // Resolve the replied-to message to a preview; the app owns this,
+                // the id is opaque to the core.
+                if let Some(target) = decoded.in_reply_to {
+                    let target = target.as_str();
+                    let preview = session
+                        .messages
+                        .iter()
+                        .find(|m| m.message_id.as_deref() == Some(target))
+                        .map(|m| snippet_of(&m.content))
+                        .unwrap_or_else(|| format!("re: {}", &target[..8.min(target.len())]));
+                    body = reply_body(&preview, &body);
+                }
+                let mut message = DisplayMessage::new(false, body, origin);
+                message.message_id = Some(message_id);
                 session.messages.push(message);
             }
             Event::MessageAcked {
@@ -356,7 +390,30 @@ where
         }
     }
 
+    /// Send a plain-text message to the active chat.
     pub fn send_message(&mut self, content: &str) -> Result<()> {
+        let chat_id = self.active_sendable_chat()?;
+        let bytes = message_types::encode_text(content)?;
+        let message_id = self
+            .client
+            .send_message(&chat_id, &bytes)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        self.echo_sent(&chat_id, message_id, content.to_string())
+    }
+
+    /// Reply to `in_reply_to` in the active chat.
+    fn send_reply(&mut self, in_reply_to: &ContentId, content: &str, preview: &str) -> Result<()> {
+        let chat_id = self.active_sendable_chat()?;
+        let bytes = message_types::encode_reply(in_reply_to, content)?;
+        let message_id = self
+            .client
+            .send_message(&chat_id, &bytes)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        self.echo_sent(&chat_id, message_id, reply_body(preview, content))
+    }
+
+    /// The active chat, if there is one and it can still be sent to.
+    fn active_sendable_chat(&self) -> Result<String> {
         let chat_id = self
             .state
             .active_chat
@@ -369,20 +426,17 @@ where
                  or you're no longer a member."
             );
         }
+        Ok(chat_id)
+    }
 
-        let message_id = self
-            .client
-            .send_message(&chat_id, content.as_bytes())
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-
-        if let Some(session) = self.state.chats.get_mut(&chat_id) {
-            let mut message = DisplayMessage::new(true, content.to_string(), MessageOrigin::Own);
-            // Kept so `MessageAcked` can find this message again.
+    /// Put our own message in our own view; the wire carries no copy back.
+    fn echo_sent(&mut self, chat_id: &str, message_id: String, body: String) -> Result<()> {
+        if let Some(session) = self.state.chats.get_mut(chat_id) {
+            let mut message = DisplayMessage::new(true, body, MessageOrigin::Own);
             message.message_id = Some(message_id);
             session.messages.push(message);
         }
         self.save_state()?;
-
         Ok(())
     }
 
@@ -408,6 +462,7 @@ where
                 self.add_system_message("/add <address> - Add someone to the active group");
                 self.add_system_message("/remove <address> - Remove someone from the active group");
                 self.add_system_message("/members - List members of the active conversation");
+                self.add_system_message("/reply <text> - Reply to the latest message");
                 self.add_system_message("/nickname <name> - Name the active chat");
                 self.add_system_message("/chats - List all chats");
                 self.add_system_message("/switch <name|id> - Switch active chat");
@@ -578,6 +633,35 @@ where
                     self.add_system_message(&format!("  • {short}…{tags}"));
                 }
                 Ok(Some(format!("{total} member(s)")))
+            }
+            "/reply" => {
+                let text = args.trim();
+                if text.is_empty() {
+                    return Ok(Some("Usage: /reply <text>".to_string()));
+                }
+                let chat_id = self
+                    .state
+                    .active_chat
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("No active chat. Use /dm or /new first."))?;
+                // Reply to the most recent message with an id — a TUI has no
+                // cursor to pick another.
+                let target = self
+                    .state
+                    .chats
+                    .get(&chat_id)
+                    .and_then(|s| s.messages.iter().rev().find(|m| m.message_id.is_some()))
+                    .map(|m| {
+                        (
+                            ContentId::new(m.message_id.clone().expect("filtered on Some")),
+                            snippet_of(&m.content),
+                        )
+                    });
+                let Some((target, preview)) = target else {
+                    return Ok(Some("Nothing to reply to yet.".to_string()));
+                };
+                self.send_reply(&target, text, &preview)?;
+                Ok(Some("Reply sent".to_string()))
             }
             "/nickname" => {
                 if args.is_empty() {
