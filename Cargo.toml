@@ -14,6 +14,7 @@ members = [
     "extensions/components",
     "extensions/embedded-logos-delivery",
     "extensions/logos-delivery-rust",
+    "extensions/message-store",
     "extensions/message-types",
     "extensions/sqlite",
 ]
@@ -23,6 +24,7 @@ default-members = [
     "core/crypto",
     "core/integration_tests_core",
     "crates/generic-chat",
+    "extensions/message-store",
     "extensions/message-types",
     "extensions/sqlite",
 ]

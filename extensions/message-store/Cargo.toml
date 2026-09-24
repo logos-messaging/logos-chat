@@ -1,0 +1,16 @@
+[package]
+name = "message-store"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+description = "A default store for chat messages, over a SQLite connection the application opens"
+
+[dependencies]
+# External dependencies (sorted)
+# No features: the application picks the SQLite build it links.
+rusqlite = "0.35"
+
+[dev-dependencies]
+# External dependencies (sorted)
+rusqlite = { version = "0.35", features = ["bundled-sqlcipher-vendored-openssl"] }
+tempfile = "3"
