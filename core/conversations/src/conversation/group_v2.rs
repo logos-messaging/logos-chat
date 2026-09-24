@@ -5,6 +5,7 @@
 use crate::conversation::mls_extensions::{
     ConvoMetaInfo, GROUP_METADATA_EXTENSION_TYPE, capabilities_with_group_metadata,
 };
+use crate::identity::{SignerKey, SignerRef};
 use crate::types::{AddressedEncryptedPayload, ConvoMetadata};
 use crate::{Content, WakeupService};
 use alloy::signers::local::PrivateKeySigner;
@@ -25,7 +26,6 @@ use openmls::group::MlsGroupCreateConfig;
 use openmls::prelude::tls_codec::Deserialize as _;
 use openmls::prelude::{KeyPackageIn, OpenMlsProvider as _, ProtocolVersion};
 use prost::Message;
-use shared_traits::{SignerKey, SignerRef};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

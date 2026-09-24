@@ -117,7 +117,6 @@ core/          protocol and storage components. All code is synchronous.
   account/         accounts, delegate signers, the device directory
   storage/         store traits
   sqlite/          SQLCipher-backed store
-  shared-traits/   traits shared across the Logos ecosystem
   integration_tests_core/  multi-client test harness
 
 crates/        the client layer

@@ -17,7 +17,6 @@
 use std::fmt::{Debug, Display};
 
 use crypto::{Ed25519Signature, Ed25519VerifyingKey};
-use shared_traits::SignerRef;
 use thiserror::Error;
 
 /// A device (LocalIdentity) verifying key, hex-encoded — the same shape as the
@@ -194,15 +193,15 @@ pub enum ResolveError {
 
 /// Resolve an account to the device ids whose KeyPackages must be fetched.
 ///
-/// The directory is keyed by the account verifying key, which a [`Signer`]
-/// already holds — so the only failures left are an unpublished account and a
-/// directory outage, which the variants tell apart.
+/// The directory is keyed by the account verifying key — so the only failures
+/// left are an unpublished account and a directory outage, which the variants
+/// tell apart.
 pub fn resolve_device_ids<D: AccountDirectory + ?Sized>(
     directory: &D,
-    account: SignerRef,
+    account: &Ed25519VerifyingKey,
 ) -> Result<Vec<DeviceId>, ResolveError> {
     let set = directory
-        .fetch(account.verifying_key())
+        .fetch(account)
         .map_err(|e| ResolveError::Directory(e.to_string()))?
         .ok_or(ResolveError::NoDeviceBundle)?;
     Ok(set.devices)
@@ -212,7 +211,6 @@ pub fn resolve_device_ids<D: AccountDirectory + ?Sized>(
 mod tests {
     use super::*;
     use crypto::Ed25519SigningKey;
-    use shared_traits::SignerKey;
 
     /// encode → decode round-trips, including zero and many devices.
     #[test]
@@ -342,9 +340,8 @@ mod tests {
     #[test]
     fn resolve_rejects_unpublished_account() {
         let account_pub = Ed25519SigningKey::generate().verifying_key();
-        let account_id = SignerKey::from(account_pub.clone());
         assert!(matches!(
-            resolve_device_ids(&FakeDir(None), &account_id),
+            resolve_device_ids(&FakeDir(None), &account_pub),
             Err(ResolveError::NoDeviceBundle)
         ));
     }
@@ -367,8 +364,7 @@ mod tests {
 
         // The identifier is the hex of the account key, so resolution consults the
         // directory rather than falling back.
-        let account_id = SignerKey::from(account_pub.clone());
-        let resolved = resolve_device_ids(&FakeDir(Some(bundle)), &account_id).unwrap();
+        let resolved = resolve_device_ids(&FakeDir(Some(bundle)), &account_pub).unwrap();
         let want: Vec<String> = devices.iter().map(|d| hex::encode(d.as_ref())).collect();
         assert_eq!(resolved, want);
     }

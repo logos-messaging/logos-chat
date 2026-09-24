@@ -2,6 +2,7 @@ use crate::causal_history::{CausalHistoryStore, DeliveryAck, MissingMessage};
 use crate::conversation::{
     ConversationIdRef, DirectV1Convo, GroupV1Convo, GroupV2Convo, Identified, MessageId,
 };
+use crate::identity::SignerRef;
 use crate::service_context::{ExternalServices, ServiceContext};
 use crate::service_traits::AuthService;
 use crate::storage::{ConversationKind, ConversationMeta, ConversationStore};
@@ -18,7 +19,6 @@ use crate::{
     proto::{EncryptedPayload, EnvelopeV1, Message},
 };
 use openmls::group::GroupId;
-use shared_traits::SignerRef;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use tracing::{info, instrument};
