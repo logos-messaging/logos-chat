@@ -31,7 +31,9 @@ pub use outcomes::{
     Content, ConversationClass, ConvoOutcome, InboxOutcome, NewConversation, PayloadOutcome,
 };
 pub use service_context::ExternalServices;
-pub use service_traits::{DeliveryService, RegistrationService, WakeupService};
+pub use service_traits::{
+    AuthResult, AuthService, DeliveryService, RegistrationService, WakeupService,
+};
 pub use shared_traits::{IdentityProvider, ParticipantId, SignerKey, SignerRef};
 pub use storage::{
     ConversationKind, ConversationMeta, ConversationStore, KvPair, KvStore, KvTx, Namespace, Scope,

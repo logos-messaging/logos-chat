@@ -1,4 +1,4 @@
-use crate::test_ident::TestIdent;
+use crate::test_ident::{AcceptAllAuth, TestIdent};
 use libchat::test_support::MemStore;
 use libchat::{ConversationId, Core, IdentityProvider, PayloadOutcome};
 use libchat::{GroupV2Clock, GroupV2Config};
@@ -24,7 +24,14 @@ const PAX: usize = 2;
 const MIRA: usize = 3;
 
 // type ClientType = CoreClient<TestIdent, LocalBroadcaster, EphemeralRegistry, WP, MemStore>;
-type ClientType = Core<(TestIdent, LocalBroadcaster, EphemeralRegistry, WP, MemStore)>;
+type ClientType = Core<(
+    TestIdent,
+    AcceptAllAuth,
+    LocalBroadcaster,
+    EphemeralRegistry,
+    WP,
+    MemStore,
+)>;
 
 #[derive(Debug)]
 pub struct ReceivedMessage<T> {
@@ -175,9 +182,15 @@ impl<const N: usize> TestHarness<N> {
             let ident = TestIdent::new(Self::names(i));
 
             addresses.insert(i, ident.signer_key().clone());
-            let mut core_client =
-                ClientType::new_with_name(ident, ds.clone(), rs.clone(), wp, MemStore::new())
-                    .unwrap();
+            let mut core_client = ClientType::new_with_name(
+                ident,
+                AcceptAllAuth,
+                ds.clone(),
+                rs.clone(),
+                wp,
+                MemStore::new(),
+            )
+            .unwrap();
             core_client.set_group_v2_clock(GroupV2Clock::Mock(ws.clock()));
             core_client.set_group_v2_config(fast_group_v2_config());
 

@@ -278,3 +278,26 @@ mod tests {
         ));
     }
 }
+
+/// Accepts every identifier without checking it.
+///
+/// A placeholder while nothing in the core consults the result. The real
+/// check — parse the [`DelegateCredential`], bind it to the signer, and
+/// confirm the account → device mapping in the directory — is what
+/// `parse_credential` already does for the outcome path; this must be replaced
+/// with it before the core gates on authentication, or the gate asserts
+/// nothing.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UncheckedAuth;
+
+impl libchat::AuthService for UncheckedAuth {
+    type Error = std::convert::Infallible;
+
+    fn validate_signer(
+        &self,
+        _signer: SignerKey,
+        _participant_id: libchat::ParticipantId,
+    ) -> Result<libchat::AuthResult, Self::Error> {
+        Ok(libchat::AuthResult::Valid)
+    }
+}
