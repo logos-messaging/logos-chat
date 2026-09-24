@@ -6,7 +6,6 @@ members = [
     "account/account",
     "account/account-log",
     "bin/chat-cli",
-    "core/account",
     "core/conversations",
     "core/crypto",
     "core/integration_tests_core",
