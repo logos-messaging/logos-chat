@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use crossbeam_channel::Receiver;
 use logos_chat::{
-    AccountDirectory, ChatClient, ConversationStore, Event, GroupV2Config, LogosConfig, P2pConfig,
+    AuthService, ChatClient, ConversationStore, Event, GroupV2Config, LogosConfig, P2pConfig,
     RegistrationService, RegistryPublishMode, Transport,
 };
 
@@ -34,7 +34,8 @@ enum GroupCommit {
     Default,
 }
 
-/// Fast GroupV2 timing so `/add` commits in ~1s instead of ~60s — for local
+/// Fast GroupV2 timing so a membership change (`/add`, `/remove`) commits in
+/// ~1s instead of ~60s — for local
 /// demos and tests. These are the vetted values from the library's group
 /// tests; they are deliberately aggressive and not appropriate for a
 /// high-latency network (hence `--group-commit auto` keeps defaults there).
@@ -72,8 +73,9 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = TransportKind::File)]
     transport: TransportKind,
 
-    /// How quickly group membership changes commit. `fast` makes `/add` commit
-    /// in ~1s (great for local demos); `default` uses production de-mls timing.
+    /// How quickly group membership changes commit. `fast` makes `/add` and
+    /// `/remove` commit in ~1s (great for local demos); `default` uses
+    /// production de-mls timing.
     /// `auto` (the default) picks `fast` for `--transport file` and `default`
     /// otherwise, since fast timers are too aggressive for a high-latency network.
     #[arg(long, value_enum, default_value_t = GroupCommit::Auto)]
@@ -218,14 +220,15 @@ fn db_path(cli: &Cli) -> Result<String> {
         .to_string())
 }
 
-fn launch_tui<T, R, S>(
-    client: ChatClient<T, R, S>,
+fn launch_tui<T, R, A, S>(
+    client: ChatClient<T, R, A, S>,
     events: Receiver<Event>,
     cli: &Cli,
 ) -> Result<()>
 where
     T: Transport,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send,
 {
     let mut app = ChatApp::new(client, events, &cli.name, &cli.data)?;
@@ -240,10 +243,11 @@ where
     result
 }
 
-fn run_app<T, R, S>(terminal: &mut ui::Tui, app: &mut ChatApp<T, R, S>) -> Result<()>
+fn run_app<T, R, A, S>(terminal: &mut ui::Tui, app: &mut ChatApp<T, R, A, S>) -> Result<()>
 where
     T: Transport,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send,
 {
     loop {

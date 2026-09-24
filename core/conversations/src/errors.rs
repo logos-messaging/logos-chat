@@ -2,7 +2,7 @@ use de_mls::{ConversationError, mls_crypto::MlsError};
 use openmls::{framing::errors::MlsMessageError, prelude::tls_codec};
 pub use thiserror::Error;
 
-use storage::StorageError;
+use crate::storage::StorageError;
 
 use crate::ConversationId;
 
@@ -47,6 +47,16 @@ pub enum ChatError {
     // Used when a core function is called with a convo_id which is unsupported
     #[error("convo:{0} does not support {1}")]
     UnsupportedFunction(ConversationId, String),
+    // Removal outcomes, surfaced to the UI as-is.
+    #[error("you can't remove yourself from a group")]
+    CannotRemoveSelf,
+    // Also covers a pending invite: it holds no seat either.
+    #[error("no one named is a member of this group")]
+    NotAGroupMember,
+    #[error("authentication failed: SignerKey({0}) is not valid for participant_id({1})")]
+    Auth(String, String),
+    #[error("participant resolution failed: {0}")]
+    ParticipantResolution(String),
 }
 
 impl ChatError {

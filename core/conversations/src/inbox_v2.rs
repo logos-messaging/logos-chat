@@ -1,12 +1,12 @@
 mod identity;
 mod mls_provider;
 
+use crate::storage::{ConversationKind, ConversationMeta, ConversationStore};
 use chat_proto::logoschat::envelope::EnvelopeV1;
 use de_mls::protos::de_mls::messages::v1::MemberWelcome;
 use openmls::prelude::tls_codec::Serialize;
 use openmls::prelude::*;
 use prost::{Message, Oneof};
-use storage::{ConversationKind, ConversationMeta, ConversationStore};
 use tracing::info;
 use tracing::instrument;
 
@@ -24,18 +24,20 @@ use crate::conversation::mls_extensions::GROUP_METADATA_EXTENSION_TYPE;
 use crate::outcomes::ConversationClass;
 use crate::service_context::{ExternalServices, ServiceContext};
 use crate::utils::{blake2b_hex, hash_size};
-use crate::{AddressedEnvelope, IdentId, IdentIdRef, IdentityProvider};
+use crate::{AddressedEnvelope, IdentityProvider, SignerKey, SignerRef};
 
 pub(crate) const CIPHER_SUITE: Ciphersuite =
     Ciphersuite::MLS_256_XWING_CHACHA20POLY1305_SHA256_Ed25519;
 
 // Define unique Identifiers derivations used in InboxV2
-fn delivery_address_for(ident_id: IdentIdRef) -> String {
-    blake2b_hex::<hash_size::DeliveryAddr>(&["InboxV2|", "delivery_address|", ident_id.as_str()])
+fn delivery_address_for(signer: SignerRef) -> String {
+    let id = signer.to_string();
+    blake2b_hex::<hash_size::DeliveryAddr>(&["InboxV2|", "delivery_address|", &id])
 }
 
-fn conversation_id_for(ident_id: IdentIdRef) -> String {
-    blake2b_hex::<hash_size::ConvoId>(&["InboxV2|", "conversation_id|", ident_id.as_str()])
+fn conversation_id_for(signer: SignerRef) -> String {
+    let id = signer.to_string();
+    blake2b_hex::<hash_size::ConvoId>(&["InboxV2|", "conversation_id|", &id])
 }
 
 /// An Extension trait which extends OpenMlsProvider to add required functionality
@@ -44,28 +46,28 @@ pub trait MlsProvider: OpenMlsProvider {
     fn invite_user<DS: DeliveryService>(
         &self,
         ds: &mut DS,
-        ident_id: IdentIdRef,
+        signer: SignerRef,
         welcome: &MlsMessageOut,
     ) -> Result<(), ChatError>;
 }
 
-/// Deliver a de-mls welcome to `signer_id` over its InboxV2 1-1 channel.
+/// Deliver a de-mls welcome to `signer` over its InboxV2 1-1 channel.
 /// Function mirroring the GroupV1 `invite_user` path, but carrying a de-mls `MemberWelcome`.
 pub fn invite_user_v2<DS: DeliveryService>(
     ds: &mut DS,
-    signer_id: IdentIdRef,
+    signer: SignerRef,
     welcome: &MemberWelcome,
 ) -> Result<(), ChatError> {
     let frame = InboxV2Frame {
         payload: Some(InviteType::GroupV2(welcome.encode_to_vec())),
     };
     let envelope = EnvelopeV1 {
-        conversation_hint: conversation_id_for(signer_id),
+        conversation_hint: conversation_id_for(signer),
         salt: 0,
         payload: frame.encode_to_vec().into(),
     };
     ds.publish(AddressedEnvelope {
-        delivery_address: delivery_address_for(signer_id),
+        delivery_address: delivery_address_for(signer),
         data: envelope.encode_to_vec(),
     })
     .map_err(ChatError::generic)
@@ -81,16 +83,16 @@ type ClassifiedConvo<S> = (Box<dyn GroupConvo<S>>, ConversationClass);
 /// conversation protocols such as MLS.
 pub struct InboxV2 {
     // Owned so it can be returned via reference.
-    ident_id: IdentId,
+    signer: SignerKey,
 }
 
 impl InboxV2 {
-    pub fn new(ident_id: IdentId) -> Self {
-        Self { ident_id }
+    pub fn new(signer: SignerKey) -> Self {
+        Self { signer }
     }
 
-    pub fn ident_id(&self) -> IdentIdRef<'_> {
-        &self.ident_id
+    pub fn signer(&self) -> SignerRef<'_> {
+        &self.signer
     }
 
     /// Submit MlsKeypackage to registration service
@@ -113,11 +115,11 @@ impl InboxV2 {
     }
 
     pub fn delivery_address(&self) -> String {
-        delivery_address_for(&self.ident_id)
+        delivery_address_for(&self.signer)
     }
 
     pub fn id(&self) -> String {
-        conversation_id_for(&self.ident_id)
+        conversation_id_for(&self.signer)
     }
 
     /// The convo built from an invite, paired with the display class its invite

@@ -1,14 +1,15 @@
-use crate::test_ident::TestIdent;
+use crate::test_ident::{AcceptAllAuth, TestIdent};
+use libchat::test_support::MemStore;
 use libchat::{ConversationId, Core, IdentityProvider, PayloadOutcome};
 use libchat::{GroupV2Clock, GroupV2Config};
-use shared_traits::IdentId;
+use libchat::{ParticipantId, SignerKey};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
-use components::{EphemeralRegistry, LocalBroadcaster, MemStore};
+use components::{EphemeralRegistry, LocalBroadcaster};
 
 use crate::wakeup::{TestWakeupProvider, TestWakeupService, WakeupRecord};
 
@@ -23,7 +24,14 @@ const PAX: usize = 2;
 const MIRA: usize = 3;
 
 // type ClientType = CoreClient<TestIdent, LocalBroadcaster, EphemeralRegistry, WP, MemStore>;
-type ClientType = Core<(TestIdent, LocalBroadcaster, EphemeralRegistry, WP, MemStore)>;
+type ClientType = Core<(
+    TestIdent,
+    AcceptAllAuth,
+    LocalBroadcaster,
+    EphemeralRegistry,
+    WP,
+    MemStore,
+)>;
 
 #[derive(Debug)]
 pub struct ReceivedMessage<T> {
@@ -33,23 +41,30 @@ pub struct ReceivedMessage<T> {
 
 pub struct TestClient {
     inner: ClientType,
+    account: ParticipantId,
     received_messages: Vec<ReceivedMessage<Vec<u8>>>,
     inbound_errors: Vec<String>,
     tolerate_inbound_errors: bool,
 }
 
 impl TestClient {
-    fn init(client: ClientType) -> Self {
+    fn init(client: ClientType, account: ParticipantId) -> Self {
         Self {
             inner: client,
+            account,
             received_messages: vec![],
             inbound_errors: vec![],
             tolerate_inbound_errors: false,
         }
     }
 
-    pub fn addr(&self) -> IdentId {
-        self.inner.ident_id().clone()
+    pub fn signer_key(&self) -> SignerKey {
+        self.inner.signer().clone()
+    }
+
+    /// The account group creation resolves to this client's signer.
+    pub fn account(&self) -> ParticipantId {
+        self.account.clone()
     }
 
     /// Inbound payloads this client rejected, in arrival order. Only recorded
@@ -69,13 +84,13 @@ impl TestClient {
             let outcome = match self.inner.handle_payload(&data) {
                 Ok(outcome) => outcome,
                 Err(e) if self.tolerate_inbound_errors => {
-                    warn!(id = ?self.ident_id(), error = ?e, "INBOUND ERROR");
+                    warn!(id = ?self.signer(), error = ?e, "INBOUND ERROR");
                     self.inbound_errors.push(format!("{e:?}"));
                     continue;
                 }
-                Err(e) => panic!("{:?} rejected an inbound payload: {e:?}", self.ident_id()),
+                Err(e) => panic!("{:?} rejected an inbound payload: {e:?}", self.signer()),
             };
-            warn!(id= ?self.ident_id(),?outcome, "DRAIN CLIENT");
+            warn!(id= ?self.signer(),?outcome, "DRAIN CLIENT");
             // Copy Convo Messages to received buffer
 
             match &outcome {
@@ -143,13 +158,13 @@ impl DerefMut for TestClient {
 
 #[allow(unused)]
 pub struct Observation {
-    ident: IdentId,
+    ident: SignerKey,
     outcome: PayloadOutcome,
 }
 
 #[allow(unused)]
 pub struct TestHarness<const N: usize> {
-    addresses: HashMap<usize, IdentId>,
+    addresses: HashMap<usize, SignerKey>,
     clients: Vec<TestClient>,
     wakeup_service: WS,
     cb: Box<OnMessageCallback>,
@@ -168,19 +183,28 @@ impl<const N: usize> TestHarness<N> {
         let ds = LocalBroadcaster::new();
         let rs = EphemeralRegistry::new();
         let ws = TestWakeupService::new();
+        let auth = AcceptAllAuth::default();
 
         for i in 0..N {
             let wp = ws.new_provider(i);
             let ident = TestIdent::new(Self::names(i));
 
-            addresses.insert(i, ident.id().clone());
-            let mut core_client =
-                ClientType::new_with_name(ident, ds.clone(), rs.clone(), wp, MemStore::new())
-                    .unwrap();
+            addresses.insert(i, ident.signer_key().clone());
+            auth.register(&ident);
+            let account = ident.participant_id();
+            let mut core_client = ClientType::new_with_name(
+                ident,
+                auth.clone(),
+                ds.clone(),
+                rs.clone(),
+                wp,
+                MemStore::new(),
+            )
+            .unwrap();
             core_client.set_group_v2_clock(GroupV2Clock::Mock(ws.clock()));
             core_client.set_group_v2_config(fast_group_v2_config());
 
-            let client = TestClient::init(core_client);
+            let client = TestClient::init(core_client, account);
 
             clients.push(client);
         }
@@ -260,12 +284,12 @@ impl<const N: usize> TestHarness<N> {
         // Process existing payloads for all clients.
         for client in self.clients.iter_mut() {
             for outcome in client.drain_outcomes() {
-                info!(id = ?client.ident_id(), ?outcome, "Process drain");
+                info!(id = ?client.signer(), ?outcome, "Process drain");
                 self.observed_outcomes.push(Observation {
-                    ident: client.ident_id().clone(),
+                    ident: client.signer().clone(),
                     outcome: outcome.clone(),
                 });
-                info!(id = ?client.ident_id(), ?outcome, "Process drain");
+                info!(id = ?client.signer(), ?outcome, "Process drain");
                 (self.cb)(client, outcome)
             }
         }
@@ -355,11 +379,11 @@ mod tests {
             .try_init();
 
         let mut harness = TestHarness::<2>::new(|client, outcome| {
-            info!( id=?&client.ident_id(), outcome = ?outcome, "Result");
+            info!( id=?&client.signer(), outcome = ?outcome, "Result");
         });
 
         //Create Convo
-        let particpants = &[&harness.raya().addr()];
+        let particpants = &[harness.raya().account()];
         let convo_id = harness
             .saro()
             .create_group_convo(particpants)

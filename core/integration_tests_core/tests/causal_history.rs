@@ -6,9 +6,10 @@
 
 use std::ops::{Deref, DerefMut};
 
-use components::{EphemeralRegistry, LocalBroadcaster, MemStore};
-use integration_tests_core::TestIdent;
-use libchat::{Core, MissingMessage, WakeupService};
+use components::{EphemeralRegistry, LocalBroadcaster};
+use integration_tests_core::{AcceptAllAuth, TestIdent};
+use libchat::test_support::MemStore;
+use libchat::{Core, IdentityProvider, MissingMessage, WakeupService};
 
 #[derive(Debug)]
 struct NoopWakeupService {}
@@ -19,6 +20,7 @@ impl WakeupService for NoopWakeupService {
 struct Client {
     inner: Core<(
         TestIdent,
+        AcceptAllAuth,
         LocalBroadcaster,
         EphemeralRegistry,
         NoopWakeupService,
@@ -30,6 +32,7 @@ impl Client {
     fn init(
         core: Core<(
             TestIdent,
+            AcceptAllAuth,
             LocalBroadcaster,
             EphemeralRegistry,
             NoopWakeupService,
@@ -61,6 +64,7 @@ impl Client {
 impl Deref for Client {
     type Target = Core<(
         TestIdent,
+        AcceptAllAuth,
         LocalBroadcaster,
         EphemeralRegistry,
         NoopWakeupService,
@@ -81,10 +85,13 @@ impl DerefMut for Client {
 fn missing_group_message_is_detected() {
     let ds = LocalBroadcaster::new();
     let rs = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
 
     let saro_ident = TestIdent::new("saro");
+    auth.register(&saro_ident);
     let saro_ctx = Core::new_with_name(
         saro_ident,
+        auth.clone(),
         ds.new_consumer(),
         rs.clone(),
         NoopWakeupService {},
@@ -93,8 +100,11 @@ fn missing_group_message_is_detected() {
     .unwrap();
 
     let raya_ident = TestIdent::new("raya");
+    let raya_account = raya_ident.participant_id();
+    auth.register(&raya_ident);
     let raya_ctx = Core::new_with_name(
         raya_ident,
+        auth,
         ds.clone(),
         rs.clone(),
         NoopWakeupService {},
@@ -106,8 +116,10 @@ fn missing_group_message_is_detected() {
     let mut raya = Client::init(raya_ctx);
 
     // Saro creates a group with Raya.
-    let raya_id = raya.ident_id().clone();
-    let convo_id = saro.create_group_convo_v1(&[&raya_id]).unwrap().to_string();
+    let convo_id = saro
+        .create_group_convo_v1(&[raya_account])
+        .unwrap()
+        .to_string();
 
     // Raya joins (processes the Welcome + commit).
     raya.process_messages();
@@ -135,11 +147,10 @@ fn missing_group_message_is_detected() {
         !missing[0].frontier.message_id().is_empty(),
         "the missing message must be identified"
     );
-    // The causal sender hint carries the sender's identity id ("saro"), not
-    // the signer id the inbox and registry key on.
+    // The hint names the sender by its signer.
     assert_eq!(
-        missing[0].frontier.sender_id(),
-        "saro",
+        missing[0].frontier.sender(),
+        saro.signer(),
         "missing-message sender hint should attribute to Saro"
     );
 

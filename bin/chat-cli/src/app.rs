@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -6,12 +6,30 @@ use anyhow::Result;
 use arboard::Clipboard;
 use crossbeam_channel::Receiver;
 use logos_chat::{
-    AccountDirectory, ChatClient, ConversationClass, ConversationStore, Event, GroupMetadata,
-    RegistrationService, Transport,
+    AccountAddr, AuthService, ChatClient, ConversationClass, ConversationStore, Event,
+    GroupMetadata, RegistrationService, Transport,
 };
+use message_types::ContentId;
 use serde::{Deserialize, Serialize};
 
 use crate::utils::now;
+
+/// One-line snippet of a message body, for the reply preview.
+fn snippet_of(body: &str) -> String {
+    let line = body.lines().next().unwrap_or("");
+    let short: String = line.chars().take(24).collect();
+    if line.chars().count() > 24 {
+        format!("{short}…")
+    } else {
+        short
+    }
+}
+
+/// A reply's display body: the `↩ preview` line above the reply text. The one
+/// place this shape is built, so inbound render and outbound echo match.
+fn reply_body(preview: &str, body: &str) -> String {
+    format!("↩ {preview}\n{body}")
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DisplayMessage {
@@ -39,10 +57,10 @@ impl DisplayMessage {
     }
 }
 
-/// Attribution of a displayed message. `Own` is our own account (any of our
-/// devices); `Foreign` carries the sender's resolved account address, which the
-/// app maps to a display name. (Client resolves credential → account; the app
-/// resolves account → name.)
+/// Attribution of a displayed message. `Own` is our own account (any of its
+/// installations); `Foreign` carries the sender's account address, which the
+/// app maps to a display name. (The client decodes participant → account; the
+/// app resolves account → name.)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MessageOrigin {
     Own,
@@ -74,13 +92,14 @@ pub struct AppState {
     pub active_chat: Option<String>,
 }
 
-pub struct ChatApp<T, R, S>
+pub struct ChatApp<T, R, A, S>
 where
     T: Transport,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
-    pub client: ChatClient<T, R, S>,
+    pub client: ChatClient<T, R, A, S>,
     events: Receiver<Event>,
     pub state: AppState,
     /// Whether the active chat can accept outbound content this session. Mirrors
@@ -95,20 +114,20 @@ where
     state_path: PathBuf,
 }
 
-impl<T, R, S> ChatApp<T, R, S>
+impl<T, R, A, S> ChatApp<T, R, A, S>
 where
     T: Transport,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send,
 {
     pub fn new(
-        client: ChatClient<T, R, S>,
+        client: ChatClient<T, R, A, S>,
         events: Receiver<Event>,
         user_name: &str,
         data_dir: &Path,
     ) -> Result<Self> {
         fs::create_dir_all(data_dir)?;
-
         let state_path = data_dir.join(format!("{user_name}_state.json"));
         let state = Self::load_state(&state_path);
 
@@ -278,25 +297,41 @@ where
             }
             Event::MessageReceived {
                 convo_id,
-                content,
+                content: bytes,
                 sender,
+                message_id,
+                ..
             } => {
                 let chat_id = convo_id.to_string();
                 // The client resolved the credential to an account; classify by it.
-                let origin = match sender.account.as_ref().map(|a| a.as_str()) {
-                    Some(account) if account == self.client.addr() => MessageOrigin::Own,
-                    Some(account) => MessageOrigin::Foreign(account.to_string()),
-                    // Unassociated device — no account claim; fall back to its signer id.
-                    None => MessageOrigin::Foreign(sender.local_identity.as_str().to_string()),
+                let account = sender.account().to_string();
+                let origin = if account == self.client.addr() {
+                    MessageOrigin::Own
+                } else {
+                    MessageOrigin::Foreign(account)
                 };
+                // The client hands us opaque bytes; the content format is ours
+                // to apply. Decoding never fails — every body renders as
+                // something.
+                let decoded = message_types::decode(&bytes);
                 let Some(session) = self.state.chats.get_mut(&chat_id) else {
                     return;
                 };
-                let message = DisplayMessage::new(
-                    false,
-                    String::from_utf8_lossy(&content).into_owned(),
-                    origin,
-                );
+                let mut body = decoded.content.to_string();
+                // Resolve the replied-to message to a preview; the app owns this,
+                // the id is opaque to the core.
+                if let Some(target) = decoded.in_reply_to {
+                    let target = target.as_str();
+                    let preview = session
+                        .messages
+                        .iter()
+                        .find(|m| m.message_id.as_deref() == Some(target))
+                        .map(|m| snippet_of(&m.content))
+                        .unwrap_or_else(|| format!("re: {}", &target[..8.min(target.len())]));
+                    body = reply_body(&preview, &body);
+                }
+                let mut message = DisplayMessage::new(false, body, origin);
+                message.message_id = Some(message_id);
                 session.messages.push(message);
             }
             Event::MessageAcked {
@@ -314,13 +349,8 @@ where
                 else {
                     return; // sent before this session, or not ours
                 };
-                let peer = acked_by.map_or_else(
-                    || "a member".to_string(),
-                    |s| {
-                        let id = s.account.unwrap_or(s.local_identity);
-                        format!("{}…", &id.as_str()[..8.min(id.as_str().len())])
-                    },
-                );
+                let id = acked_by.to_string();
+                let peer = format!("{}…", &id[..8.min(id.len())]);
                 if !message.delivered_to.contains(&peer) {
                     message.delivered_to.push(peer);
                 }
@@ -335,13 +365,8 @@ where
                 };
                 // The hint is not authenticated (see `Event::MessageMissing`),
                 // so name the author loosely rather than as an established fact.
-                let author = sender_hint.map_or_else(
-                    || "a member".to_string(),
-                    |s| {
-                        let id = s.account.unwrap_or(s.local_identity);
-                        format!("{}…", &id.as_str()[..8.min(id.as_str().len())])
-                    },
-                );
+                let id = sender_hint.to_string();
+                let author = format!("{}…", &id[..8.min(id.len())]);
                 self.status = format!(
                     "A message from {author} never arrived in '{}'.",
                     session.display_name()
@@ -352,6 +377,11 @@ where
                 if let Some(session) = self.state.chats.get(&chat_id) {
                     self.status = format!("Membership changed in {}.", session.display_name());
                 }
+                // The commit may be the one that removed us; `is_active` is
+                // otherwise only recomputed on a chat switch.
+                if self.state.active_chat.as_deref() == Some(&chat_id) {
+                    self.is_active = self.client.can_send(&chat_id);
+                }
             }
             Event::InboundError { message } => {
                 self.status = format!("Could not process incoming message: {message}");
@@ -360,7 +390,30 @@ where
         }
     }
 
+    /// Send a plain-text message to the active chat.
     pub fn send_message(&mut self, content: &str) -> Result<()> {
+        let chat_id = self.active_sendable_chat()?;
+        let bytes = message_types::encode_text(content)?;
+        let message_id = self
+            .client
+            .send_message(&chat_id, &bytes)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        self.echo_sent(&chat_id, message_id, content.to_string())
+    }
+
+    /// Reply to `in_reply_to` in the active chat.
+    fn send_reply(&mut self, in_reply_to: &ContentId, content: &str, preview: &str) -> Result<()> {
+        let chat_id = self.active_sendable_chat()?;
+        let bytes = message_types::encode_reply(in_reply_to, content)?;
+        let message_id = self
+            .client
+            .send_message(&chat_id, &bytes)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        self.echo_sent(&chat_id, message_id, reply_body(preview, content))
+    }
+
+    /// The active chat, if there is one and it can still be sent to.
+    fn active_sendable_chat(&self) -> Result<String> {
         let chat_id = self
             .state
             .active_chat
@@ -369,24 +422,21 @@ where
 
         if !self.is_active {
             anyhow::bail!(
-                "This conversation is from a previous session and can't receive messages yet \
-                 — chats don't persist across restart. Start a new one with /dm or /new."
+                "Not an active conversation — it may be a stale one from a previous session, \
+                 or you're no longer a member."
             );
         }
+        Ok(chat_id)
+    }
 
-        let message_id = self
-            .client
-            .send_message(&chat_id, content.as_bytes())
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-
-        if let Some(session) = self.state.chats.get_mut(&chat_id) {
-            let mut message = DisplayMessage::new(true, content.to_string(), MessageOrigin::Own);
-            // Kept so `MessageAcked` can find this message again.
+    /// Put our own message in our own view; the wire carries no copy back.
+    fn echo_sent(&mut self, chat_id: &str, message_id: String, body: String) -> Result<()> {
+        if let Some(session) = self.state.chats.get_mut(chat_id) {
+            let mut message = DisplayMessage::new(true, body, MessageOrigin::Own);
             message.message_id = Some(message_id);
             session.messages.push(message);
         }
         self.save_state()?;
-
         Ok(())
     }
 
@@ -410,7 +460,9 @@ where
                 self.add_system_message("/dm <address> - Start a direct (1:1) chat");
                 self.add_system_message("/new <name> [address...] - Create a group chat");
                 self.add_system_message("/add <address> - Add someone to the active group");
+                self.add_system_message("/remove <address> - Remove someone from the active group");
                 self.add_system_message("/members - List members of the active conversation");
+                self.add_system_message("/reply <text> - Reply to the latest message");
                 self.add_system_message("/nickname <name> - Name the active chat");
                 self.add_system_message("/chats - List all chats");
                 self.add_system_message("/switch <name|id> - Switch active chat");
@@ -503,13 +555,11 @@ where
                 }
                 let already_present = self
                     .client
-                    .group_members(chat_id)
-                    .map(|members| {
-                        members
-                            .iter()
-                            .any(|m| m.account.as_ref().map(|a| a.as_str()) == Some(address))
-                    })
-                    .unwrap_or(false);
+                    .members(chat_id)
+                    .into_iter()
+                    .chain(self.client.pending_members(chat_id))
+                    .flatten()
+                    .any(|m| m.account.to_string() == address);
                 if already_present {
                     return Ok(Some(
                         "That account is already in the group (or its invite is pending)."
@@ -517,10 +567,29 @@ where
                     ));
                 }
                 self.client
-                    .add_group_members(chat_id, &[address])
+                    .add_group_participants(chat_id, &[address])
                     .map_err(|e| anyhow::anyhow!("{e:?}"))?;
                 self.status = "Invite pending — the group will commit it shortly.".to_string();
                 Ok(Some("Invite pending".to_string()))
+            }
+            "/remove" => {
+                let address = args.trim();
+                if address.is_empty() {
+                    return Ok(Some("Usage: /remove <address>".to_string()));
+                }
+                let chat_id = self
+                    .state
+                    .active_chat
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("No active conversation."))?;
+                self.client
+                    .remove_group_participants(&chat_id, &[address])
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                // The group votes on the removal; the member stays on the
+                // roster until the commit ejecting them lands.
+                let msg = "Removal pending — the group will commit it shortly.".to_string();
+                self.status = msg.clone();
+                Ok(Some(msg))
             }
             "/members" => {
                 let chat_id = self
@@ -528,29 +597,71 @@ where
                     .active_chat
                     .clone()
                     .ok_or_else(|| anyhow::anyhow!("No active conversation."))?;
-                let members = self
+                let participants = self
                     .client
-                    .group_members(&chat_id)
+                    .participants(&chat_id)
                     .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                let pending = self
+                    .client
+                    .pending_members(&chat_id)
+                    .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                // One row per account; an account with a committed installation is not
+                // also listed as pending.
+                let joined: BTreeSet<String> =
+                    participants.iter().map(AccountAddr::to_string).collect();
+                let invited: BTreeSet<String> = pending
+                    .iter()
+                    .map(|m| m.account.to_string())
+                    .filter(|account| !joined.contains(account))
+                    .collect();
+                let total = joined.len() + invited.len();
                 let my_addr = self.client.addr().to_string();
-                self.add_system_message(&format!("── Members ({}) ──", members.len()));
-                for m in &members {
-                    let id = m
-                        .account
-                        .as_ref()
-                        .map(|a| a.as_str())
-                        .unwrap_or_else(|| m.local_identity.as_str());
+                self.add_system_message(&format!("── Members ({total}) ──"));
+                let rows = joined
+                    .iter()
+                    .map(|account| (account, false))
+                    .chain(invited.iter().map(|account| (account, true)));
+                for (id, is_pending) in rows {
                     let short = &id[..16.min(id.len())];
                     let mut tags = String::new();
-                    if m.account.as_ref().map(|a| a.as_str()) == Some(my_addr.as_str()) {
+                    if *id == my_addr {
                         tags.push_str(" (you)");
                     }
-                    if m.pending {
+                    if is_pending {
                         tags.push_str(" (pending)");
                     }
                     self.add_system_message(&format!("  • {short}…{tags}"));
                 }
-                Ok(Some(format!("{} member(s)", members.len())))
+                Ok(Some(format!("{total} member(s)")))
+            }
+            "/reply" => {
+                let text = args.trim();
+                if text.is_empty() {
+                    return Ok(Some("Usage: /reply <text>".to_string()));
+                }
+                let chat_id = self
+                    .state
+                    .active_chat
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("No active chat. Use /dm or /new first."))?;
+                // Reply to the most recent message with an id — a TUI has no
+                // cursor to pick another.
+                let target = self
+                    .state
+                    .chats
+                    .get(&chat_id)
+                    .and_then(|s| s.messages.iter().rev().find(|m| m.message_id.is_some()))
+                    .map(|m| {
+                        (
+                            ContentId::new(m.message_id.clone().expect("filtered on Some")),
+                            snippet_of(&m.content),
+                        )
+                    });
+                let Some((target, preview)) = target else {
+                    return Ok(Some("Nothing to reply to yet.".to_string()));
+                };
+                self.send_reply(&target, text, &preview)?;
+                Ok(Some("Reply sent".to_string()))
             }
             "/nickname" => {
                 if args.is_empty() {

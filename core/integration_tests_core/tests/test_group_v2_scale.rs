@@ -42,7 +42,7 @@
 //!   it just belongs to another branch of the group.
 
 use integration_tests_core::TestHarness;
-use shared_traits::IdentId;
+use libchat::SignerKey;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
@@ -77,13 +77,18 @@ fn init_tracing() {
         .try_init();
 }
 
-/// The members each client reports, sorted, `None` while it has not joined.
+/// The committed members each client reports, sorted, `None` while it has not
+/// joined.
 fn rosters<const N: usize>(h: &mut TestHarness<N>, convo: &str) -> Vec<Option<Vec<Vec<u8>>>> {
     (0..N)
         .map(|i| {
-            h.client_mut(i).group_members(convo).ok().map(|mut m| {
-                m.sort();
-                m
+            h.client_mut(i).group_signers(convo).ok().map(|members| {
+                let mut members: Vec<Vec<u8>> = members
+                    .iter()
+                    .map(|m| m.participant_id().as_bytes().to_vec())
+                    .collect();
+                members.sort();
+                members
             })
         })
         .collect()
@@ -131,13 +136,13 @@ fn settle<const N: usize>(
 fn add_members<const N: usize>(
     h: &mut TestHarness<N>,
     convo: &str,
-    invited: &[&IdentId],
+    invited: &[SignerKey],
 ) -> Result<(), String> {
     let mut elapsed = Duration::ZERO;
     let budget = settle_budget();
     let mut refusal = String::new();
     while elapsed < budget {
-        match h.client_mut(0).group_add_member(convo, invited) {
+        match h.client_mut(0).group_add_signers(convo, invited) {
             Ok(()) => return Ok(()),
             Err(e) => refusal = format!("{e:?}"),
         }
@@ -231,7 +236,7 @@ fn report<const N: usize>(h: &mut TestHarness<N>, convo: &str) -> String {
     let distinct: BTreeSet<_> = rosters.into_iter().flatten().collect();
     let pending = h
         .client_mut(0)
-        .group_pending_members(convo)
+        .group_pending_signers(convo)
         .map_or("?".to_string(), |p| p.len().to_string());
     let rejections: usize = (0..N).map(|i| h.client(i).inbound_errors().len()).sum();
     let first = (0..N)
@@ -265,10 +270,9 @@ fn run<const N: usize>(batch: usize) {
     let mut joined = 1;
     while joined < N {
         let upto = (joined + batch).min(N);
-        let addresses: Vec<IdentId> = (joined..upto)
-            .map(|i| harness.client_mut(i).addr())
+        let invited: Vec<SignerKey> = (joined..upto)
+            .map(|i| harness.client_mut(i).signer_key())
             .collect();
-        let invited: Vec<&IdentId> = addresses.iter().collect();
         if let Err(refusal) = add_members(&mut harness, &convo, &invited) {
             panic!(
                 "adding members {joined}..{upto} kept being refused: {refusal} :: {}",

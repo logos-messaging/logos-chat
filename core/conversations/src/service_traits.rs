@@ -1,13 +1,26 @@
 /// Service traits define the functionality which must be externally supplied by
 /// platform clients. Platforms can alter the behaviour of the chat core by supplying
 /// different implementations.
-use shared_traits::IdentityProvider;
 use std::{
     fmt::{Debug, Display},
     time::Duration,
 };
 
+use crypto::Ed25519Signature;
+
+use crate::identity::{ParticipantId, SignerKey, SignerRef};
 use crate::{ConversationId, types::AddressedEnvelope};
+
+/// What chat needs from whatever holds this installation's own identity.
+pub trait IdentityProvider {
+    fn signer_key(&self) -> SignerRef<'_>;
+    fn participant_id(&self) -> ParticipantId;
+
+    // A display name is not guaranteed to be consistent. Use it only to give
+    // the account a more readable identifier.
+    fn display_name(&self) -> String;
+    fn sign(&self, payload: &[u8]) -> Ed25519Signature;
+}
 
 /// A Delivery service is responsible for payload transport.
 /// This interface allows Conversations to send payloads on the wire as well as
@@ -22,7 +35,7 @@ pub trait DeliveryService: Debug {
 /// Manages key bundle storage for MLS group creation/addition while contacts are
 /// offline.
 ///
-/// Implement this to provide a contact registry — ach participant publishes their key package
+/// Implement this to provide a contact registry — each participant publishes their key package
 /// on registration; others fetch it to initiate a conversation.
 ///
 /// `register` receives an [`IdentityProvider`] (not just a name) so
@@ -55,4 +68,24 @@ impl<T: RegistrationService> KeyPackageProvider for T {
 
 pub trait WakeupService: Debug {
     fn wakeup_in(&mut self, duration: Duration, convo_id: ConversationId);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthResult {
+    Valid,
+    Revoked,
+    Invalid,
+}
+
+/// Checks other participants' identities.
+pub trait AuthService: Debug {
+    type Error: Display + Debug;
+    fn validate_signer(
+        &self,
+        signer_key: SignerKey,
+        participant_id: ParticipantId,
+    ) -> Result<AuthResult, Self::Error>;
+
+    fn signers_for_participant(&self, ident: &ParticipantId)
+    -> Result<Vec<SignerKey>, Self::Error>;
 }

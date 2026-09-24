@@ -3,6 +3,24 @@
 version = 4
 
 [[package]]
+name = "account"
+version = "0.1.0"
+dependencies = [
+ "account-log",
+ "thiserror",
+]
+
+[[package]]
+name = "account-log"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "hex",
+ "rand_core 0.6.4",
+ "thiserror",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1403,8 +1421,8 @@ dependencies = [
  "clap",
  "crossbeam-channel",
  "crossterm 0.29.0",
- "logos-account",
  "logos-chat",
+ "message-types",
  "ratatui",
  "serde",
  "serde_json",
@@ -1425,8 +1443,8 @@ dependencies = [
 name = "chat-sqlite"
 version = "0.1.0"
 dependencies = [
+ "libchat",
  "rusqlite",
- "storage",
  "tempfile",
 ]
 
@@ -1440,6 +1458,33 @@ dependencies = [
  "num-traits",
  "serde",
  "windows-link",
+]
+
+[[package]]
+name = "ciborium"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42e69ffd6f0917f5c029256a24d0161db17cea3997d185db0d35926308770f0e"
+dependencies = [
+ "ciborium-io",
+ "ciborium-ll",
+ "serde",
+]
+
+[[package]]
+name = "ciborium-io"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05afea1e0a06c9be33d539b876f1ce3692f4afea2cb41f740e7743225ed1c757"
+
+[[package]]
+name = "ciborium-ll"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57663b653d948a338bfb3eeba9bb2fd5fcfaecb9e199e87e1eda4d9e8b240fd9"
+dependencies = [
+ "ciborium-io",
+ "half",
 ]
 
 [[package]]
@@ -1545,17 +1590,17 @@ dependencies = [
 name = "components"
 version = "0.1.0"
 dependencies = [
+ "account",
+ "account-log",
  "base64",
  "chat-proto",
  "crossbeam-channel",
  "crypto",
  "hex",
  "libchat",
- "logos-account",
  "prost",
  "reqwest 0.12.28",
  "serde",
- "storage",
  "thiserror",
  "tracing",
 ]
@@ -3126,9 +3171,8 @@ dependencies = [
  "chat-sqlite",
  "components",
  "crypto",
+ "hex",
  "libchat",
- "shared-traits",
- "storage",
  "tempfile",
  "tracing",
  "tracing-subscriber",
@@ -3325,8 +3369,6 @@ dependencies = [
  "base64",
  "blake2",
  "chat-proto",
- "chat-sqlite",
- "components",
  "crypto",
  "de-mls",
  "hashgraph-like-consensus",
@@ -3339,8 +3381,6 @@ dependencies = [
  "rand 0.9.4",
  "rand_core 0.6.4",
  "serde",
- "shared-traits",
- "storage",
  "tempfile",
  "thiserror",
  "tracing",
@@ -3668,24 +3708,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
-name = "logos-account"
-version = "0.1.0"
-dependencies = [
- "crypto",
- "hex",
- "shared-traits",
- "thiserror",
-]
-
-[[package]]
 name = "logos-chat"
 version = "0.1.0"
 dependencies = [
+ "account",
  "components",
  "crossbeam-channel",
  "embedded-logos-delivery",
  "libchat",
- "logos-account",
  "logos-generic-chat",
 ]
 
@@ -3705,16 +3735,15 @@ dependencies = [
 name = "logos-generic-chat"
 version = "0.1.0"
 dependencies = [
+ "account",
  "chat-sqlite",
  "components",
  "crossbeam-channel",
  "crypto",
  "hex",
+ "integration_tests_core",
  "libchat",
- "logos-account",
  "parking_lot",
- "shared-traits",
- "storage",
  "tempfile",
  "thiserror",
  "tracing",
@@ -3769,6 +3798,16 @@ name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
+
+[[package]]
+name = "message-types"
+version = "0.1.0"
+dependencies = [
+ "ciborium",
+ "serde",
+ "serde_bytes",
+ "thiserror",
+]
 
 [[package]]
 name = "miniz_oxide"
@@ -5525,13 +5564,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "shared-traits"
-version = "0.1.0"
-dependencies = [
- "crypto",
-]
-
-[[package]]
 name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5646,13 +5678,6 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
-
-[[package]]
-name = "storage"
-version = "0.1.0"
-dependencies = [
- "thiserror",
-]
 
 [[package]]
 name = "strsim"

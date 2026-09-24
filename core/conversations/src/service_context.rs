@@ -1,33 +1,35 @@
 //! Bundles the services a conversation operation needs into one [`ServiceContext`].
 
-use storage::ConversationStore;
-
 use crate::IdentityProvider;
 use crate::causal_history::CausalHistoryStore;
 use crate::conversation::GroupV2Clock;
 use crate::inbox_v2::{MlsEphemeralPqProvider, MlsIdentityProvider};
+use crate::service_traits::AuthService;
 use crate::service_traits::WakeupService;
-use crate::{DeliveryService, RegistrationService};
+use crate::{ConversationStore, DeliveryService, RegistrationService};
 
 /// Bundles the external service types (`DS`, `RS`, `CS`) behind one `S`. The
 /// `(DS, RS, CS)` tuple impl lets them still be supplied separately.
 pub trait ExternalServices {
     type IP: IdentityProvider;
+    type AS: AuthService;
     type DS: DeliveryService;
     type RS: RegistrationService;
     type WS: WakeupService;
     type CS: ConversationStore;
 }
 
-impl<IP, DS, RS, WS, CS> ExternalServices for (IP, DS, RS, WS, CS)
+impl<IP, AS, DS, RS, WS, CS> ExternalServices for (IP, AS, DS, RS, WS, CS)
 where
     IP: IdentityProvider,
+    AS: AuthService,
     DS: DeliveryService,
     RS: RegistrationService,
     WS: WakeupService,
     CS: ConversationStore,
 {
     type IP = IP;
+    type AS = AS;
     type DS = DS;
     type RS = RS;
     type WS = WS;
@@ -40,6 +42,7 @@ pub(crate) struct ServiceContext<S: ExternalServices> {
     pub(crate) registry: S::RS,
     pub(crate) store: S::CS,
     pub(crate) mls_identity: MlsIdentityProvider<S::IP>,
+    pub(crate) auth: S::AS,
     pub(crate) mls_provider: MlsEphemeralPqProvider,
     pub(crate) causal: CausalHistoryStore,
     pub(crate) wakeup_service: S::WS,

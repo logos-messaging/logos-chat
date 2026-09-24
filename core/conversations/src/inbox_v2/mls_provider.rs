@@ -1,10 +1,10 @@
+use crate::identity::SignerRef;
 use openmls::framing::MlsMessageOut;
 use openmls_libcrux_crypto::CryptoProvider as LibcruxCryptoProvider;
 use openmls_memory_storage::MemoryStorage;
 use openmls_traits::OpenMlsProvider;
 use openmls_traits::types::CryptoError;
 use prost::Message;
-use shared_traits::IdentIdRef;
 
 use crate::{ChatError, DeliveryService};
 
@@ -32,7 +32,7 @@ impl MlsProvider for MlsEphemeralPqProvider {
     fn invite_user<DS: DeliveryService>(
         &self,
         ds: &mut DS,
-        ident_id: IdentIdRef,
+        signer: SignerRef,
         welcome: &MlsMessageOut,
     ) -> Result<(), ChatError> {
         let invite = GroupV1HeavyInvite {
@@ -44,13 +44,13 @@ impl MlsProvider for MlsEphemeralPqProvider {
         };
 
         let envelope = EnvelopeV1 {
-            conversation_hint: conversation_id_for(ident_id),
+            conversation_hint: conversation_id_for(signer),
             salt: 0,
             payload: frame.encode_to_vec().into(),
         };
 
         let outbound_msg = AddressedEnvelope {
-            delivery_address: delivery_address_for(ident_id),
+            delivery_address: delivery_address_for(signer),
             data: envelope.encode_to_vec(),
         };
 

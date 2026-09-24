@@ -8,13 +8,14 @@ use chat_proto::logoschat::reliability::ReliablePayload;
 use openmls::prelude::tls_codec::Deserialize;
 use openmls::prelude::*;
 use prost::Message as _;
-use shared_traits::IdentIdRef;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use tracing::debug;
 
 use crate::conversation::{ConversationIdRef, MessageId};
+use crate::identity::{Signer, SignerKey, SignerRef};
 use crate::inbox_v2::MlsProvider;
 use crate::service_context::{ExternalServices, ServiceContext};
+use crate::service_traits::AuthService;
 
 use crate::types::ConvoMetadata;
 use crate::utils::{blake2b_hex, hash_size};
@@ -142,12 +143,13 @@ impl GroupV1Convo {
     /// concern, above the core.
     fn key_package_for_signer(
         &self,
-        signer: IdentIdRef,
+        signer: SignerRef,
         provider: &impl MlsProvider,
         registry: &impl KeyPackageProvider,
+        auth: &impl AuthService,
     ) -> Result<KeyPackage, ChatError> {
         let retrieved = registry
-            .retrieve(signer.as_str())
+            .retrieve(&signer.to_string())
             .map_err(|e| ChatError::Generic(e.to_string()))?;
         let Some(keypkg_bytes) = retrieved else {
             return Err(ChatError::Protocol(format!(
@@ -164,12 +166,21 @@ impl GroupV1Convo {
         // registry cannot insert an attacker's leaf under a victim's identity
         // (confidentiality break + sender-attribution spoof). Bind to the key, not the
         // spoofable credential bytes.
-        let leaf_key = hex::encode(keypkg.leaf_node().signature_key().as_slice());
-        if leaf_key != signer.as_str() {
+        let leaf_key = keypkg.leaf_node().signature_key();
+        if leaf_key.as_slice() != signer.as_bytes() {
             return Err(ChatError::Protocol(format!(
-                "keypackage for signer {signer} is bound to a different signing key ({leaf_key})"
+                "keypackage for signer {signer} is bound to a different signing key ({})",
+                hex::encode(leaf_key.as_slice())
             )));
         }
+
+        // Ensure that a Keypackage contains a valid member
+        Signer::from_leaf(
+            leaf_key.as_slice(),
+            keypkg.leaf_node().credential().serialized_content(),
+        )
+        .require_valid(auth)
+        .ok_or(ChatError::BadBundleValue("invalid credential".into()))?;
         Ok(keypkg)
     }
 
@@ -178,8 +189,9 @@ impl GroupV1Convo {
         content: &[u8],
         cx: &mut ServiceContext<S>,
     ) -> Result<MessageId, ChatError> {
-        let sender_id = cx.mls_identity.id().as_str();
-        let reliable = cx.causal.on_send(&self.convo_id, sender_id, content);
+        let reliable = cx
+            .causal
+            .on_send(&self.convo_id, cx.mls_identity.signer_key(), content);
         let wire = reliable.encode_to_vec();
 
         let mls_message_out = self
@@ -253,6 +265,10 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
             }
         };
 
+        if !self.mls_group.is_active() {
+            return Ok(ConvoOutcome::empty(self.id().to_string()));
+        }
+
         // Bail early if we sent this message
         let msg_hash = blake2b_hex::<hash_size::MessageId>(&[bytes.as_ref()]);
         if self.outbound_msgs.contains(&msg_hash) {
@@ -277,16 +293,26 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
             .process_message(&cx.mls_provider, protocol_message)
             .map_err(ChatError::generic)?;
 
-        let cred_bytes = processed.credential().serialized_content().to_vec();
-
+        // Resolved before `into_content` consumes the message. An application
+        // message does not change the tree, so its sender's leaf is current.
+        let sender = match processed.sender() {
+            Sender::Member(index) => self.mls_group.member_at(*index),
+            _ => None,
+        };
         let content = match processed.into_content() {
             ProcessedMessageContent::ApplicationMessage(msg) => {
                 let reliable = ReliablePayload::decode(msg.into_bytes().as_slice())?;
                 cx.causal.on_receive(&self.convo_id, &reliable);
-                Some(Content {
-                    bytes: reliable.content.to_vec(),
-                    encoded_credential: cred_bytes,
-                })
+                sender
+                    .map(|leaf| {
+                        Signer::from_leaf(&leaf.signature_key, leaf.credential.serialized_content())
+                    })
+                    .and_then(|member| member.require_valid(&cx.auth))
+                    .map(|sender| Content {
+                        bytes: reliable.content.to_vec(),
+                        sender,
+                        message_id: reliable.message_id.clone(),
+                    })
             }
             ProcessedMessageContent::StagedCommitMessage(commit) => {
                 self.mls_group
@@ -310,11 +336,11 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
         Ok(ConvoOutcome::empty(self.id().to_string()))
     }
 
-    fn members(&self) -> Result<Vec<Vec<u8>>, ChatError> {
+    fn signers(&self) -> Result<Vec<Signer>, ChatError> {
         Ok(self
             .mls_group
             .members()
-            .map(|m| m.credential.serialized_content().to_vec())
+            .map(|m| Signer::from_leaf(&m.signature_key, m.credential.serialized_content()))
             .collect())
     }
 
@@ -330,10 +356,10 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
     //   commit      — the Commit message Alice broadcasts to all members
     //   welcome     — the Welcome message sent privately to each new joiner
     //   _group_info — used for external joins; ignore for now
-    fn add_member(
+    fn add_signer(
         &mut self,
         cx: &mut ServiceContext<S>,
-        members: &[IdentIdRef],
+        members: &[SignerKey],
     ) -> Result<(), ChatError> {
         if members.len() > 50 {
             // This is a temporary limit that originates from the De-MLS epoch time.
@@ -347,7 +373,12 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
         // account's directory bundle lists.
         let mut keypkgs = Vec::with_capacity(members.len());
         for ident in members {
-            keypkgs.push(self.key_package_for_signer(ident, &cx.mls_provider, &cx.registry)?);
+            keypkgs.push(self.key_package_for_signer(
+                ident,
+                &cx.mls_provider,
+                &cx.registry,
+                &cx.auth,
+            )?);
         }
 
         let (commit, welcome, _group_info) = self
@@ -364,17 +395,57 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
             .unwrap();
 
         // TODO: (P3) Evaluate privacy/performance implications of an aggregated Welcome for multiple users
-        for signer_id in members {
-            cx.mls_provider
-                .invite_user(&mut cx.ds, signer_id, &welcome)?;
+        for signer in members {
+            cx.mls_provider.invite_user(&mut cx.ds, signer, &welcome)?;
         }
 
         self.send_payload(cx, commit.to_bytes()?)
     }
 
+    /// Commits the removal in-call, the mirror of `add_member`: the named
+    /// members are off the roster by the time this returns.
+    fn remove_signer(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        members: &[SignerRef],
+    ) -> Result<(), ChatError> {
+        // A signer id is the hex of the member's MLS signature key; MLS names a
+        // member to remove by the leaf it occupies.
+        // let wanted: HashSet<SignerKey> =
+        let wanted: HashSet<SignerKey> = members.iter().map(|&m| m.clone()).collect();
+        let leaves: Vec<LeafNodeIndex> = self
+            .mls_group
+            .members()
+            .filter(|m| wanted.contains(&SignerKey::from(m.signature_key.as_slice())))
+            .map(|m| m.index)
+            .collect();
+
+        // MLS does not let a member commit its own removal. Checked before the
+        // empty case so naming yourself is reported as such either way.
+        if leaves.contains(&self.mls_group.own_leaf_index()) {
+            return Err(ChatError::CannotRemoveSelf);
+        }
+        if leaves.is_empty() {
+            return Err(ChatError::NotAGroupMember);
+        }
+
+        let (commit, _welcome, _group_info) = self
+            .mls_group
+            .remove_members(&cx.mls_provider, &cx.mls_identity, &leaves)
+            .map_err(ChatError::generic)?;
+
+        self.mls_group
+            .merge_pending_commit(&cx.mls_provider)
+            .map_err(ChatError::generic)?;
+
+        // The commit was sealed at the pre-removal epoch, so the members it
+        // ejects can still read it and learn they are out.
+        self.send_payload(cx, commit.to_bytes()?)
+    }
+
     /// Always empty: `add_member` merges its own commit, so an added member is
     /// on the roster by the time the call returns.
-    fn pending_members(&self) -> Result<Vec<Vec<u8>>, ChatError> {
+    fn pending_signers(&self) -> Result<Vec<Signer>, ChatError> {
         Ok(Vec::new())
     }
 

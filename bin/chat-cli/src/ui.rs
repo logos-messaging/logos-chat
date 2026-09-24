@@ -16,7 +16,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
 };
 
-use logos_chat::{AccountDirectory, ConversationStore, RegistrationService, Transport};
+use logos_chat::{AuthService, ConversationStore, RegistrationService, Transport};
 
 use crate::app::ChatApp;
 
@@ -38,10 +38,11 @@ pub fn restore() -> io::Result<()> {
 }
 
 /// Draw the UI.
-pub fn draw<D, R, S>(frame: &mut Frame, app: &ChatApp<D, R, S>)
+pub fn draw<D, R, A, S>(frame: &mut Frame, app: &ChatApp<D, R, A, S>)
 where
     D: Transport + Send + 'static,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
     let chunks = Layout::default()
@@ -60,10 +61,11 @@ where
     draw_status(frame, app, chunks[3]);
 }
 
-fn draw_header<D, R, S>(frame: &mut Frame, app: &ChatApp<D, R, S>, area: Rect)
+fn draw_header<D, R, A, S>(frame: &mut Frame, app: &ChatApp<D, R, A, S>, area: Rect)
 where
     D: Transport + Send + 'static,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
     let title = match app.current_session() {
@@ -89,10 +91,24 @@ where
     frame.render_widget(header, area);
 }
 
-fn draw_messages<D, R, S>(frame: &mut Frame, app: &ChatApp<D, R, S>, area: Rect)
+/// Break `line` into pieces of at most `width` chars, never splitting a
+/// multi-byte char. An empty line yields one empty piece so it still takes a row.
+fn wrap_line(line: &str, width: usize) -> Vec<String> {
+    if line.is_empty() {
+        return vec![String::new()];
+    }
+    let chars: Vec<char> = line.chars().collect();
+    chars
+        .chunks(width.max(1))
+        .map(|piece| piece.iter().collect())
+        .collect()
+}
+
+fn draw_messages<D, R, A, S>(frame: &mut Frame, app: &ChatApp<D, R, A, S>, area: Rect)
 where
     D: Transport + Send + 'static,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
     let remote_name = app
@@ -130,45 +146,26 @@ where
             let prefix_str = format!("{}: ", prefix);
             let prefix_len = prefix_str.len();
 
-            // Split content into lines that fit within inner_width.
-            let content = &msg.content;
-            if content.is_empty() {
-                return vec![ListItem::new(Line::from(vec![Span::styled(
-                    prefix_str,
-                    style.add_modifier(Modifier::BOLD),
-                )]))];
-            }
-
+            // Honour embedded newlines (a reply's `↩ preview` sits on its own
+            // line), wrapping each to width. Prefix leads the first line; the
+            // rest are indented under it.
             let mut items = Vec::new();
-            let first_line_width = inner_width.saturating_sub(prefix_len).max(1);
-
-            // First line includes the prefix.
-            let (first_chunk, rest): (&str, &str) = if content.len() <= first_line_width {
-                (content.as_str(), "")
-            } else {
-                content.split_at(first_line_width)
-            };
-
-            items.push(ListItem::new(Line::from(vec![
-                Span::styled(prefix_str, style.add_modifier(Modifier::BOLD)),
-                Span::raw(first_chunk),
-            ])));
-
-            // Continuation lines are indented to align with content.
+            let content_width = inner_width.saturating_sub(prefix_len).max(1);
             let indent = " ".repeat(prefix_len);
-            let mut remaining: &str = rest;
-            while !remaining.is_empty() {
-                let chunk_width = inner_width.saturating_sub(prefix_len).max(1);
-                let (chunk, tail) = if remaining.len() <= chunk_width {
-                    (remaining, "")
-                } else {
-                    remaining.split_at(chunk_width)
-                };
-                items.push(ListItem::new(Line::from(vec![
-                    Span::raw(indent.clone()),
-                    Span::raw(chunk),
-                ])));
-                remaining = tail;
+            let mut first = true;
+            for logical_line in msg.content.split('\n') {
+                for piece in wrap_line(logical_line, content_width) {
+                    let line = if first {
+                        first = false;
+                        Line::from(vec![
+                            Span::styled(prefix_str.clone(), style.add_modifier(Modifier::BOLD)),
+                            Span::raw(piece),
+                        ])
+                    } else {
+                        Line::from(vec![Span::raw(indent.clone()), Span::raw(piece)])
+                    };
+                    items.push(ListItem::new(line));
+                }
             }
 
             // Delivery receipts for our own sends: the peers whose later
@@ -206,10 +203,11 @@ where
     frame.render_stateful_widget(messages_widget, area, &mut list_state);
 }
 
-fn draw_input<D, R, S>(frame: &mut Frame, app: &ChatApp<D, R, S>, area: Rect)
+fn draw_input<D, R, A, S>(frame: &mut Frame, app: &ChatApp<D, R, A, S>, area: Rect)
 where
     D: Transport + Send + 'static,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
     // Inner width: area minus borders (2).
@@ -238,10 +236,11 @@ where
     frame.set_cursor_position((cursor_x, area.y + 1));
 }
 
-fn draw_status<D, R, S>(frame: &mut Frame, app: &ChatApp<D, R, S>, area: Rect)
+fn draw_status<D, R, A, S>(frame: &mut Frame, app: &ChatApp<D, R, A, S>, area: Rect)
 where
     D: Transport + Send + 'static,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
     let status = Paragraph::new(app.status.as_str())
@@ -253,10 +252,11 @@ where
 }
 
 /// Handle keyboard events.
-pub fn handle_events<D, R, S>(app: &mut ChatApp<D, R, S>) -> io::Result<bool>
+pub fn handle_events<D, R, A, S>(app: &mut ChatApp<D, R, A, S>) -> io::Result<bool>
 where
     D: Transport + Send + 'static,
-    R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    R: RegistrationService + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
     // Poll for events with a short timeout to allow checking incoming messages
