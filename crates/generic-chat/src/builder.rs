@@ -1,7 +1,7 @@
 use chat_sqlite::{SqliteStore, StorageConfig};
 use components::EphemeralRegistry;
 use crossbeam_channel::Receiver;
-use libchat::{ChatError, ConversationStore, GroupV2Config, RegistrationService};
+use libchat::{AuthService, ChatError, ConversationStore, GroupV2Config, RegistrationService};
 use logos_account_legacy::AccountDirectory;
 
 use crate::Transport;
@@ -14,11 +14,12 @@ use crate::event::Event;
 /// component will be filled in with a sensible default when `build()` is called.
 pub struct Unset;
 
-pub struct ChatClientBuilder<I = Unset, T = Unset, R = Unset, S = Unset> {
+pub struct ChatClientBuilder<I = Unset, T = Unset, R = Unset, A = Unset, S = Unset> {
     ident: I,
     account: String,
     transport: T,
     registration: R,
+    auth: A,
     storage: S,
     group_v2: Option<GroupV2Config>,
 }
@@ -35,58 +36,81 @@ impl ChatClientBuilder {
             account: account.into(),
             transport: Unset,
             registration: Unset,
+            auth: Unset,
             storage: Unset,
             group_v2: None,
         }
     }
 }
 
-impl<I, T, R, S> ChatClientBuilder<I, T, R, S> {
-    pub fn ident(self, ident: DelegateSigner) -> ChatClientBuilder<DelegateSigner, T, R, S> {
+impl<I, T, R, A, S> ChatClientBuilder<I, T, R, A, S> {
+    pub fn ident(self, ident: DelegateSigner) -> ChatClientBuilder<DelegateSigner, T, R, A, S> {
         ChatClientBuilder {
             ident,
             account: self.account,
             transport: self.transport,
             registration: self.registration,
+            auth: self.auth,
             storage: self.storage,
             group_v2: self.group_v2,
         }
     }
 
-    pub fn transport<NT>(self, transport: NT) -> ChatClientBuilder<I, NT, R, S> {
+    pub fn transport<NT>(self, transport: NT) -> ChatClientBuilder<I, NT, R, A, S> {
         ChatClientBuilder {
             ident: self.ident,
             account: self.account,
             transport,
             registration: self.registration,
+            auth: self.auth,
             storage: self.storage,
             group_v2: self.group_v2,
         }
     }
 
-    pub fn registration<NR>(self, registration: NR) -> ChatClientBuilder<I, T, NR, S> {
+    pub fn registration<NR>(self, registration: NR) -> ChatClientBuilder<I, T, NR, A, S> {
         ChatClientBuilder {
             ident: self.ident,
             account: self.account,
             transport: self.transport,
             registration,
+            auth: self.auth,
             storage: self.storage,
             group_v2: self.group_v2,
         }
     }
 
-    pub fn storage<NS>(self, storage: NS) -> ChatClientBuilder<I, T, R, NS> {
+    /// The service that checks whether a signer really acts for the
+    /// participant it claims. Required: `build()` is not available until it is
+    /// supplied, so no client runs without an answer to that question.
+    pub fn auth<NA>(self, auth: NA) -> ChatClientBuilder<I, T, R, NA, S> {
         ChatClientBuilder {
             ident: self.ident,
             account: self.account,
             transport: self.transport,
             registration: self.registration,
+            auth,
+            storage: self.storage,
+            group_v2: self.group_v2,
+        }
+    }
+
+    pub fn storage<NS>(self, storage: NS) -> ChatClientBuilder<I, T, R, A, NS> {
+        ChatClientBuilder {
+            ident: self.ident,
+            account: self.account,
+            transport: self.transport,
+            registration: self.registration,
+            auth: self.auth,
             storage,
             group_v2: self.group_v2,
         }
     }
 
-    pub fn storage_config(self, config: StorageConfig) -> ChatClientBuilder<I, T, R, SqliteStore> {
+    pub fn storage_config(
+        self,
+        config: StorageConfig,
+    ) -> ChatClientBuilder<I, T, R, A, SqliteStore> {
         let storage = SqliteStore::new(config)
             .map_err(ChatError::from)
             .expect("Storage config file should be valid");
@@ -96,6 +120,7 @@ impl<I, T, R, S> ChatClientBuilder<I, T, R, S> {
             account: self.account,
             transport: self.transport,
             registration: self.registration,
+            auth: self.auth,
             storage,
             group_v2: self.group_v2,
         }
@@ -111,19 +136,21 @@ impl<I, T, R, S> ChatClientBuilder<I, T, R, S> {
     }
 }
 
-type Built<T, R, S> = Result<(ChatClient<T, R, S>, Receiver<Event>), ClientError>;
+type Built<T, R, A, S> = Result<(ChatClient<T, R, A, S>, Receiver<Event>), ClientError>;
 
 // All four explicitly provided.
-impl<T, R, S> ChatClientBuilder<DelegateSigner, T, R, S>
+impl<T, R, A, S> ChatClientBuilder<DelegateSigner, T, R, A, S>
 where
     T: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
-    pub fn build(self) -> Built<T, R, S> {
+    pub fn build(self) -> Built<T, R, A, S> {
         ChatClient::new(
             self.ident,
             self.account,
+            self.auth,
             self.transport,
             self.registration,
             self.storage,
@@ -133,11 +160,14 @@ where
 }
 
 // Transport only; I, R, S all default.
-impl<T: Transport + Send + 'static> ChatClientBuilder<Unset, T, Unset, Unset> {
-    pub fn build(self) -> Built<T, EphemeralRegistry, SqliteStore> {
+impl<T: Transport + Send + 'static, A: AuthService + Send + 'static>
+    ChatClientBuilder<Unset, T, Unset, A, Unset>
+{
+    pub fn build(self) -> Built<T, EphemeralRegistry, A, SqliteStore> {
         ChatClient::new(
             DelegateSigner::random(),
             self.account,
+            self.auth,
             self.transport,
             EphemeralRegistry::new(),
             SqliteStore::in_memory(),
@@ -147,14 +177,16 @@ impl<T: Transport + Send + 'static> ChatClientBuilder<Unset, T, Unset, Unset> {
 }
 
 // I and T; R and S default.
-impl<T> ChatClientBuilder<DelegateSigner, T, Unset, Unset>
+impl<T, A> ChatClientBuilder<DelegateSigner, T, Unset, A, Unset>
 where
     T: Transport + Send + 'static,
+    A: AuthService + Send + 'static,
 {
-    pub fn build(self) -> Built<T, EphemeralRegistry, SqliteStore> {
+    pub fn build(self) -> Built<T, EphemeralRegistry, A, SqliteStore> {
         ChatClient::new(
             self.ident,
             self.account,
+            self.auth,
             self.transport,
             EphemeralRegistry::new(),
             SqliteStore::in_memory(),
@@ -164,15 +196,17 @@ where
 }
 
 // T and R; I and S default.
-impl<T, R> ChatClientBuilder<Unset, T, R, Unset>
+impl<T, R, A> ChatClientBuilder<Unset, T, R, A, Unset>
 where
     T: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
 {
-    pub fn build(self) -> Built<T, R, SqliteStore> {
+    pub fn build(self) -> Built<T, R, A, SqliteStore> {
         ChatClient::new(
             DelegateSigner::random(),
             self.account,
+            self.auth,
             self.transport,
             self.registration,
             SqliteStore::in_memory(),
@@ -182,15 +216,17 @@ where
 }
 
 // T and S; I and R default.
-impl<T, S> ChatClientBuilder<Unset, T, Unset, S>
+impl<T, A, S> ChatClientBuilder<Unset, T, Unset, A, S>
 where
     T: Transport + Send + 'static,
     S: ConversationStore + Send + 'static,
+    A: AuthService + Send + 'static,
 {
-    pub fn build(self) -> Built<T, EphemeralRegistry, S> {
+    pub fn build(self) -> Built<T, EphemeralRegistry, A, S> {
         ChatClient::new(
             DelegateSigner::random(),
             self.account,
+            self.auth,
             self.transport,
             EphemeralRegistry::new(),
             self.storage,
@@ -200,15 +236,17 @@ where
 }
 
 // I, T, and R; S defaults.
-impl<T, R> ChatClientBuilder<DelegateSigner, T, R, Unset>
+impl<T, R, A> ChatClientBuilder<DelegateSigner, T, R, A, Unset>
 where
     T: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
 {
-    pub fn build(self) -> Built<T, R, SqliteStore> {
+    pub fn build(self) -> Built<T, R, A, SqliteStore> {
         ChatClient::new(
             self.ident,
             self.account,
+            self.auth,
             self.transport,
             self.registration,
             SqliteStore::in_memory(),
@@ -218,16 +256,18 @@ where
 }
 
 // T, R, and S; I defaults.
-impl<T, R, S> ChatClientBuilder<Unset, T, R, S>
+impl<T, R, A, S> ChatClientBuilder<Unset, T, R, A, S>
 where
     T: Transport + Send + 'static,
     R: RegistrationService + AccountDirectory + Clone + Send + 'static,
+    A: AuthService + Send + 'static,
     S: ConversationStore + Send + 'static,
 {
-    pub fn build(self) -> Built<T, R, S> {
+    pub fn build(self) -> Built<T, R, A, S> {
         ChatClient::new(
             DelegateSigner::random(),
             self.account,
+            self.auth,
             self.transport,
             self.registration,
             self.storage,
@@ -237,15 +277,17 @@ where
 }
 
 // I, T, and S; R defaults.
-impl<T, S> ChatClientBuilder<DelegateSigner, T, Unset, S>
+impl<T, A, S> ChatClientBuilder<DelegateSigner, T, Unset, A, S>
 where
     T: Transport + Send + 'static,
     S: ConversationStore + Send + 'static,
+    A: AuthService + Send + 'static,
 {
-    pub fn build(self) -> Built<T, EphemeralRegistry, S> {
+    pub fn build(self) -> Built<T, EphemeralRegistry, A, S> {
         ChatClient::new(
             self.ident,
             self.account,
+            self.auth,
             self.transport,
             EphemeralRegistry::new(),
             self.storage,

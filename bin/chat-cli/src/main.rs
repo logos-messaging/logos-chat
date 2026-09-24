@@ -11,7 +11,7 @@ use clap::{Parser, ValueEnum};
 use crossbeam_channel::Receiver;
 use logos_chat::{
     AccountDirectory, ChatClient, ConversationStore, Event, GroupV2Config, LogosConfig, P2pConfig,
-    RegistrationService, RegistryPublishMode, Transport,
+    RegistrationService, RegistryPublishMode, Transport, UncheckedAuth,
 };
 
 use app::ChatApp;
@@ -221,7 +221,7 @@ fn db_path(cli: &Cli) -> Result<String> {
 }
 
 fn launch_tui<T, R, S>(
-    client: ChatClient<T, R, S>,
+    client: ChatClient<T, R, UncheckedAuth, S>,
     events: Receiver<Event>,
     cli: &Cli,
 ) -> Result<()>

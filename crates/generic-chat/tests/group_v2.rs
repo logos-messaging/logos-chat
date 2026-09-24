@@ -14,7 +14,7 @@ use logos_account::AccountAddr;
 use logos_account_legacy::TestLogosAccount;
 use logos_generic_chat::{
     ChatClient, ChatClientBuilder, ClientError, ConversationClass, DelegateSigner, Event,
-    GroupMetadata, GroupV2Config, InProcessDelivery, MessageBus,
+    GroupMetadata, GroupV2Config, InProcessDelivery, MessageBus, UncheckedAuth,
 };
 
 /// Metadata for a group these tests create without a name or description.
@@ -40,7 +40,7 @@ fn fast_group_v2_config() -> GroupV2Config {
     }
 }
 
-type TestClient = ChatClient<InProcessDelivery, EphemeralRegistry, SqliteStore>;
+type TestClient = ChatClient<InProcessDelivery, EphemeralRegistry, UncheckedAuth, SqliteStore>;
 
 /// A client for a fresh account: mints the account and a delegate, publishes
 /// the endorsing bundle, and builds the client on the shared bus/registry with
@@ -69,6 +69,7 @@ fn create_test_client_with(
         .transport(InProcessDelivery::new(message_bus))
         .registration(reg)
         .group_v2_config(config)
+        .auth(UncheckedAuth)
         .build()
         .expect("client create");
     let addr = client.addr().to_string();
