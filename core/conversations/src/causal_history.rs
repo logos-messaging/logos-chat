@@ -399,7 +399,7 @@ mod tests {
         assert!(alice_store.take_acks().is_empty());
     }
 
-    /// Every member that replies acknowledges separately, which is what lets an
+    /// Every signer that replies acknowledges separately, which is what lets an
     /// application list the peers that hold a message.
     #[test]
     fn each_peer_acknowledges_separately() {

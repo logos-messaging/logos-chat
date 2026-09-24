@@ -512,7 +512,7 @@ where
                     ));
                 }
                 self.client
-                    .add_group_members(chat_id, &[address])
+                    .add_group_participants(chat_id, &[address])
                     .map_err(|e| anyhow::anyhow!("{e:?}"))?;
                 self.status = "Invite pending — the group will commit it shortly.".to_string();
                 Ok(Some("Invite pending".to_string()))
@@ -528,7 +528,7 @@ where
                     .clone()
                     .ok_or_else(|| anyhow::anyhow!("No active conversation."))?;
                 self.client
-                    .remove_group_members(&chat_id, &[address])
+                    .remove_group_participants(&chat_id, &[address])
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
                 // The group votes on the removal; the member stays on the
                 // roster until the commit ejecting them lands.

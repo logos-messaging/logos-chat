@@ -112,7 +112,7 @@ fn wait_for_group_started(events: &Receiver<Event>, label: &str) -> String {
 /// roster settles asynchronously as each member applies the add commit, so it is
 /// polled rather than snapshotted; members still awaiting that commit are
 /// skipped so an invite alone never reads as convergence.
-fn wait_for_members(client: &mut TestClient, convo_id: &str, expected: &[&str]) {
+fn wait_for_participants(client: &mut TestClient, convo_id: &str, expected: &[&str]) {
     use std::collections::BTreeSet;
     let want: BTreeSet<String> = expected.iter().map(|a| a.to_string()).collect();
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -165,8 +165,8 @@ fn group_v2_three_members() {
     assert_eq!(raya_convo_id, convo_id);
 
     // Both sides see the two-account roster once the add commits.
-    wait_for_members(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
-    wait_for_members(&mut raya, &raya_convo_id, &[&saro_addr, &raya_addr]);
+    wait_for_participants(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
+    wait_for_participants(&mut raya, &raya_convo_id, &[&saro_addr, &raya_addr]);
 
     saro.send_message(&convo_id, b"hello raya").unwrap();
     assert_eq!(wait_for_message(&raya_events, b"hello raya"), saro_addr);
@@ -176,7 +176,7 @@ fn group_v2_three_members() {
 
     // A non-creator grows the group: raya proposes pax, the steward commits,
     // and raya (who holds the pending invite) routes the welcome to pax.
-    raya.add_group_members(&raya_convo_id, &[&pax_addr])
+    raya.add_group_participants(&raya_convo_id, &[&pax_addr])
         .expect("raya add pax");
     let pax_convo_id = wait_for_group_started(&pax_events, "pax ConversationStarted");
     assert_eq!(pax_convo_id, convo_id);
@@ -193,9 +193,9 @@ fn group_v2_three_members() {
 
     // All three rosters converge on the same three accounts.
     let all = [saro_addr.as_str(), raya_addr.as_str(), pax_addr.as_str()];
-    wait_for_members(&mut saro, &convo_id, &all);
-    wait_for_members(&mut raya, &raya_convo_id, &all);
-    wait_for_members(&mut pax, &pax_convo_id, &all);
+    wait_for_participants(&mut saro, &convo_id, &all);
+    wait_for_participants(&mut raya, &raya_convo_id, &all);
+    wait_for_participants(&mut pax, &pax_convo_id, &all);
 
     assert_eq!(saro.list_all_conversations().unwrap().len(), 1);
     assert_eq!(raya.list_all_conversations().unwrap().len(), 1);
@@ -291,7 +291,7 @@ fn invited_member_is_pending_until_the_group_commits() {
     let convo_id = saro
         .create_group_conversation(&[], unnamed_group())
         .expect("empty group");
-    saro.add_group_members(&convo_id, &[&raya_addr])
+    saro.add_group_participants(&convo_id, &[&raya_addr])
         .expect("saro invites raya");
 
     let accounts = |members: Vec<Signer>| -> Vec<String> {
@@ -323,11 +323,11 @@ fn pending_clears_once_the_add_commits() {
     let convo_id = saro
         .create_group_conversation(&[], unnamed_group())
         .expect("empty group");
-    saro.add_group_members(&convo_id, &[&raya_addr])
+    saro.add_group_participants(&convo_id, &[&raya_addr])
         .expect("saro invites raya");
 
     let raya_convo_id = wait_for_group_started(&raya_events, "raya ConversationStarted");
-    wait_for_members(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
+    wait_for_participants(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
 
     let pending = saro.pending_members(&convo_id).expect("pending_members");
     assert!(
@@ -368,7 +368,7 @@ fn add_batch_with_missing_key_package_invites_no_one() {
         .expect("saro create group");
     wait_for_group_started(&raya_events, "raya ConversationStarted");
 
-    saro.add_group_members(
+    saro.add_group_participants(
         &convo_id,
         &[&account_without_key_package.address(), &pax_addr],
     )
@@ -402,16 +402,16 @@ fn a_removed_member_leaves_the_roster() {
         .expect("saro create group");
     wait_for_group_started(&raya_events, "raya ConversationStarted");
     wait_for_group_started(&pax_events, "pax ConversationStarted");
-    wait_for_members(&mut saro, &convo_id, &[&saro_addr, &raya_addr, &pax_addr]);
-    wait_for_members(&mut pax, &convo_id, &[&saro_addr, &raya_addr, &pax_addr]);
+    wait_for_participants(&mut saro, &convo_id, &[&saro_addr, &raya_addr, &pax_addr]);
+    wait_for_participants(&mut pax, &convo_id, &[&saro_addr, &raya_addr, &pax_addr]);
 
     // A consensus round: pax is still seated when the call returns and drops
     // off each roster as the ejecting commit is applied.
-    saro.remove_group_members(&convo_id, &[&pax_addr])
+    saro.remove_group_participants(&convo_id, &[&pax_addr])
         .expect("saro remove pax");
-    wait_for_members(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
-    wait_for_members(&mut raya, &convo_id, &[&saro_addr, &raya_addr]);
-    wait_for_members(&mut pax, &convo_id, &[&saro_addr, &raya_addr]);
+    wait_for_participants(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
+    wait_for_participants(&mut raya, &convo_id, &[&saro_addr, &raya_addr]);
+    wait_for_participants(&mut pax, &convo_id, &[&saro_addr, &raya_addr]);
 
     // Pax is told it is out rather than left to notice its roster shrank.
     wait_for_event(
@@ -446,10 +446,10 @@ fn removing_yourself_is_refused() {
         .create_group_conversation(&[&raya_addr], unnamed_group())
         .expect("saro create group");
     wait_for_group_started(&raya_events, "raya ConversationStarted");
-    wait_for_members(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
+    wait_for_participants(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
 
     let err = saro
-        .remove_group_members(&convo_id, &[&saro_addr])
+        .remove_group_participants(&convo_id, &[&saro_addr])
         .expect_err("self-removal is refused");
     assert!(
         matches!(err, ClientError::Chat(ChatError::CannotRemoveSelf)),
@@ -457,7 +457,7 @@ fn removing_yourself_is_refused() {
     );
 
     // The refused call left the group untouched and still working.
-    wait_for_members(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
+    wait_for_participants(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
     saro.send_message(&convo_id, b"still here").unwrap();
     wait_for_message(&raya_events, b"still here");
 }
@@ -478,10 +478,10 @@ fn removing_a_non_member_is_an_error() {
         .create_group_conversation(&[&raya_addr], unnamed_group())
         .expect("saro create group");
     wait_for_group_started(&raya_events, "raya ConversationStarted");
-    wait_for_members(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
+    wait_for_participants(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
 
     let err = saro
-        .remove_group_members(&convo_id, &[&pax_addr])
+        .remove_group_participants(&convo_id, &[&pax_addr])
         .expect_err("pax was never in the group");
     assert!(
         matches!(err, ClientError::Chat(ChatError::NotAGroupMember)),
@@ -512,7 +512,7 @@ fn group_invite_of_unpublished_account_is_an_error() {
         .create_group_conversation(&[], unnamed_group())
         .expect("empty group");
     let err = saro
-        .add_group_members(&convo_id, &[&unpublished.address()])
+        .add_group_participants(&convo_id, &[&unpublished.address()])
         .expect_err("the account is unknown");
     assert!(matches!(
         err,
@@ -588,7 +588,7 @@ fn a_sent_message_is_acknowledged_by_the_peers_that_reply() {
         .expect("saro create group");
     wait_for_group_started(&raya_events, "raya ConversationStarted");
     wait_for_group_started(&pax_events, "pax ConversationStarted");
-    wait_for_members(&mut saro, &convo_id, &[&saro_addr, &raya_addr, &pax_addr]);
+    wait_for_participants(&mut saro, &convo_id, &[&saro_addr, &raya_addr, &pax_addr]);
 
     let message_id = saro
         .send_message(&convo_id, b"anyone there?")

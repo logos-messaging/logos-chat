@@ -171,9 +171,9 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         &mut self,
         participant: ParticipantId,
     ) -> Result<ConversationId, ChatError> {
-        let members = self.get_signers_for_participants(&[participant])?;
+        let signers = self.get_signers_for_participants(&[participant])?;
 
-        let convo = DirectV1Convo::new(&mut self.services, &members)?;
+        let convo = DirectV1Convo::new(&mut self.services, &signers)?;
         let convo_id = convo.id().to_string();
         self.register_convo(ConvoTypeOwned::Direct(Box::new(convo)))?;
 
@@ -200,7 +200,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
             local_convo_id: convo.id().to_string(),
             kind: ConversationKind::GroupV1,
         })?;
-        convo.add_member(&mut self.services, &signers)?;
+        convo.add_signer(&mut self.services, &signers)?;
         let convo_id = convo.id().to_string();
 
         self.register_convo(ConvoTypeOwned::Group(Box::new(convo)))?;
@@ -227,17 +227,17 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         Ok(convo_id)
     }
 
-    /// Add members to an existing group conversation.
+    /// Add signers to an existing group conversation.
     pub fn group_add_participants(
         &mut self,
         convo_id: &str,
         participants: &[ParticipantId],
     ) -> Result<(), ChatError> {
         let signers = self.get_signers_for_participants(participants)?;
-        self.group_add_member(convo_id, &signers)
+        self.group_add_signers(convo_id, &signers)
     }
 
-    pub fn group_add_member(
+    pub fn group_add_signers(
         &mut self,
         convo_id: &str,
         members: &[SignerKey],
@@ -249,7 +249,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
         match convo {
             ConvoTypeOwned::Group(group_convo) => {
-                group_convo.add_member(&mut self.services, members)
+                group_convo.add_signer(&mut self.services, members)
             }
             ConvoTypeOwned::Direct(convo) => Err(ChatError::UnsupportedFunction(
                 convo.id().into(),
@@ -260,10 +260,10 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     /// Remove members from an existing group conversation, naming them by
     /// signer (installation) id exactly as [`Self::group_add_member`] does.
-    pub fn group_remove_member(
+    pub fn group_remove_signers(
         &mut self,
         convo_id: &str,
-        members: &[SignerRef],
+        signers: &[SignerRef],
     ) -> Result<(), ChatError> {
         let convo = self
             .cached_convos
@@ -272,7 +272,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
         match convo {
             ConvoTypeOwned::Group(group_convo) => {
-                group_convo.remove_member(&mut self.services, members)
+                group_convo.remove_signer(&mut self.services, signers)
             }
             ConvoTypeOwned::Direct(_) => Err(ChatError::UnsupportedFunction(
                 convo.id().into(),
@@ -292,18 +292,18 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
             .get(convo_id)
             .ok_or_else(|| ChatError::NoConvo(convo_id.to_string()))?;
         let seated: Vec<SignerKey> = convo
-            .members()?
+            .signers()?
             .into_iter()
             .filter(|s| participants.contains(&s.participant_id))
             .map(|s| s.signer)
             .collect();
         let seated: Vec<SignerRef> = seated.iter().collect();
-        self.group_remove_member(convo_id, &seated)
+        self.group_remove_signers(convo_id, &seated)
     }
 
     /// Committed members that pass auth, for a direct conversation as for a
     /// group. Auth is checked on each call; a member that fails is left out.
-    pub fn group_members(&self, convo_id: &str) -> Result<Vec<AuthenticatedSigner>, ChatError> {
+    pub fn group_signers(&self, convo_id: &str) -> Result<Vec<AuthenticatedSigner>, ChatError> {
         let convo = self
             .cached_convos
             .get(convo_id)
@@ -311,7 +311,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
         let auth = &self.services.auth;
         Ok(convo
-            .members()?
+            .signers()?
             .into_iter()
             .filter_map(|member| member.require_valid(auth))
             .collect())
@@ -319,7 +319,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     /// Invites sent here whose commit has not landed. A direct conversation has
     /// none.
-    pub fn group_pending_members(&self, convo_id: &str) -> Result<Vec<Signer>, ChatError> {
+    pub fn group_pending_signers(&self, convo_id: &str) -> Result<Vec<Signer>, ChatError> {
         let convo = self
             .cached_convos
             .get(convo_id)
@@ -329,9 +329,9 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
             return Ok(Vec::new());
         };
         // An installation whose commit has landed is a member, not pending.
-        let committed = convo.members()?;
+        let committed = convo.signers()?;
         Ok(group_convo
-            .pending_members()?
+            .pending_signers()?
             .into_iter()
             .filter(|p| !committed.iter().any(|c| c.signer == p.signer))
             .collect())
@@ -627,10 +627,10 @@ impl<S: ExternalServices> Convo<S> for ConvoTypeOwned<S> {
         }
     }
 
-    fn members(&self) -> Result<Vec<Signer>, ChatError> {
+    fn signers(&self) -> Result<Vec<Signer>, ChatError> {
         match self {
-            ConvoTypeOwned::Group(group_convo) => group_convo.members(),
-            ConvoTypeOwned::Direct(convo) => convo.members(),
+            ConvoTypeOwned::Group(group_convo) => group_convo.signers(),
+            ConvoTypeOwned::Direct(convo) => convo.signers(),
         }
     }
 

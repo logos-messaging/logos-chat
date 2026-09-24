@@ -335,7 +335,7 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
         Ok(ConvoOutcome::empty(self.id().to_string()))
     }
 
-    fn members(&self) -> Result<Vec<Signer>, ChatError> {
+    fn signers(&self) -> Result<Vec<Signer>, ChatError> {
         Ok(self
             .mls_group
             .members()
@@ -355,7 +355,7 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
     //   commit      — the Commit message Alice broadcasts to all members
     //   welcome     — the Welcome message sent privately to each new joiner
     //   _group_info — used for external joins; ignore for now
-    fn add_member(
+    fn add_signer(
         &mut self,
         cx: &mut ServiceContext<S>,
         members: &[SignerKey],
@@ -403,7 +403,7 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
 
     /// Commits the removal in-call, the mirror of `add_member`: the named
     /// members are off the roster by the time this returns.
-    fn remove_member(
+    fn remove_signer(
         &mut self,
         cx: &mut ServiceContext<S>,
         members: &[SignerRef],
@@ -444,7 +444,7 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
 
     /// Always empty: `add_member` merges its own commit, so an added member is
     /// on the roster by the time the call returns.
-    fn pending_members(&self) -> Result<Vec<Signer>, ChatError> {
+    fn pending_signers(&self) -> Result<Vec<Signer>, ChatError> {
         Ok(Vec::new())
     }
 
