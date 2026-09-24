@@ -624,9 +624,9 @@ fn a_sent_message_is_acknowledged_by_the_peers_that_reply() {
         .expect("raya reply");
     pax.send_message(&convo_id, b"pax here").expect("pax reply");
 
-    // An acknowledgement names the replying *device*: it is carried by the
-    // causal history, which records a sender by its signer, so there is no
-    // account claim to verify against the directory.
+    // An acknowledgement names the replying *installation*: it is carried by
+    // the causal history, which records a sender by its signer, so there is no
+    // account claim to verify.
     let mut holders = Vec::new();
     while holders.len() < 2 {
         let peer = wait_for_event(
@@ -638,13 +638,11 @@ fn a_sent_message_is_acknowledged_by_the_peers_that_reply() {
                     convo_id: id,
                     message_id: acked,
                     acked_by,
-                } if **id == *convo_id && *acked == message_id => {
-                    Some(acked_by.as_ref().map(|a| a.local_identity.to_string()))
-                }
+                } if **id == *convo_id && *acked == message_id => Some(acked_by.to_string()),
                 _ => None,
             },
         );
-        holders.push(peer.expect("an acknowledgement names the device that replied"));
+        holders.push(peer);
     }
     holders.sort();
 
