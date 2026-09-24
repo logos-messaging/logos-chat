@@ -14,11 +14,6 @@ pub use event::Event;
 pub use installation::{Installation, PendingInstallation};
 pub use members::{AuthenticatedSigner, Signer};
 
-/// Message content types, re-exported so every consumer agrees on one format:
-/// [`ChatClient::send_text`]/[`send_reply`](ChatClient::send_reply) produce it,
-/// [`content::decode`] reads it.
-pub use message_types as content;
-
 // Re-export types callers need to interact with ChatClient.
 pub use chat_sqlite::{SqliteStore, StorageConfig};
 pub use libchat::{

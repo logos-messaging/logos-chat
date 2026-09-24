@@ -288,25 +288,17 @@ where
         self.core.lock().can_receive(convo_id)
     }
 
-    /// Send a plain-text message. Prefer this over [`Self::send_message`].
-    pub fn send_text(&mut self, convo_id: &str, body: &str) -> Result<MessageId, ClientError> {
-        self.send_message(convo_id, &message_types::encode_text(body)?)
-    }
-
-    /// Send a plain-text reply to `in_reply_to` (an [`Event::MessageReceived`]
-    /// id, or one a send returned). The target is not validated.
-    pub fn send_reply(
-        &mut self,
-        convo_id: &str,
-        in_reply_to: &str,
-        body: &str,
-    ) -> Result<MessageId, ClientError> {
-        self.send_message(convo_id, &message_types::encode_reply(in_reply_to, body)?)
-    }
-
-    /// Send raw `content` bytes — the escape hatch beneath [`Self::send_text`]
-    /// and [`Self::send_reply`] for a caller carrying its own format. Returns the
-    /// message id later [`Event::MessageAcked`] events carry.
+    /// Encrypt and send `content` to an existing conversation. The core
+    /// publishes the outbound envelope.
+    ///
+    /// `content` is opaque here: what the bytes *mean* is the application's
+    /// concern, encoded before this call (see the `message-types` extension)
+    /// and decoded from [`Event::MessageReceived`]. The client deliberately
+    /// knows nothing about content types.
+    ///
+    /// Returns the message's id, which later [`Event::MessageAcked`] events
+    /// carry — hold onto it to show which peers have the message, or to name
+    /// it as the target of a reply.
     pub fn send_message(
         &mut self,
         convo_id: &str,

@@ -7,8 +7,9 @@ use arboard::Clipboard;
 use crossbeam_channel::Receiver;
 use logos_chat::{
     AccountAddr, AuthService, ChatClient, ConversationClass, ConversationStore, Event,
-    GroupMetadata, RegistrationService, Transport, content,
+    GroupMetadata, RegistrationService, Transport,
 };
+use message_types::ContentId;
 use serde::{Deserialize, Serialize};
 
 use crate::utils::now;
@@ -309,18 +310,22 @@ where
                 } else {
                     MessageOrigin::Foreign(account)
                 };
-                let decoded = content::decode(&bytes);
+                // The client hands us opaque bytes; the content format is ours
+                // to apply. Decoding never fails — every body renders as
+                // something.
+                let decoded = message_types::decode(&bytes);
                 let Some(session) = self.state.chats.get_mut(&chat_id) else {
                     return;
                 };
-                let mut body = decoded.content.display_line();
+                let mut body = decoded.content.to_string();
                 // Resolve the replied-to message to a preview; the app owns this,
                 // the id is opaque to the core.
                 if let Some(target) = decoded.in_reply_to {
+                    let target = target.as_str();
                     let preview = session
                         .messages
                         .iter()
-                        .find(|m| m.message_id.as_deref() == Some(&target))
+                        .find(|m| m.message_id.as_deref() == Some(target))
                         .map(|m| snippet_of(&m.content))
                         .unwrap_or_else(|| format!("re: {}", &target[..8.min(target.len())]));
                     body = reply_body(&preview, &body);
@@ -388,19 +393,21 @@ where
     /// Send a plain-text message to the active chat.
     pub fn send_message(&mut self, content: &str) -> Result<()> {
         let chat_id = self.active_sendable_chat()?;
+        let bytes = message_types::encode_text(content)?;
         let message_id = self
             .client
-            .send_text(&chat_id, content)
+            .send_message(&chat_id, &bytes)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         self.echo_sent(&chat_id, message_id, content.to_string())
     }
 
     /// Reply to `in_reply_to` in the active chat.
-    fn send_reply(&mut self, in_reply_to: &str, content: &str, preview: &str) -> Result<()> {
+    fn send_reply(&mut self, in_reply_to: &ContentId, content: &str, preview: &str) -> Result<()> {
         let chat_id = self.active_sendable_chat()?;
+        let bytes = message_types::encode_reply(in_reply_to, content)?;
         let message_id = self
             .client
-            .send_reply(&chat_id, in_reply_to, content)
+            .send_message(&chat_id, &bytes)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         self.echo_sent(&chat_id, message_id, reply_body(preview, content))
     }
@@ -646,7 +653,7 @@ where
                     .and_then(|s| s.messages.iter().rev().find(|m| m.message_id.is_some()))
                     .map(|m| {
                         (
-                            m.message_id.clone().expect("filtered on Some"),
+                            ContentId::new(m.message_id.clone().expect("filtered on Some")),
                             snippet_of(&m.content),
                         )
                     });

@@ -13,6 +13,14 @@ use libchat::{ConversationClass, SignerKey};
 use crate::AuthenticatedSigner;
 
 /// A discrete chat event.
+///
+/// `MessageReceived` is much the largest variant, nearly all of it the
+/// `AccountAddr` inside its [`AuthenticatedSigner`]. Boxing the sender would
+/// buy back the bytes at the cost of a heap hop and a `Box` in the public
+/// match, on the one variant an application handles most; events are moved
+/// once down a channel, so the copy is not worth that. Revisit here, not at
+/// the call sites, if the enum grows another large variant.
+#[allow(clippy::large_enum_variant)]
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -21,9 +29,11 @@ pub enum Event {
         convo_id: Arc<str>,
         class: ConversationClass,
     },
-    /// User content arrived. `content` is the raw body — decode with
-    /// [`crate::content::decode`]; it stays raw so a consumer with its own format
-    /// is not forced through ours.
+    /// User content arrived on an existing conversation.
+    ///
+    /// `content` is the body exactly as the sender produced it. Interpreting it
+    /// is the application's concern — the `message-types` extension is one such
+    /// format — so a consumer carrying its own is never forced through ours.
     #[non_exhaustive]
     MessageReceived {
         convo_id: Arc<str>,

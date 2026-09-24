@@ -15,7 +15,6 @@ crossbeam-channel = { workspace = true }
 crypto = { workspace = true }
 libchat = { workspace = true }
 logos-account = { workspace = true }
-message-types = { workspace = true }
 
 # External dependencies (sorted)
 hex = "0.4.3"

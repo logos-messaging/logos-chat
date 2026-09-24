@@ -13,6 +13,4 @@ pub enum ClientError {
     InvalidAccountAddress(String),
     #[error("installation is not endorsed by its account: {0}")]
     NotEndorsed(String),
-    #[error("failed to encode message content: {0}")]
-    ContentEncode(#[from] message_types::Error),
 }

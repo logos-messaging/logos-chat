@@ -506,75 +506,14 @@ fn unpublished_account_address_is_an_error() {
     ));
 }
 
-/// Typed content end to end: saro sends text, raya replies naming it, and the
-/// reference survives the round trip back to saro.
+/// The id `send_message` returns is the id the receiver is handed.
 ///
-/// The seam this covers is that a reply's target is the same id a send returns
-/// and an inbound message carries — get that wrong and replies resolve to
-/// nothing on the far side.
+/// Nothing in the client enforces this — the sender computes its id locally and
+/// the receiver recomputes one from the reliability envelope. An application
+/// naming a message (a reply, a reaction) addresses it by that id, so if the
+/// two ever diverge every such reference resolves to nothing on the far side.
 #[test]
-fn text_and_reply_round_trip_between_clients() {
-    use logos_generic_chat::content::{self, MessageContent};
-
-    let bus = MessageBus::default();
-    let reg_service = EphemeralRegistry::new();
-    let auth = AcceptAllAuth::default();
-
-    let (mut saro, saro_events) =
-        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
-    let (mut raya, raya_events) =
-        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
-
-    let saro_convo_id = saro
-        .create_direct_conversation(raya.addr())
-        .expect("convo create");
-    let raya_convo_id = expect_event(&raya_events, "ConversationStarted", |e| match e {
-        Event::ConversationStarted { convo_id, .. } => Ok(convo_id),
-        other => Err(other),
-    });
-
-    let sent_id = saro.send_text(&saro_convo_id, "hello raya").unwrap();
-
-    // Raya decodes it as text, and the id she is handed is the one saro's send
-    // returned — that equality is what makes a reply addressable.
-    let received_id = expect_event(&raya_events, "MessageReceived", |e| match e {
-        Event::MessageReceived {
-            content,
-            message_id,
-            ..
-        } => {
-            let msg = content::decode(&content);
-            assert_eq!(msg.content, MessageContent::Text("hello raya".into()));
-            assert_eq!(msg.in_reply_to, None);
-            Ok(message_id)
-        }
-        other => Err(other),
-    });
-    assert_eq!(received_id, sent_id.to_string());
-
-    raya.send_reply(&raya_convo_id, &received_id, "hi saro")
-        .unwrap();
-
-    expect_event_ignoring_acks(&saro_events, "MessageReceived(reply)", |e| match e {
-        Event::MessageReceived { content, .. } => {
-            let msg = content::decode(&content);
-            assert_eq!(msg.content, MessageContent::Text("hi saro".into()));
-            assert_eq!(
-                msg.in_reply_to.as_deref(),
-                Some(sent_id.to_string().as_str())
-            );
-            Ok(())
-        }
-        other => Err(other),
-    });
-}
-
-/// A peer on a build predating content types sends bare UTF-8. It must still
-/// render, or the format would break every conversation it touched.
-#[test]
-fn an_untyped_body_still_decodes_as_text() {
-    use logos_generic_chat::content::{self, MessageContent};
-
+fn a_send_returns_the_id_the_receiver_sees() {
     let bus = MessageBus::default();
     let reg_service = EphemeralRegistry::new();
     let auth = AcceptAllAuth::default();
@@ -584,25 +523,28 @@ fn an_untyped_body_still_decodes_as_text() {
     let (raya, raya_events) =
         create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
 
-    let convo_id = saro.create_direct_conversation(raya.addr()).unwrap();
+    let convo_id = saro
+        .create_direct_conversation(raya.addr())
+        .expect("convo create");
     expect_event(&raya_events, "ConversationStarted", |e| match e {
         Event::ConversationStarted { convo_id, .. } => Ok(convo_id),
         other => Err(other),
     });
 
-    saro.send_message(&convo_id, b"from an older build")
-        .unwrap();
+    let sent_id = saro.send_message(&convo_id, b"hello raya").unwrap();
 
-    expect_event(&raya_events, "MessageReceived", |e| match e {
-        Event::MessageReceived { content, .. } => {
-            assert_eq!(
-                content::decode(&content).content,
-                MessageContent::Text("from an older build".into())
-            );
-            Ok(())
+    let received_id = expect_event(&raya_events, "MessageReceived", |e| match e {
+        Event::MessageReceived {
+            content,
+            message_id,
+            ..
+        } => {
+            assert_eq!(content.as_slice(), b"hello raya");
+            Ok(message_id)
         }
         other => Err(other),
     });
+    assert_eq!(received_id, sent_id);
 }
 
 /// A stand-in account while the account layer is out: only a well-formed
