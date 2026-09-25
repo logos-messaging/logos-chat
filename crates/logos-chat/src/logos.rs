@@ -27,8 +27,8 @@ use logos_account::CHATSIGNER_CONTEXT;
 use logos_generic_chat::SqliteStore;
 use logos_generic_chat::StorageConfig;
 use logos_generic_chat::{
-    ChatClient, ChatClientBuilder, ClientError, Event, GroupV2Config, Installation,
-    PendingInstallation, Transport,
+    ChatClient, ChatClientBuilder, ClientError, DbKey, Event, GroupV2Config, IdentityMode,
+    IdentityStore, Installation, PendingInstallation, Transport,
 };
 
 /// The endpoint for the account and keypackage registration service.
@@ -37,15 +37,19 @@ pub const REGISTRY_ENDPOINT: &str = "https://devnet.chat-kc.logos.co";
 /// Configuration for opening a Logos client.
 ///
 /// `db_path` (a per-client location) and `db_key` (a secret) are required and
-/// never baked into the library. Everything else defaults: the registry
-/// endpoint to the baked-in Logos value, the embedded node's p2p settings to
-/// [`P2pConfig::default`], and the GroupV2 timing to the de-mls library
-/// defaults; override them with [`set_registry_url`](Self::set_registry_url),
+/// never baked into the library. Everything else defaults: the identity to
+/// [`IdentityMode::LoadOrCreate`], so reopening the same database reopens the
+/// same installation; the registry endpoint to the baked-in Logos value; the
+/// embedded node's p2p settings to [`P2pConfig::default`]; and the GroupV2
+/// timing to the de-mls library defaults. Override them with
+/// [`set_identity_mode`](Self::set_identity_mode),
+/// [`set_registry_url`](Self::set_registry_url),
 /// [`set_p2p_config`](Self::set_p2p_config), and
 /// [`set_group_v2_config`](Self::set_group_v2_config).
 pub struct LogosConfig {
     db_path: String,
-    db_key: String,
+    db_key: DbKey,
+    identity_mode: IdentityMode,
     registry_url: String,
     registry_publish_mode: RegistryPublishMode,
     p2p_config: P2pConfig,
@@ -56,15 +60,30 @@ impl LogosConfig {
     /// Config for the required per-client `db_path` and `db_key`. The registry
     /// endpoint defaults to the baked-in Logos value; override it with
     /// [`set_registry_url`](Self::set_registry_url).
-    pub fn new(db_path: impl Into<String>, db_key: impl Into<String>) -> Self {
+    ///
+    /// `db_key` is the 32 bytes the database is encrypted with, not a
+    /// passphrase: deriving those bytes is the application's, since it is what
+    /// knows whether they came from a prompt, a keychain or a hardware token.
+    pub fn new(db_path: impl Into<String>, db_key: DbKey) -> Self {
         Self {
             db_path: db_path.into(),
-            db_key: db_key.into(),
+            db_key,
+            identity_mode: IdentityMode::default(),
             registry_url: REGISTRY_ENDPOINT.to_string(),
             registry_publish_mode: RegistryPublishMode::default(),
             p2p_config: P2pConfig::default(),
             group_v2_config: None,
         }
+    }
+
+    /// Choose how this client comes by the installation it runs as (defaults to
+    /// [`IdentityMode::LoadOrCreate`]).
+    ///
+    /// [`IdentityMode::Ephemeral`] ignores `db_path` and keeps everything in
+    /// memory: an installation that is not stored cannot sign for conversations
+    /// that are, so persisting one without the other is of no use.
+    pub fn set_identity_mode(&mut self, mode: IdentityMode) {
+        self.identity_mode = mode;
     }
 
     /// Override the registry endpoint (account + keypackage store; defaults to
@@ -138,9 +157,6 @@ pub fn open_with_transport<T: Transport + Clone>(
     ),
     ClientError,
 > {
-    // A fresh account and installation each open: the account key is dropped,
-    // so installations cannot be added later. A caller-supplied, custody-holding account replaces
-    // this once the platform provides one.
     let registry = ContactRegistry::new(
         transport.clone(),
         config.registry_url.clone(),
@@ -150,25 +166,59 @@ pub fn open_with_transport<T: Transport + Clone>(
     // Auth uses the same server as registry for the time being
     let auth = HttpAuthClient::new(config.registry_url);
 
-    // TODO: (P2) Load existing account once persistence is in place
-    let installation = register_account(auth.clone())?;
+    // The store comes first: which installation this client runs as is a question only the
+    // store can answer, and the client is built from the answer.
+    let storage = match config.identity_mode {
+        IdentityMode::Ephemeral => StorageConfig::InMemory,
+        _ => StorageConfig::EncryptedWithKey {
+            path: config.db_path,
+            key: config.db_key,
+        },
+    };
+    let mut store = SqliteStore::new(storage)?;
+
+    let installation = open_installation(&mut store, auth.clone(), config.identity_mode)?;
 
     let mut builder = ChatClientBuilder::new(installation)
         .transport(transport)
         .registration(registry)
         .auth(auth)
-        .storage_config(StorageConfig::Encrypted {
-            path: config.db_path,
-            key: config.db_key,
-        });
+        .storage(store);
     if let Some(group_v2) = config.group_v2_config {
         builder = builder.group_v2_config(group_v2);
     }
     builder.build()
 }
 
+/// The installation this store belongs to, per `mode`.
+///
+/// A stored one is reused as it stands and **nothing is republished**: an account log refuses
+/// to endorse one key twice, so re-running registration for an installation already on the log
+/// fails the open outright. The stored record is therefore the registration flag, and it is
+/// written only once a publish has landed — see [`register_account`].
+fn open_installation<S, A>(
+    store: &mut S,
+    auth: A,
+    mode: IdentityMode,
+) -> Result<Installation, ClientError>
+where
+    S: IdentityStore,
+    A: AccountPublisher + AccountProvider,
+{
+    if mode == IdentityMode::Ephemeral {
+        return Ok(register_account(auth)?);
+    }
+    if let Some(installation) = Installation::load(store)? {
+        return Ok(installation);
+    }
+
+    let installation = register_account(auth)?;
+    installation.save(store)?;
+    Ok(installation)
+}
+
 /// The Logos client: a [`ChatClient`] wired to the Logos service stack —
-/// an [`Installation`](logos_generic_chat::Installation) of a fresh dev account, the keypackage +
+/// the [`Installation`](logos_generic_chat::Installation) its store holds, the keypackage +
 /// account registry ([`ContactRegistry`], the keypackage store; it queries
 /// over HTTP and submits over HTTP or the delivery network per
 /// [`LogosConfig::set_registry_publish_mode`]),
@@ -182,6 +232,13 @@ pub type LogosChatClient = ChatClient<
     SqliteStore,
 >;
 
+/// Mints an installation and publishes its endorsement, in that order: a crash after the publish
+/// re-runs registration harmlessly, while a record stored before it would leave a client nobody
+/// can invite.
+///
+/// The account is still fresh per call and its key dropped at the end, so this installation is
+/// the only one that account will ever endorse. Account custody belongs wherever an account's
+/// key lives (`Account::from_signing_key` is the way back in), not in chat.
 fn register_account<A: AccountPublisher + AccountProvider>(
     auth_client: A,
 ) -> Result<Installation, AccountError> {
