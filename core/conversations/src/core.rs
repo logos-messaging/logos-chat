@@ -15,7 +15,7 @@ use crate::{
     conversation::{Convo, GroupConvo},
     errors::ChatError,
     inbox_v2::{InboxV2, MlsEphemeralPqProvider, MlsIdentityProvider},
-    outcomes::{ConvoOutcome, InboxOutcome, PayloadOutcome},
+    outcomes::{ConversationClass, ConvoOutcome, InboxOutcome, PayloadOutcome},
     proto::{EncryptedPayload, EnvelopeV1, Message},
 };
 use openmls::group::GroupId;
@@ -452,7 +452,11 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         if let Some((convo, class)) = self.pq_inbox.handle_frame(&mut self.services, payload)? {
             let convo_id = convo.id().to_string();
             // Cache convos created by InboxV2
-            self.register_convo(ConvoTypeOwned::Group(convo))?;
+            let convo = match class {
+                ConversationClass::Dm => ConvoTypeOwned::Direct(convo),
+                ConversationClass::Group => ConvoTypeOwned::Group(convo),
+            };
+            self.register_convo(convo)?;
 
             Ok(PayloadOutcome::Inbox(InboxOutcome {
                 new_conversation: crate::NewConversation { convo_id, class },
