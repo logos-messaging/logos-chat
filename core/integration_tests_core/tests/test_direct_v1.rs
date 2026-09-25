@@ -117,3 +117,35 @@ fn direct_convo_with_yourself_is_refused() {
         .expect_err("no direct convo with yourself");
     assert!(matches!(err, ChatError::CannotMessageSelf), "{err:?}");
 }
+
+#[test]
+fn account_listing_your_installation_does_not_seat_you_twice() {
+    // An account log can endorse any key, so Raya's account may list Saro's.
+    const MSG: &[u8] = b"hello";
+
+    let mut harness = TestHarness::<2>::new(|_, _| {});
+
+    let raya_account = harness.raya().account();
+    let saro_signer = harness.saro().signer_key();
+    harness.auth().endorse(raya_account.clone(), saro_signer);
+
+    let convo_id = harness
+        .saro()
+        .create_direct_convo_v1(raya_account)
+        .expect("saro create convo");
+    assert_eq!(
+        harness
+            .saro()
+            .group_signers(&convo_id)
+            .expect("members")
+            .len(),
+        2
+    );
+
+    harness.process_until(|h| h.raya().convo_count() == 1);
+    harness
+        .saro()
+        .send_content(&convo_id, MSG)
+        .expect("saro send");
+    harness.process_until(|h| h.raya().check(&convo_id, MSG));
+}
