@@ -53,9 +53,11 @@ identity, and SQLCipher-encrypted storage on disk. Independently built clients
 that call `open` are interoperable by construction.
 
 ```rust
-use logos_chat::{GroupMetadata, LogosConfig, open};
+use logos_chat::{DbKey, GroupMetadata, LogosConfig, open};
 
-let config = LogosConfig::new("/path/to/chat.db", "db-secret");
+// The 32 bytes the database is encrypted with. Deriving them from a passphrase, or reading
+// them out of the OS keychain, is the application's — the library runs no derivation.
+let config = LogosConfig::new("/path/to/chat.db", DbKey::from(db_key_bytes));
 let (mut client, events) = open(config)?;
 
 println!("my address: {}", client.addr());

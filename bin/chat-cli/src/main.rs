@@ -10,8 +10,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use crossbeam_channel::Receiver;
 use logos_chat::{
-    AuthService, ChatClient, ConversationStore, Event, GroupV2Config, LogosConfig, P2pConfig,
-    RegistrationService, RegistryPublishMode, Transport,
+    AuthService, ChatClient, ConversationStore, DbKey, Event, GroupV2Config, LogosConfig,
+    P2pConfig, RegistrationService, RegistryPublishMode, Transport,
 };
 
 use app::ChatApp;
@@ -161,7 +161,7 @@ fn main() -> Result<()> {
             );
             println!("This may take a few seconds while connecting to the network.");
 
-            let mut config = LogosConfig::new(db_str, "chat-cli");
+            let mut config = LogosConfig::new(db_str, db_key());
             if let Some(registry_url) = cli.registry_url.as_deref() {
                 config.set_registry_url(registry_url);
             }
@@ -188,7 +188,7 @@ fn main() -> Result<()> {
             let transport = transport::file::FileTransport::new(&transport_dir)
                 .context("failed to create file transport")?;
 
-            let mut config = LogosConfig::new(db_str, "chat-cli");
+            let mut config = LogosConfig::new(db_str, db_key());
             if let Some(registry_url) = cli.registry_url.as_deref() {
                 config.set_registry_url(registry_url);
             }
@@ -206,6 +206,14 @@ fn main() -> Result<()> {
             launch_tui(client, events, &cli)
         }
     }
+}
+
+/// The key chat-cli encrypts its database with.
+fn db_key() -> DbKey {
+    // Uses a static key. Requesting a passphrase in this demo app adds too much friction.
+    // A real application would derive these 32 bytes from a password prompt or reads them out of the
+    // OS keychain.
+    DbKey::from_encryption_key(*b"chat-cli example database key --")
 }
 
 /// Resolve the SQLite database path: `--db` if given, else `<data>/<name>.db`.
