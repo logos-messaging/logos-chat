@@ -1,4 +1,7 @@
+use chat_proto::logoschat::envelope::EnvelopeV1;
 use integration_tests_core::TestHarness;
+use libchat::PayloadOutcome;
+use prost::Message;
 use tracing::info;
 
 #[test]
@@ -40,4 +43,65 @@ fn happypath_roundtrip() {
     harness.process_until(|h| h.saro().check(&convo_id, R_M1));
 
     assert!(harness.saro().check(&convo_id, R_M1));
+}
+
+#[test]
+fn replayed_invite_is_rejected() {
+    // Delivery can hand the same invite over twice, e.g. on a store catch-up.
+    const MSG: &[u8] = b"still here";
+
+    let mut harness = TestHarness::<2>::new(|_, _| {});
+
+    let raya_account = harness.raya().account();
+    let convo_id = harness
+        .saro()
+        .create_direct_convo_v1(raya_account)
+        .expect("saro create convo");
+
+    let invite = harness.raya().ds().poll().expect("invite for raya");
+    let joined = harness.raya().handle_payload(&invite).expect("raya joins");
+    assert!(matches!(joined, PayloadOutcome::Inbox(_)), "{joined:?}");
+
+    harness
+        .raya()
+        .handle_payload(&invite)
+        .expect_err("the copy is rejected");
+
+    harness
+        .saro()
+        .send_content(&convo_id, MSG)
+        .expect("saro send");
+    harness.process_until(|h| h.raya().check(&convo_id, MSG));
+}
+
+#[test]
+fn invite_for_another_installation_is_rejected() {
+    let mut harness = TestHarness::<3>::new(|_, _| {});
+
+    let (raya_account, pax_account) = (harness.raya().account(), harness.pax().account());
+    harness
+        .saro()
+        .create_direct_convo_v1(raya_account)
+        .expect("saro create convo with raya");
+    harness
+        .saro()
+        .create_direct_convo_v1(pax_account)
+        .expect("saro create convo with pax");
+
+    let for_raya = harness.raya().ds().poll().expect("invite for raya");
+    let for_pax = harness.pax().ds().poll().expect("invite for pax");
+
+    // Raya's Welcome, addressed to Pax's inbox.
+    let mut forged = EnvelopeV1::decode(for_raya.as_slice()).expect("envelope");
+    forged.conversation_hint = EnvelopeV1::decode(for_pax.as_slice())
+        .expect("envelope")
+        .conversation_hint;
+
+    harness
+        .pax()
+        .handle_payload(&forged.encode_to_vec())
+        .expect_err("a Welcome for someone else is rejected");
+
+    let joined = harness.pax().handle_payload(&for_pax).expect("pax joins");
+    assert!(matches!(joined, PayloadOutcome::Inbox(_)), "{joined:?}");
 }
