@@ -368,11 +368,26 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
             ));
         }
 
+        // Skip signers already seated, ours included, or named twice: MLS
+        // refuses a second leaf for one signature key.
+        let mut seated: HashSet<SignerKey> = self
+            .mls_group
+            .members()
+            .map(|m| SignerKey::from(m.signature_key.as_slice()))
+            .collect();
+        let members: Vec<&SignerKey> = members
+            .iter()
+            .filter(|&signer| seated.insert(signer.clone()))
+            .collect();
+        if members.is_empty() {
+            return Ok(());
+        }
+
         // Members are signer (installation) ids: one KeyPackage each, one MLS
         // leaf each. A caller inviting an account passes every signer id the
         // account's directory bundle lists.
         let mut keypkgs = Vec::with_capacity(members.len());
-        for ident in members {
+        for ident in &members {
             keypkgs.push(self.key_package_for_signer(
                 ident,
                 &cx.mls_provider,
@@ -388,11 +403,11 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
                 &cx.mls_identity,
                 keypkgs.iter().as_slice(),
             )
-            .unwrap();
+            .map_err(ChatError::generic)?;
 
         self.mls_group
             .merge_pending_commit(&cx.mls_provider)
-            .unwrap();
+            .map_err(ChatError::generic)?;
 
         // TODO: (P3) Evaluate privacy/performance implications of an aggregated Welcome for multiple users
         for signer in members {

@@ -152,3 +152,28 @@ fn remove_group_signer_rejects_a_non_signer() {
         2
     );
 }
+
+#[test]
+fn adding_seated_signers_changes_nothing() {
+    let mut harness = TestHarness::<2>::new(|_, _| {});
+
+    let (saro_account, raya_account) = (harness.saro().account(), harness.raya().account());
+    let convo_id = harness
+        .saro()
+        .create_group_convo_v1(std::slice::from_ref(&raya_account))
+        .expect("Saro create with Raya");
+    harness.process_until(|h| h.raya().convo_count() == 1);
+
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &[saro_account, raya_account])
+        .expect("everyone named is seated");
+    assert_eq!(
+        harness
+            .saro()
+            .group_signers(&convo_id)
+            .expect("members")
+            .len(),
+        2
+    );
+}

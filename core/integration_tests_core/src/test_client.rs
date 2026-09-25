@@ -166,6 +166,7 @@ pub struct Observation {
 pub struct TestHarness<const N: usize> {
     addresses: HashMap<usize, SignerKey>,
     clients: Vec<TestClient>,
+    auth: AcceptAllAuth,
     wakeup_service: WS,
     cb: Box<OnMessageCallback>,
     // List of outcomes that were detected across all clients.
@@ -214,6 +215,7 @@ impl<const N: usize> TestHarness<N> {
         Self {
             addresses,
             clients,
+            auth,
             wakeup_service: ws,
             cb: Box::new(cb),
             observed_outcomes: vec![],
@@ -226,6 +228,11 @@ impl<const N: usize> TestHarness<N> {
 
     pub fn client_mut(&mut self, i: usize) -> &mut TestClient {
         &mut self.clients[i]
+    }
+
+    /// The auth every client shares; what it resolves, all of them resolve.
+    pub fn auth(&self) -> &AcceptAllAuth {
+        &self.auth
     }
 
     /// Lets a client keep running when it rejects an inbound payload, the way
