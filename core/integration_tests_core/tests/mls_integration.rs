@@ -1,5 +1,5 @@
 use integration_tests_core::TestHarness;
-use libchat::ChatError;
+use libchat::{ChatError, ConvoOutcome, PayloadOutcome};
 use std::time::Duration;
 
 #[test]
@@ -176,4 +176,38 @@ fn adding_seated_signers_changes_nothing() {
             .len(),
         2
     );
+}
+
+#[test]
+fn burst_delivered_out_of_order_is_read_whole() {
+    let mut harness = TestHarness::<2>::new(|_, _| {});
+
+    let raya_account = harness.raya().account();
+    let convo_id = harness
+        .saro()
+        .create_group_convo_v1(&[raya_account])
+        .expect("Saro create with Raya");
+    harness.process_until(|h| h.raya().convo_count() == 1);
+
+    let sent: Vec<Vec<u8>> = (0..10).map(|i| format!("m{i}").into_bytes()).collect();
+    for msg in &sent {
+        harness.saro().send_content(&convo_id, msg).expect("send");
+    }
+
+    // The newest message arrives first, the rest after it.
+    let mut burst: Vec<Vec<u8>> = std::iter::from_fn(|| harness.raya().ds().poll()).collect();
+    burst.rotate_right(1);
+
+    let mut read = Vec::new();
+    for payload in &burst {
+        match harness.raya().handle_payload(payload).expect("raya reads") {
+            PayloadOutcome::Convo(ConvoOutcome {
+                content: Some(content),
+                ..
+            }) => read.push(content.bytes),
+            outcome => panic!("expected content, got {outcome:?}"),
+        }
+    }
+    read.sort();
+    assert_eq!(read, sent);
 }
