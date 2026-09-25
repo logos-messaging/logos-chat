@@ -73,11 +73,11 @@ impl GroupV1Convo {
     ) -> Result<Self, ChatError> {
         let mls_group =
             StagedWelcome::build_from_welcome(&cx.mls_provider, &Self::mls_join_config(), welcome)
-                .unwrap()
+                .map_err(ChatError::generic)?
                 .build()
-                .unwrap()
+                .map_err(ChatError::generic)?
                 .into_group(&cx.mls_provider)
-                .unwrap();
+                .map_err(ChatError::generic)?;
 
         let convo_id = hex::encode(mls_group.group_id().as_slice());
         Self::subscribe(&mut cx.ds, &convo_id)?;
