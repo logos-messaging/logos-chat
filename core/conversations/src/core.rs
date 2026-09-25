@@ -19,7 +19,7 @@ use crate::{
     proto::{EncryptedPayload, EnvelopeV1, Message},
 };
 use openmls::group::GroupId;
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::Entry};
 use std::fmt::Debug;
 use tracing::{info, instrument};
 
@@ -512,11 +512,12 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
     }
 
     fn register_convo(&mut self, convo: ConvoTypeOwned<S>) -> Result<(), ChatError> {
-        let res = self.cached_convos.insert(convo.id().to_string(), convo);
-
-        match res {
-            Some(_) => Err(ChatError::generic("Convo already exists. Cannot save")),
-            None => Ok(()),
+        match self.cached_convos.entry(convo.id().to_string()) {
+            Entry::Occupied(_) => Err(ChatError::generic("Convo already exists. Cannot save")),
+            Entry::Vacant(slot) => {
+                slot.insert(convo);
+                Ok(())
+            }
         }
     }
 
