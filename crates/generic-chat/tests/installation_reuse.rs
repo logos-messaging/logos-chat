@@ -33,16 +33,12 @@ fn an_account() -> AccountAddr {
     .expect("a generated key is an address")
 }
 
-/// Load-or-create, as a client stack does at startup.
+/// Load-or-create, through the same call a client stack uses at startup.
 fn open_installation(store: &mut SqliteStore) -> Installation {
-    match Installation::load(store).expect("the store is readable") {
-        Some(installation) => installation,
-        None => {
-            let installation = PendingInstallation::generate().complete(an_account());
-            installation.save(store).expect("the store is writable");
-            installation
-        }
-    }
+    Installation::load_or_create(store, || {
+        Ok(PendingInstallation::generate().complete(an_account()))
+    })
+    .expect("the store is readable and writable")
 }
 
 fn db_path(dir: &tempfile::TempDir) -> String {
@@ -134,4 +130,133 @@ fn the_installation_is_unreachable_without_the_database_key() {
         panic!("a store must not open under a key that did not write it");
     };
     assert!(err.to_string().contains("key is incorrect"), "got: {err}");
+}
+
+/// An auth service that cannot answer: offline, or a registry that has lost the account log.
+#[derive(Debug, Clone)]
+struct Unreachable;
+
+impl libchat::AuthService for Unreachable {
+    type Error = String;
+
+    fn validate_signer(
+        &self,
+        _: libchat::SignerKey,
+        _: libchat::ParticipantId,
+    ) -> Result<libchat::AuthResult, String> {
+        Err("registry unreachable".into())
+    }
+
+    fn signers_for_participant(
+        &self,
+        _: &libchat::ParticipantId,
+    ) -> Result<Vec<libchat::SignerKey>, String> {
+        Err("registry unreachable".into())
+    }
+}
+
+/// An auth service that answers, and says no.
+#[derive(Debug, Clone)]
+struct Revoked;
+
+impl libchat::AuthService for Revoked {
+    type Error = String;
+
+    fn validate_signer(
+        &self,
+        _: libchat::SignerKey,
+        _: libchat::ParticipantId,
+    ) -> Result<libchat::AuthResult, String> {
+        Ok(libchat::AuthResult::Revoked)
+    }
+
+    fn signers_for_participant(
+        &self,
+        _: &libchat::ParticipantId,
+    ) -> Result<Vec<libchat::SignerKey>, String> {
+        Ok(Vec::new())
+    }
+}
+
+fn build_with_auth<A: libchat::AuthService + Send + 'static>(
+    store: SqliteStore,
+    installation: Installation,
+    auth: A,
+) -> Result<(), ClientError> {
+    ChatClientBuilder::new(installation)
+        .transport(InProcessDelivery::new(MessageBus::default()))
+        .registration(EphemeralRegistry::new())
+        .auth(auth)
+        .storage(store)
+        .build()
+        .map(|_| ())
+}
+
+/// A stored installation was endorsed on an earlier run, so a registry that cannot answer must
+/// not stop it starting. Otherwise no client starts offline, and a registry that loses its log
+/// locks every installation out for good — the account key is gone, so the endorsement can
+/// never be published again.
+#[test]
+fn a_stored_installation_opens_when_the_registry_cannot_answer() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = db_path(&dir);
+    open_installation(&mut open_store(&path));
+
+    let mut store = open_store(&path);
+    let installation = open_installation(&mut store);
+
+    build_with_auth(store, installation, Unreachable).expect("a stored installation still opens");
+}
+
+/// Tolerating an unanswerable service is not tolerating a "no": a revoked endorsement produces
+/// frames every member rejects, so it still stops the open.
+#[test]
+fn a_revoked_endorsement_still_stops_the_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = db_path(&dir);
+    open_installation(&mut open_store(&path));
+
+    let mut store = open_store(&path);
+    let installation = open_installation(&mut store);
+
+    assert!(matches!(
+        build_with_auth(store, installation, Revoked),
+        Err(ClientError::NotEndorsed(_))
+    ));
+}
+
+/// A freshly minted installation has nothing confirming the endorsement it just published, so
+/// an unanswerable service is fatal for it.
+#[test]
+fn a_minted_installation_needs_an_answer() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open_store(&db_path(&dir));
+    let installation = PendingInstallation::generate().complete(an_account());
+
+    assert!(matches!(
+        build_with_auth(store, installation, Unreachable),
+        Err(ClientError::NotEndorsed(_))
+    ));
+}
+
+/// `load_or_create` saves only what `mint` returned, and only after it returned. A mint that
+/// fails — the endorsement never published — must leave the store empty, so the next open
+/// registers again rather than believing it already did.
+#[test]
+fn a_failed_mint_stores_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = db_path(&dir);
+
+    let mut store = open_store(&path);
+    let failed = Installation::load_or_create(&mut store, || {
+        Err(ClientError::Transport(
+            "the endorsement never landed".into(),
+        ))
+    });
+    assert!(failed.is_err());
+
+    assert!(
+        Installation::load(&open_store(&path)).unwrap().is_none(),
+        "a mint that failed must leave nothing behind"
+    );
 }

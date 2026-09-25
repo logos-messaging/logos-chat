@@ -21,6 +21,15 @@ pub enum IdentityMode {
     Ephemeral,
 }
 
+/// Where an installation came from, which decides how hard a failed self-check is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Origin {
+    /// Minted this run, so its endorsement is being published now.
+    Minted,
+    /// Read from a store, so it was endorsed on some earlier run.
+    Stored,
+}
+
 /// The encoding version leading a stored record, so a later shape can be told from this one.
 const RECORD_V1: u8 = 1;
 const SEED_LEN: usize = 32;
@@ -57,6 +66,7 @@ impl PendingInstallation {
             signer: SignerKey::from(self.verifying_key),
             signing_key: self.signing_key,
             account,
+            origin: Origin::Minted,
         }
     }
 }
@@ -68,6 +78,7 @@ pub struct Installation {
     /// The public key, which is what this installation signs under.
     signer: SignerKey,
     account: AccountAddr,
+    origin: Origin,
 }
 
 impl Installation {
@@ -91,9 +102,30 @@ impl Installation {
     /// Only once its endorsement is published: a stored installation tells the next open that
     /// registration already happened, so storing one that never reached the network leaves a
     /// client nobody can invite.
+    ///
+    /// The record holds a signing key, so it is only as protected as the store. A store on an
+    /// unencrypted file writes it in the clear — see
+    /// [`StorageConfig::EncryptedWithKey`](chat_sqlite::StorageConfig::EncryptedWithKey).
     pub fn save(&self, store: &mut impl IdentityStore) -> Result<(), ClientError> {
         store.save_installation(&StoredInstallation::new(self.encode()))?;
         Ok(())
+    }
+
+    /// The installation `store` holds, or one from `mint` recorded into it.
+    ///
+    /// `mint` runs only when the store holds none, and must have published the endorsement
+    /// before it returns: what it produces is saved straight after, and a stored record is what
+    /// tells the next open not to register again.
+    pub fn load_or_create(
+        store: &mut impl IdentityStore,
+        mint: impl FnOnce() -> Result<Installation, ClientError>,
+    ) -> Result<Self, ClientError> {
+        if let Some(installation) = Self::load(store)? {
+            return Ok(installation);
+        }
+        let installation = mint()?;
+        installation.save(store)?;
+        Ok(installation)
     }
 
     /// `version ‖ seed ‖ account`. The signer is the seed's public half, so storing it too
@@ -129,14 +161,32 @@ impl Installation {
             signer: SignerKey::from(signing_key.verifying_key()),
             signing_key,
             account,
+            origin: Origin::Stored,
         })
     }
 
-    /// `Ok` only if `auth` confirms the account endorses this installation.
+    /// `Ok` unless `auth` says the account does not endorse this installation.
+    ///
+    /// A verdict is always fatal: an endorsement can be revoked after it was stored, and
+    /// running on a revoked one produces frames every member rejects.
+    ///
+    /// An auth service that cannot answer is different. For a freshly minted installation it is
+    /// fatal, because nothing has confirmed the endorsement it just published. For one read
+    /// from the store it is not: that endorsement was confirmed on an earlier run, and treating
+    /// "cannot reach the registry" as "not endorsed" would mean no client starts offline — and
+    /// that a registry which lost its log locks every installation out permanently, since the
+    /// account key is gone and the endorsement cannot be published again.
     pub(crate) fn validate(&self, auth: &impl AuthService) -> Result<(), ClientError> {
         match auth.validate_signer(self.signer.clone(), self.participant_id()) {
             Ok(AuthResult::Valid) => Ok(()),
             Ok(verdict) => Err(ClientError::NotEndorsed(format!("{verdict:?}"))),
+            Err(e) if self.origin == Origin::Stored => {
+                tracing::warn!(
+                    error = %e,
+                    "could not confirm this installation's endorsement; continuing on the one                      the store already held"
+                );
+                Ok(())
+            }
             Err(e) => Err(ClientError::NotEndorsed(format!(
                 "auth service could not decide: {e}"
             ))),

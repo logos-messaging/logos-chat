@@ -170,7 +170,7 @@ pub fn open_with_transport<T: Transport + Clone>(
     // store can answer, and the client is built from the answer.
     let storage = match config.identity_mode {
         IdentityMode::Ephemeral => StorageConfig::InMemory,
-        _ => StorageConfig::EncryptedWithKey {
+        IdentityMode::LoadOrCreate => StorageConfig::EncryptedWithKey {
             path: config.db_path,
             key: config.db_key,
         },
@@ -208,13 +208,7 @@ where
     if mode == IdentityMode::Ephemeral {
         return Ok(register_account(auth)?);
     }
-    if let Some(installation) = Installation::load(store)? {
-        return Ok(installation);
-    }
-
-    let installation = register_account(auth)?;
-    installation.save(store)?;
-    Ok(installation)
+    Installation::load_or_create(store, || Ok(register_account(auth)?))
 }
 
 /// The Logos client: a [`ChatClient`] wired to the Logos service stack —
@@ -234,7 +228,8 @@ pub type LogosChatClient = ChatClient<
 
 /// Mints an installation and publishes its endorsement, in that order: a crash after the publish
 /// re-runs registration harmlessly, while a record stored before it would leave a client nobody
-/// can invite.
+/// can invite. The cost of that order is that a save which fails afterwards leaves an account on
+/// the registry nothing will use again.
 ///
 /// The account is still fresh per call and its key dropped at the end, so this installation is
 /// the only one that account will ever endorse. Account custody belongs wherever an account's
