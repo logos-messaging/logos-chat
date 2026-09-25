@@ -15,6 +15,12 @@ use crate::errors::map_rusqlite_error;
 pub struct DbKey([u8; 32]);
 
 impl DbKey {
+    /// Bytes that are already a key: random, or a KDF's output. **Not a passphrase's bytes** —
+    /// nothing derives them here, so a padded `"hunter2"` is brute-forceable offline.
+    pub fn from_encryption_key(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
     /// The key as SQLCipher's raw-key pragma. Zeroizing, because the hex and the statement are
     /// two more heap copies of the key and outlive the borrow otherwise.
     fn pragma(&self) -> Zeroizing<String> {
@@ -23,12 +29,6 @@ impl DbKey {
             hex.push_str(&Zeroizing::new(format!("{byte:02x}")));
         }
         Zeroizing::new(format!("PRAGMA key = \"x'{}'\";", *hex))
-    }
-}
-
-impl From<[u8; 32]> for DbKey {
-    fn from(bytes: [u8; 32]) -> Self {
-        Self(bytes)
     }
 }
 
@@ -170,7 +170,7 @@ mod tests {
     use super::*;
 
     fn key(byte: u8) -> DbKey {
-        DbKey::from([byte; 32])
+        DbKey::from_encryption_key([byte; 32])
     }
 
     fn db_path(dir: &tempfile::TempDir) -> String {
