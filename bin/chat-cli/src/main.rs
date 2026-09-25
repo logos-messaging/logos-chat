@@ -211,7 +211,7 @@ fn main() -> Result<()> {
 /// The key chat-cli encrypts its database with.
 fn db_key() -> DbKey {
     // Uses a static key. Requesting a passphrase in this demo app adds too much friction.
-    // A real application would derive these 32 bytes from a password prompt or reads them out of the 
+    // A real application would derive these 32 bytes from a password prompt or reads them out of the
     // OS keychain.
     DbKey::from(*b"chat-cli example database key --")
 }
