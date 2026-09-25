@@ -18,6 +18,8 @@ use reqwest::StatusCode;
 use reqwest::blocking::{Client, Response};
 use reqwest::header::CONTENT_TYPE;
 
+use crate::http_retry::{Retry, send_retrying};
+
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The largest valid response: a 64-byte Ed25519 signature, then the payload.
@@ -115,7 +117,9 @@ impl AccountProvider for HttpAuthClient {
     type Error = HttpAccountError;
 
     fn fetch(&self, addr: &AccountAddr) -> Result<Option<SignedAccountLog>, Self::Error> {
-        let resp = self.endpoint.http.get(self.endpoint.url(addr)).send()?;
+        // Every inbound message is checked here, so a timeout is not retried.
+        let url = self.endpoint.url(addr);
+        let resp = send_retrying(Retry::StatusOnly, || self.endpoint.http.get(&url))?;
         if resp.status() == StatusCode::NOT_FOUND {
             return Ok(None);
         }
@@ -209,5 +213,70 @@ impl AuthService for HttpAuthClient {
             return Err(HttpAccountError::NotChatEnabled);
         }
         Ok(signers)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+    use std::net::TcpListener;
+
+    use account_log::{AccountLogDraft, Ed25519SigningKey, EntryData};
+    use libchat::ParticipantId;
+
+    use super::*;
+
+    /// Answers one connection per `(status, body)`, in order, and returns the
+    /// base URL.
+    fn serve(responses: Vec<(&'static str, Vec<u8>)>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                // Closing with the request unread would reset the connection.
+                let mut request = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    let n = stream.read(&mut buf).unwrap();
+                    request.extend_from_slice(&buf[..n]);
+                }
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .unwrap();
+                stream.write_all(&body).unwrap();
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn signer_lookup_outlasts_a_503() {
+        let account = Ed25519SigningKey::generate();
+        let signer = Ed25519SigningKey::generate().verifying_key();
+        let mut draft = AccountLogDraft::new();
+        draft
+            .add(
+                CHATSIGNER_CONTEXT.clone(),
+                EntryData::Ed25519Key(signer.as_ref().try_into().unwrap()),
+            )
+            .unwrap();
+        let payload = draft.log().encode().unwrap();
+        let signature = account.sign(payload.as_bytes());
+        let log = SignedAccountLog { payload, signature };
+
+        let url = serve(vec![
+            ("503 Service Unavailable", Vec::new()),
+            ("200 OK", log.to_bytes()),
+        ]);
+        let participant =
+            ParticipantId::from(AccountAddr::from(account.verifying_key()).to_bytes());
+        let result = HttpAuthClient::new(url)
+            .validate_signer(SignerKey::from(signer.as_ref()), participant)
+            .expect("the retry lands");
+        assert!(matches!(result, AuthResult::Valid), "{result:?}");
     }
 }
