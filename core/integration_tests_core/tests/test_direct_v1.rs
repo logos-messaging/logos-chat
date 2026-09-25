@@ -149,3 +149,21 @@ fn account_listing_your_installation_does_not_seat_you_twice() {
         .expect("saro send");
     harness.process_until(|h| h.raya().check(&convo_id, MSG));
 }
+
+#[test]
+fn members_cannot_be_added_to_a_received_direct_convo() {
+    let mut harness = TestHarness::<3>::new(|_, _| {});
+
+    let (raya_account, pax_account) = (harness.raya().account(), harness.pax().account());
+    let convo_id = harness
+        .saro()
+        .create_direct_convo_v1(raya_account)
+        .expect("saro create convo");
+    harness.process_until(|h| h.raya().convo_count() == 1);
+
+    let err = harness
+        .raya()
+        .group_add_participants(&convo_id, &[pax_account])
+        .expect_err("a direct convo takes no new members");
+    assert!(matches!(err, ChatError::UnsupportedFunction(..)), "{err:?}");
+}
