@@ -171,6 +171,9 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         &mut self,
         participant: ParticipantId,
     ) -> Result<ConversationId, ChatError> {
+        if participant == self.services.mls_identity.participant_id() {
+            return Err(ChatError::CannotMessageSelf);
+        }
         let signers = self.get_signers_for_participants(&[participant])?;
 
         let convo = DirectV1Convo::new(&mut self.services, &signers)?;
