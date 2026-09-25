@@ -150,7 +150,7 @@ fn missing_group_message_is_detected() {
     // The hint names the sender by its signer.
     assert_eq!(
         missing[0].frontier.sender(),
-        saro.signer(),
+        saro.signer_key(),
         "missing-message sender hint should attribute to Saro"
     );
 
