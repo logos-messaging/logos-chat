@@ -148,10 +148,6 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         self.pq_inbox.register(&mut self.services)
     }
 
-    pub fn installation_name(&self) -> String {
-        self.services.mls_identity.signer_key().to_string()
-    }
-
     pub fn create_direct_convo(
         &mut self,
         participants: ParticipantId,
