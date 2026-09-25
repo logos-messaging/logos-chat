@@ -19,7 +19,7 @@ use logos_generic_chat::{
 fn open_store(path: &str) -> SqliteStore {
     SqliteStore::new(StorageConfig::EncryptedWithKey {
         path: path.to_string(),
-        key: DbKey::from([9u8; 32]),
+        key: DbKey::from_encryption_key([9u8; 32]),
     })
     .expect("a store on a temporary path opens")
 }
@@ -125,7 +125,7 @@ fn the_installation_is_unreachable_without_the_database_key() {
 
     let Err(err) = SqliteStore::new(StorageConfig::EncryptedWithKey {
         path,
-        key: DbKey::from([1u8; 32]),
+        key: DbKey::from_encryption_key([1u8; 32]),
     }) else {
         panic!("a store must not open under a key that did not write it");
     };
