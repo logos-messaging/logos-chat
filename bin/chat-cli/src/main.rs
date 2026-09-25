@@ -209,13 +209,10 @@ fn main() -> Result<()> {
 }
 
 /// The key chat-cli encrypts its database with.
-///
-/// A constant, which is to say the database is encrypted against a casual reader and nothing
-/// else — anyone with this source has it. That is the right trade for an example client with no
-/// UI to ask for a passphrase and nowhere to keep one; a real application derives these 32 bytes
-/// from a password prompt or reads them out of the OS keychain, which is precisely why
-/// [`LogosConfig::new`] takes bytes rather than doing the derivation itself.
 fn db_key() -> DbKey {
+    // Uses a static key. Requesting a passphrase in this demo app adds too much friction.
+    // A real application would derive these 32 bytes from a password prompt or reads them out of the 
+    // OS keychain.
     DbKey::from(*b"chat-cli example database key --")
 }
 
