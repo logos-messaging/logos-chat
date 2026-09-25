@@ -23,10 +23,15 @@ impl IdentityStore for SqliteStore {
         self.db
             .connection()
             .execute(
-                "INSERT OR REPLACE INTO installation (id, record) VALUES (1, ?1)",
+                "INSERT INTO installation (id, record) VALUES (1, ?1)",
                 params![installation.as_bytes()],
             )
-            .map_err(map_rusqlite_error)?;
+            .map_err(|err| match err.sqlite_error_code() {
+                Some(rusqlite::ErrorCode::ConstraintViolation) => {
+                    StorageError::InvalidData("an installation is already stored".into())
+                }
+                _ => map_rusqlite_error(err),
+            })?;
         Ok(())
     }
 }

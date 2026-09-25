@@ -1,5 +1,5 @@
 -- The installation this database belongs to
--- Migration: 008_installation
+-- Migration: 009_installation
 
 -- One row: the conversations here were joined by one installation, and a second one reading
 -- them would hold groups whose leaves it cannot sign for. `record` holds a signing key, so it

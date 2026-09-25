@@ -37,15 +37,19 @@ fn a_record_reads_back_as_written<S: IdentityStore>(store: &mut S) {
     assert_eq!(store.load_installation().unwrap().unwrap(), record);
 }
 
-/// Saving a second replaces the first, rather than leaving two for a later read to choose between.
+/// Saving over a stored installation is refused, and leaves the stored one intact. Replacing
+/// would orphan every conversation the stored installation joined.
 fn a_store_holds_one_installation<S: IdentityStore>(store: &mut S) {
-    let second = StoredInstallation::new(b"second".to_vec());
-    store
-        .save_installation(&StoredInstallation::new(b"first".to_vec()))
-        .unwrap();
-    store.save_installation(&second).unwrap();
+    let first = StoredInstallation::new(b"first".to_vec());
+    store.save_installation(&first).unwrap();
 
-    assert_eq!(store.load_installation().unwrap().unwrap(), second);
+    assert!(
+        store
+            .save_installation(&StoredInstallation::new(b"second".to_vec()))
+            .is_err(),
+        "a store that already holds an installation must refuse a second"
+    );
+    assert_eq!(store.load_installation().unwrap().unwrap(), first);
 }
 
 const ALPHA: Namespace = Namespace::new("alpha");

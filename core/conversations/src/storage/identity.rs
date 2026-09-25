@@ -1,5 +1,7 @@
 //! The installation a store belongs to.
 
+use zeroize::Zeroizing;
+
 use super::StorageError;
 
 /// The installation a client runs as, encoded by that client.
@@ -7,11 +9,11 @@ use super::StorageError;
 /// Opaque here, so a client can change what an installation is made of without any of it
 /// reaching a store. **Secret:** a signing key is in these bytes.
 #[derive(Clone, PartialEq, Eq)]
-pub struct StoredInstallation(Vec<u8>);
+pub struct StoredInstallation(Zeroizing<Vec<u8>>);
 
 impl StoredInstallation {
     pub fn new(bytes: Vec<u8>) -> Self {
-        Self(bytes)
+        Self(Zeroizing::new(bytes))
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -27,12 +29,6 @@ impl std::fmt::Debug for StoredInstallation {
     }
 }
 
-impl Drop for StoredInstallation {
-    fn drop(&mut self) {
-        self.0.iter_mut().for_each(|b| *b = 0);
-    }
-}
-
 /// The one installation a store holds, as a typed record beside the conversation list.
 ///
 /// One store, one installation: the conversations here were joined by it, and a second
@@ -45,6 +41,10 @@ pub trait IdentityStore {
     /// `None` if this store has never held one, which is the signal to create one.
     fn load_installation(&self) -> Result<Option<StoredInstallation>, StorageError>;
 
-    /// Records the installation this store belongs to, replacing any it already held.
+    /// Records the installation this store belongs to.
+    ///
+    /// Insert-only: a store that already holds one fails with
+    /// [`StorageError::InvalidData`]. Replacing would orphan every conversation the stored
+    /// installation joined, so the store does not make that reachable by accident.
     fn save_installation(&mut self, installation: &StoredInstallation) -> Result<(), StorageError>;
 }

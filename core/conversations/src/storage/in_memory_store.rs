@@ -67,6 +67,11 @@ impl IdentityStore for MemStore {
     }
 
     fn save_installation(&mut self, installation: &StoredInstallation) -> Result<(), StorageError> {
+        if self.installation.is_some() {
+            return Err(StorageError::InvalidData(
+                "an installation is already stored".into(),
+            ));
+        }
         self.installation = Some(installation.clone());
         Ok(())
     }

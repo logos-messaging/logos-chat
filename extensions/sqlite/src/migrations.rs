@@ -36,9 +36,11 @@ pub fn get_migrations() -> Vec<(&'static str, &'static str)> {
             include_str!("migrations/006_drop_remote_convo_id.sql"),
         ),
         ("007_kv", include_str!("migrations/007_kv.sql")),
+        // 008 is taken by #229 (drop_conversations_without_state); this list is applied in
+        // order, so the numbers stay unique across branches in flight.
         (
-            "008_installation",
-            include_str!("migrations/008_installation.sql"),
+            "009_installation",
+            include_str!("migrations/009_installation.sql"),
         ),
     ]
 }
