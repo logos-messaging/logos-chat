@@ -2,6 +2,7 @@ use ed25519_dalek::{self, Signer};
 use rand_core::OsRng;
 use std::fmt::Debug;
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 #[derive(Debug, Error)]
 #[error("verification failed of the Ed25519 Signature")]
@@ -35,6 +36,17 @@ pub struct Ed25519SigningKey(ed25519_dalek::SigningKey);
 impl Ed25519SigningKey {
     pub fn generate() -> Self {
         Self(ed25519_dalek::SigningKey::generate(&mut OsRng))
+    }
+
+    /// Rebuilds the key from the 32-byte seed an Ed25519 private key is.
+    pub fn from_seed(seed: &[u8; 32]) -> Self {
+        Self(ed25519_dalek::SigningKey::from_bytes(seed))
+    }
+
+    /// The seed, the only form this key survives a restart in. Secret: whoever calls this owns
+    /// where the bytes land.
+    pub fn seed(&self) -> Zeroizing<[u8; 32]> {
+        Zeroizing::new(self.0.to_bytes())
     }
 
     pub fn sign(&self, msg: &[u8]) -> Ed25519Signature {
@@ -85,5 +97,26 @@ impl From<ed25519_dalek::VerifyingKey> for Ed25519VerifyingKey {
 impl AsRef<[u8]> for Ed25519VerifyingKey {
     fn as_ref(&self) -> &[u8] {
         self.0.as_bytes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What carries an installation across a restart: the rebuilt key is the same key.
+    #[test]
+    fn a_key_rebuilt_from_its_seed_is_the_same_key() {
+        let original = Ed25519SigningKey::generate();
+        let rebuilt = Ed25519SigningKey::from_seed(&original.seed());
+
+        assert_eq!(original.verifying_key(), rebuilt.verifying_key());
+        let signature = rebuilt.sign(b"after a restart");
+        assert!(
+            original
+                .verifying_key()
+                .verify(b"after a restart", &signature)
+                .is_ok()
+        );
     }
 }

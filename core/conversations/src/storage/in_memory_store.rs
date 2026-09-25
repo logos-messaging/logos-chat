@@ -4,12 +4,14 @@ use std::{
 };
 
 use super::{
-    ConversationMeta, ConversationStore, KvPair, KvStore, KvTx, Namespace, Scope, StorageError,
+    ConversationMeta, ConversationStore, IdentityStore, KvPair, KvStore, KvTx, Namespace, Scope,
+    StorageError, StoredInstallation,
 };
 
 /// A test-focused store which holds data in a hashmap.
 pub struct MemStore {
     convos: HashMap<String, ConversationMeta>,
+    installation: Option<StoredInstallation>,
     kv: RefCell<Kv>,
     tx_open: Cell<bool>,
 }
@@ -18,6 +20,7 @@ impl MemStore {
     pub fn new() -> Self {
         Self {
             convos: HashMap::new(),
+            installation: None,
             kv: RefCell::new(Kv::new()),
             tx_open: Cell::new(false),
         }
@@ -55,6 +58,22 @@ impl ConversationStore for MemStore {
 
     fn has_conversation(&self, local_convo_id: &str) -> Result<bool, StorageError> {
         Ok(self.convos.contains_key(local_convo_id))
+    }
+}
+
+impl IdentityStore for MemStore {
+    fn load_installation(&self) -> Result<Option<StoredInstallation>, StorageError> {
+        Ok(self.installation.clone())
+    }
+
+    fn save_installation(&mut self, installation: &StoredInstallation) -> Result<(), StorageError> {
+        if self.installation.is_some() {
+            return Err(StorageError::InvalidData(
+                "an installation is already stored".into(),
+            ));
+        }
+        self.installation = Some(installation.clone());
+        Ok(())
     }
 }
 
@@ -172,12 +191,17 @@ fn delete_namespace(kv: &mut Kv, ns: Namespace) {
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::assert_kv_contract;
+    use crate::storage::{assert_identity_store_contract, assert_kv_contract};
 
     use super::*;
 
     #[test]
     fn satisfies_the_substrate_contract() {
         assert_kv_contract(MemStore::new);
+    }
+
+    #[test]
+    fn satisfies_the_identity_contract() {
+        assert_identity_store_contract(MemStore::new);
     }
 }

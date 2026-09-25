@@ -1,6 +1,6 @@
 //! Test assertions every `KvStore` implementation must pass: the behaviour it owes its callers.
 
-use super::{KvPair, KvStore, KvTx, Namespace, Scope};
+use super::{IdentityStore, KvPair, KvStore, KvTx, Namespace, Scope, StoredInstallation};
 
 /// Asserts the substrate contract against a store, taking a fresh one per case.
 pub fn assert_kv_contract<S: KvStore>(new_store: impl Fn() -> S) {
@@ -15,6 +15,41 @@ pub fn assert_kv_contract<S: KvStore>(new_store: impl Fn() -> S) {
     a_transaction_reads_its_own_writes(&new_store());
     a_transaction_stages_the_destructive_verbs(&new_store());
     a_second_transaction_is_refused(&new_store());
+}
+
+/// Asserts the identity contract against a store, taking a fresh one per case.
+pub fn assert_identity_store_contract<S: IdentityStore>(new_store: impl Fn() -> S) {
+    a_new_store_holds_no_installation(&mut new_store());
+    a_record_reads_back_as_written(&mut new_store());
+    a_store_holds_one_installation(&mut new_store());
+}
+
+/// The signal a client opens on: nothing stored means nothing has run here yet.
+fn a_new_store_holds_no_installation<S: IdentityStore>(store: &mut S) {
+    assert!(store.load_installation().unwrap().is_none());
+}
+
+/// The record is the client's encoding, so a store may not assume text, a length or a shape.
+fn a_record_reads_back_as_written<S: IdentityStore>(store: &mut S) {
+    let record = StoredInstallation::new(vec![0x00, 0xff, 0x27, 0x0a, 0x00]);
+    store.save_installation(&record).unwrap();
+
+    assert_eq!(store.load_installation().unwrap().unwrap(), record);
+}
+
+/// Saving over a stored installation is refused, and leaves the stored one intact. Replacing
+/// would orphan every conversation the stored installation joined.
+fn a_store_holds_one_installation<S: IdentityStore>(store: &mut S) {
+    let first = StoredInstallation::new(b"first".to_vec());
+    store.save_installation(&first).unwrap();
+
+    assert!(
+        store
+            .save_installation(&StoredInstallation::new(b"second".to_vec()))
+            .is_err(),
+        "a store that already holds an installation must refuse a second"
+    );
+    assert_eq!(store.load_installation().unwrap().unwrap(), first);
 }
 
 const ALPHA: Namespace = Namespace::new("alpha");

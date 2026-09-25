@@ -1446,6 +1446,7 @@ dependencies = [
  "libchat",
  "rusqlite",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]
@@ -3385,6 +3386,7 @@ dependencies = [
  "thiserror",
  "tracing",
  "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]

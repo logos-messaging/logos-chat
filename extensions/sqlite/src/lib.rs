@@ -2,6 +2,7 @@
 
 mod common;
 mod errors;
+mod identity;
 mod kv;
 mod migrations;
 
@@ -13,7 +14,7 @@ use crate::{
     errors::{map_optional_row, map_rusqlite_error},
 };
 
-pub use common::StorageConfig;
+pub use common::{DbKey, StorageConfig};
 
 /// Chat-specific storage operations.
 ///

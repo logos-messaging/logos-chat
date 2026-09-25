@@ -37,8 +37,8 @@ pub use service_traits::{
     AuthResult, AuthService, DeliveryService, IdentityProvider, RegistrationService, WakeupService,
 };
 pub use storage::{
-    ConversationKind, ConversationMeta, ConversationStore, KvPair, KvStore, KvTx, Namespace, Scope,
-    StorageError,
+    ConversationKind, ConversationMeta, ConversationStore, IdentityStore, KvPair, KvStore, KvTx,
+    Namespace, Scope, StorageError, StoredInstallation,
 };
 pub use types::{AddressedEnvelope, ConvoMetadata};
 pub use utils::{hex_trunc, trunc};
