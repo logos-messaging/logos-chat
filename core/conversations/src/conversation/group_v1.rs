@@ -28,6 +28,9 @@ use crate::{
 };
 
 const OUTBOUND_HASH_CACHE_SIZE: usize = 25;
+// Keys kept per sender for messages delivery hands over late. Past it a
+// message is unreadable for good; OpenMLS's default of 5 loses part of a burst.
+const OUT_OF_ORDER_TOLERANCE: u32 = 100;
 
 pub struct GroupV1Convo {
     mls_group: MlsGroup,
@@ -73,11 +76,11 @@ impl GroupV1Convo {
     ) -> Result<Self, ChatError> {
         let mls_group =
             StagedWelcome::build_from_welcome(&cx.mls_provider, &Self::mls_join_config(), welcome)
-                .unwrap()
+                .map_err(ChatError::generic)?
                 .build()
-                .unwrap()
+                .map_err(ChatError::generic)?
                 .into_group(&cx.mls_provider)
-                .unwrap();
+                .map_err(ChatError::generic)?;
 
         let convo_id = hex::encode(mls_group.group_id().as_slice());
         Self::subscribe(&mut cx.ds, &convo_id)?;
@@ -119,11 +122,19 @@ impl GroupV1Convo {
         MlsGroupCreateConfig::builder()
             .ciphersuite(crate::inbox_v2::CIPHER_SUITE)
             .use_ratchet_tree_extension(true) // This is handy for now, until there is central store for this data
+            .sender_ratchet_configuration(Self::sender_ratchet_config())
             .build()
     }
 
     fn mls_join_config() -> MlsGroupJoinConfig {
-        MlsGroupJoinConfig::builder().build()
+        MlsGroupJoinConfig::builder()
+            .sender_ratchet_configuration(Self::sender_ratchet_config())
+            .build()
+    }
+
+    fn sender_ratchet_config() -> SenderRatchetConfiguration {
+        let default = SenderRatchetConfiguration::default();
+        SenderRatchetConfiguration::new(OUT_OF_ORDER_TOLERANCE, default.maximum_forward_distance())
     }
 
     fn delivery_address_from_id(convo_id: &str) -> String {
@@ -368,11 +379,26 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
             ));
         }
 
+        // Skip signers already seated, ours included, or named twice: MLS
+        // refuses a second leaf for one signature key.
+        let mut seated: HashSet<SignerKey> = self
+            .mls_group
+            .members()
+            .map(|m| SignerKey::from(m.signature_key.as_slice()))
+            .collect();
+        let members: Vec<&SignerKey> = members
+            .iter()
+            .filter(|&signer| seated.insert(signer.clone()))
+            .collect();
+        if members.is_empty() {
+            return Ok(());
+        }
+
         // Members are signer (installation) ids: one KeyPackage each, one MLS
         // leaf each. A caller inviting an account passes every signer id the
         // account's directory bundle lists.
         let mut keypkgs = Vec::with_capacity(members.len());
-        for ident in members {
+        for ident in &members {
             keypkgs.push(self.key_package_for_signer(
                 ident,
                 &cx.mls_provider,
@@ -388,11 +414,11 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
                 &cx.mls_identity,
                 keypkgs.iter().as_slice(),
             )
-            .unwrap();
+            .map_err(ChatError::generic)?;
 
         self.mls_group
             .merge_pending_commit(&cx.mls_provider)
-            .unwrap();
+            .map_err(ChatError::generic)?;
 
         // TODO: (P3) Evaluate privacy/performance implications of an aggregated Welcome for multiple users
         for signer in members {

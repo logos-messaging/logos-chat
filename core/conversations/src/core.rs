@@ -15,11 +15,11 @@ use crate::{
     conversation::{Convo, GroupConvo},
     errors::ChatError,
     inbox_v2::{InboxV2, MlsEphemeralPqProvider, MlsIdentityProvider},
-    outcomes::{ConvoOutcome, InboxOutcome, PayloadOutcome},
+    outcomes::{ConversationClass, ConvoOutcome, InboxOutcome, PayloadOutcome},
     proto::{EncryptedPayload, EnvelopeV1, Message},
 };
 use openmls::group::GroupId;
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::Entry};
 use std::fmt::Debug;
 use tracing::{info, instrument};
 
@@ -171,6 +171,9 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         &mut self,
         participant: ParticipantId,
     ) -> Result<ConversationId, ChatError> {
+        if participant == self.services.mls_identity.participant_id() {
+            return Err(ChatError::CannotMessageSelf);
+        }
         let signers = self.get_signers_for_participants(&[participant])?;
 
         let convo = DirectV1Convo::new(&mut self.services, &signers)?;
@@ -449,7 +452,11 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         if let Some((convo, class)) = self.pq_inbox.handle_frame(&mut self.services, payload)? {
             let convo_id = convo.id().to_string();
             // Cache convos created by InboxV2
-            self.register_convo(ConvoTypeOwned::Group(convo))?;
+            let convo = match class {
+                ConversationClass::Dm => ConvoTypeOwned::Direct(convo),
+                ConversationClass::Group => ConvoTypeOwned::Group(convo),
+            };
+            self.register_convo(convo)?;
 
             Ok(PayloadOutcome::Inbox(InboxOutcome {
                 new_conversation: crate::NewConversation { convo_id, class },
@@ -505,11 +512,12 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
     }
 
     fn register_convo(&mut self, convo: ConvoTypeOwned<S>) -> Result<(), ChatError> {
-        let res = self.cached_convos.insert(convo.id().to_string(), convo);
-
-        match res {
-            Some(_) => Err(ChatError::generic("Convo already exists. Cannot save")),
-            None => Ok(()),
+        match self.cached_convos.entry(convo.id().to_string()) {
+            Entry::Occupied(_) => Err(ChatError::generic("Convo already exists. Cannot save")),
+            Entry::Vacant(slot) => {
+                slot.insert(convo);
+                Ok(())
+            }
         }
     }
 

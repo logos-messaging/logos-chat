@@ -18,10 +18,12 @@ libchat = { workspace = true, features = ["test-support"] }
 tracing = "0.1"
 
 [dev-dependencies]
+chat-proto = { workspace = true }
 chat-sqlite = { workspace = true }
 
 # External dependencies (sorted)
 hex = "0.4.3"
+prost = "0.14.1"
 tempfile = "3"
 tracing = "0.1.44"
 tracing-subscriber = "0.3"

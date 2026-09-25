@@ -1,6 +1,7 @@
 mod contact_registry;
 pub mod delivery;
 mod http_auth_client;
+mod http_retry;
 mod wakeup;
 
 pub use contact_registry::ephemeral::EphemeralRegistry;

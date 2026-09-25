@@ -61,12 +61,18 @@ pub struct AcceptAllAuth {
 impl AcceptAllAuth {
     /// Makes `ident`'s signer resolvable from its participant id.
     pub fn register(&self, ident: &impl IdentityProvider) {
+        self.endorse(ident.participant_id(), ident.signer_key().clone());
+    }
+
+    /// Lists `signer` under `participant_id`, as an account log endorsing it
+    /// would, whoever holds the signer's key.
+    pub fn endorse(&self, participant_id: ParticipantId, signer: SignerKey) {
         self.signers
             .lock()
             .unwrap()
-            .entry(ident.participant_id())
+            .entry(participant_id)
             .or_default()
-            .push(ident.signer_key().clone());
+            .push(signer);
     }
 }
 
