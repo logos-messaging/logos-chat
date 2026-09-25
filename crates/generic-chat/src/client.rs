@@ -140,7 +140,7 @@ where
 
     /// Returns the installation name (identity label) of this client.
     pub fn installation_name(&self) -> String {
-        self.core.lock().installation_name().to_string()
+        self.core.lock().signer_key().to_string()
     }
 
     // Creates a conversation between two Accounts.
