@@ -1446,6 +1446,7 @@ dependencies = [
  "libchat",
  "rusqlite",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]

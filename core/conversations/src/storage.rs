@@ -4,15 +4,19 @@
 
 use thiserror::Error;
 
+mod identity;
+
 #[cfg(any(test, feature = "test-support"))]
 mod in_memory_store;
 #[cfg(any(test, feature = "test-support"))]
 mod test_assertions;
 
+pub use identity::{IdentityStore, StoredInstallation};
+
 #[cfg(any(test, feature = "test-support"))]
 pub use in_memory_store::MemStore;
 #[cfg(any(test, feature = "test-support"))]
-pub use test_assertions::assert_kv_contract;
+pub use test_assertions::{assert_identity_store_contract, assert_kv_contract};
 
 /// Common storage errors.
 #[derive(Debug, Error)]
