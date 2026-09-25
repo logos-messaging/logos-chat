@@ -1,6 +1,6 @@
 use chat_proto::logoschat::envelope::EnvelopeV1;
 use integration_tests_core::TestHarness;
-use libchat::PayloadOutcome;
+use libchat::{ChatError, PayloadOutcome};
 use prost::Message;
 use tracing::info;
 
@@ -104,4 +104,16 @@ fn invite_for_another_installation_is_rejected() {
 
     let joined = harness.pax().handle_payload(&for_pax).expect("pax joins");
     assert!(matches!(joined, PayloadOutcome::Inbox(_)), "{joined:?}");
+}
+
+#[test]
+fn direct_convo_with_yourself_is_refused() {
+    let mut harness = TestHarness::<1>::new(|_, _| {});
+
+    let saro_account = harness.saro().account();
+    let err = harness
+        .saro()
+        .create_direct_convo_v1(saro_account)
+        .expect_err("no direct convo with yourself");
+    assert!(matches!(err, ChatError::CannotMessageSelf), "{err:?}");
 }
