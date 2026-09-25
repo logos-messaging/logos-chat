@@ -28,6 +28,9 @@ use crate::{
 };
 
 const OUTBOUND_HASH_CACHE_SIZE: usize = 25;
+// Keys kept per sender for messages delivery hands over late. Past it a
+// message is unreadable for good; OpenMLS's default of 5 loses part of a burst.
+const OUT_OF_ORDER_TOLERANCE: u32 = 100;
 
 pub struct GroupV1Convo {
     mls_group: MlsGroup,
@@ -119,11 +122,19 @@ impl GroupV1Convo {
         MlsGroupCreateConfig::builder()
             .ciphersuite(crate::inbox_v2::CIPHER_SUITE)
             .use_ratchet_tree_extension(true) // This is handy for now, until there is central store for this data
+            .sender_ratchet_configuration(Self::sender_ratchet_config())
             .build()
     }
 
     fn mls_join_config() -> MlsGroupJoinConfig {
-        MlsGroupJoinConfig::builder().build()
+        MlsGroupJoinConfig::builder()
+            .sender_ratchet_configuration(Self::sender_ratchet_config())
+            .build()
+    }
+
+    fn sender_ratchet_config() -> SenderRatchetConfiguration {
+        let default = SenderRatchetConfiguration::default();
+        SenderRatchetConfiguration::new(OUT_OF_ORDER_TOLERANCE, default.maximum_forward_distance())
     }
 
     fn delivery_address_from_id(convo_id: &str) -> String {
