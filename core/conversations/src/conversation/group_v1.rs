@@ -13,7 +13,7 @@ use tracing::debug;
 
 use crate::conversation::{ConversationIdRef, MessageId};
 use crate::identity::{Signer, SignerKey, SignerRef};
-use crate::inbox_v2::MlsProvider;
+use crate::inbox_v2::{MlsProvider, refuse_inbox_id};
 use crate::service_context::{ExternalServices, ServiceContext};
 use crate::service_traits::AuthService;
 
@@ -52,14 +52,25 @@ impl std::fmt::Debug for GroupV1Convo {
 impl GroupV1Convo {
     // Create a new conversation with the creator as the only participant.
     pub fn new<S: ExternalServices>(cx: &mut ServiceContext<S>) -> Result<Self, ChatError> {
+        let group_id = GroupId::random(cx.mls_provider.rand());
+        Self::with_group_id(cx, group_id)
+    }
+
+    // Create the conversation under a chosen group id, which only a modified
+    // client does.
+    pub(crate) fn with_group_id<S: ExternalServices>(
+        cx: &mut ServiceContext<S>,
+        group_id: GroupId,
+    ) -> Result<Self, ChatError> {
         let config = Self::mls_create_config();
-        let mls_group = MlsGroup::new(
+        let mls_group = MlsGroup::new_with_group_id(
             &cx.mls_provider,
             &cx.mls_identity,
             &config,
+            group_id,
             cx.mls_identity.get_credential(),
         )
-        .unwrap();
+        .map_err(ChatError::generic)?;
         let convo_id = hex::encode(mls_group.group_id().as_slice());
         Self::subscribe(&mut cx.ds, &convo_id)?;
 
@@ -74,16 +85,19 @@ impl GroupV1Convo {
     pub fn new_from_welcome<S: ExternalServices>(
         cx: &mut ServiceContext<S>,
         welcome: Welcome,
+        inbox_id: ConversationIdRef,
     ) -> Result<Self, ChatError> {
-        let mls_group =
+        let staged =
             StagedWelcome::build_from_welcome(&cx.mls_provider, &Self::mls_join_config(), welcome)
                 .map_err(ChatError::generic)?
                 .build()
-                .map_err(ChatError::generic)?
-                .into_group(&cx.mls_provider)
                 .map_err(ChatError::generic)?;
 
-        let convo_id = hex::encode(mls_group.group_id().as_slice());
+        let convo_id = hex::encode(staged.group_context().group_id().as_slice());
+        refuse_inbox_id(&convo_id, inbox_id)?;
+        let mls_group = staged
+            .into_group(&cx.mls_provider)
+            .map_err(ChatError::generic)?;
         Self::subscribe(&mut cx.ds, &convo_id)?;
 
         Ok(Self {

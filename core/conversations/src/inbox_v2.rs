@@ -40,6 +40,17 @@ fn conversation_id_for(signer: SignerRef) -> String {
     blake2b_hex::<hash_size::ConvoId>(&["InboxV2|", "conversation_id|", &id])
 }
 
+/// Refuses a joined conversation under the inbox's id: its creator picked the
+/// id, and Core routes that id to the inbox, never to the conversation.
+pub(crate) fn refuse_inbox_id(convo_id: &str, inbox_id: &str) -> Result<(), ChatError> {
+    if convo_id == inbox_id {
+        return Err(ChatError::Protocol(format!(
+            "a welcome names the inbox's id {inbox_id} as its conversation"
+        )));
+    }
+    Ok(())
+}
+
 /// An Extension trait which extends OpenMlsProvider to add required functionality
 /// All MLS based Conversation should use this trait for defining requirements.
 pub trait MlsProvider: OpenMlsProvider {
@@ -152,7 +163,7 @@ impl InboxV2 {
                 info!("Process WelcomeMessage");
                 let mw =
                     MemberWelcome::decode(welcome_bytes.as_slice()).map_err(ChatError::generic)?;
-                let convo = GroupV2Convo::new_from_welcome(service_ctx, &mw)?;
+                let convo = GroupV2Convo::new_from_welcome(service_ctx, &mw, &self.id)?;
                 Ok(Some((Box::new(convo), ConversationClass::Group)))
             }
         }
@@ -187,7 +198,7 @@ impl InboxV2 {
             ));
         };
 
-        let convo = GroupV1Convo::new_from_welcome(cx, welcome)?;
+        let convo = GroupV1Convo::new_from_welcome(cx, welcome, &self.id)?;
         self.persist_convo(&convo, cx)?;
 
         Ok(convo)
