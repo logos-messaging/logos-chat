@@ -97,6 +97,7 @@ fn remove_group_signers() {
 
     // Pax applies the commit that ejects it and stops being able to send.
     harness.process_until(|h| !h.pax().can_send(&convo_id));
+    assert!(harness.pax().send_content(&convo_id, MSG).is_err());
 
     // The members left behind are at the same epoch and still exchanging.
     harness.saro().send_content(&convo_id, MSG).expect("send");
