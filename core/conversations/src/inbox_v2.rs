@@ -24,7 +24,7 @@ use crate::conversation::mls_extensions::GROUP_METADATA_EXTENSION_TYPE;
 use crate::outcomes::ConversationClass;
 use crate::service_context::{ExternalServices, ServiceContext};
 use crate::utils::{blake2b_hex, hash_size};
-use crate::{AddressedEnvelope, IdentityProvider, SignerKey, SignerRef};
+use crate::{AddressedEnvelope, IdentityProvider, SignerRef};
 
 pub(crate) const CIPHER_SUITE: Ciphersuite =
     Ciphersuite::MLS_256_XWING_CHACHA20POLY1305_SHA256_Ed25519;
@@ -82,17 +82,22 @@ type ClassifiedConvo<S> = (Box<dyn GroupConvo<S>>, ConversationClass);
 /// signer id (the hex of the signer's verifying key), supporting PQ based
 /// conversation protocols such as MLS.
 pub struct InboxV2 {
-    // Owned so it can be returned via reference.
-    signer: SignerKey,
+    id: String,
 }
 
 impl InboxV2 {
-    pub fn new(signer: SignerKey) -> Self {
-        Self { signer }
-    }
+    pub fn new<DS: DeliveryService>(
+        ident: &impl IdentityProvider,
+        delivery: &mut DS,
+    ) -> Result<Self, DS::Error> {
+        let signer_key = ident.signer_key();
 
-    pub fn signer(&self) -> SignerRef<'_> {
-        &self.signer
+        // Subscribe to the InboxV2 rendezvous address.
+        delivery.subscribe(&delivery_address_for(signer_key))?;
+
+        Ok(Self {
+            id: conversation_id_for(signer_key),
+        })
     }
 
     /// Submit MlsKeypackage to registration service
@@ -114,12 +119,8 @@ impl InboxV2 {
         Ok(())
     }
 
-    pub fn delivery_address(&self) -> String {
-        delivery_address_for(&self.signer)
-    }
-
-    pub fn id(&self) -> String {
-        conversation_id_for(&self.signer)
+    pub fn id(&self) -> &str {
+        &self.id
     }
 
     /// The convo built from an invite, paired with the display class its invite

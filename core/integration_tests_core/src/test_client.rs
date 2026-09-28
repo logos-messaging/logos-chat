@@ -58,8 +58,9 @@ impl TestClient {
         }
     }
 
+    // Override the Deref to Inner, so that it gets cloned every time.
     pub fn signer_key(&self) -> SignerKey {
-        self.inner.signer().clone()
+        self.inner.signer_key().clone()
     }
 
     /// The account group creation resolves to this client's signer.
@@ -84,13 +85,13 @@ impl TestClient {
             let outcome = match self.inner.handle_payload(&data) {
                 Ok(outcome) => outcome,
                 Err(e) if self.tolerate_inbound_errors => {
-                    warn!(id = ?self.signer(), error = ?e, "INBOUND ERROR");
+                    warn!(id = ?self.signer_key(), error = ?e, "INBOUND ERROR");
                     self.inbound_errors.push(format!("{e:?}"));
                     continue;
                 }
-                Err(e) => panic!("{:?} rejected an inbound payload: {e:?}", self.signer()),
+                Err(e) => panic!("{:?} rejected an inbound payload: {e:?}", self.signer_key()),
             };
-            warn!(id= ?self.signer(),?outcome, "DRAIN CLIENT");
+            warn!(id= ?self.signer_key(),?outcome, "DRAIN CLIENT");
             // Copy Convo Messages to received buffer
 
             match &outcome {
@@ -284,12 +285,12 @@ impl<const N: usize> TestHarness<N> {
         // Process existing payloads for all clients.
         for client in self.clients.iter_mut() {
             for outcome in client.drain_outcomes() {
-                info!(id = ?client.signer(), ?outcome, "Process drain");
+                info!(id = ?client.signer_key(), ?outcome, "Process drain");
                 self.observed_outcomes.push(Observation {
-                    ident: client.signer().clone(),
+                    ident: client.signer_key().clone(),
                     outcome: outcome.clone(),
                 });
-                info!(id = ?client.signer(), ?outcome, "Process drain");
+                info!(id = ?client.signer_key(), ?outcome, "Process drain");
                 (self.cb)(client, outcome)
             }
         }
@@ -379,7 +380,7 @@ mod tests {
             .try_init();
 
         let mut harness = TestHarness::<2>::new(|client, outcome| {
-            info!( id=?&client.signer(), outcome = ?outcome, "Result");
+            info!( id=?&client.signer_key(), outcome = ?outcome, "Result");
         });
 
         //Create Convo

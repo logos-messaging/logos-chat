@@ -99,21 +99,10 @@ where
         wakeup_service: WS,
         store: CS,
     ) -> Result<Self, ChatError> {
-        // InboxV2 rendezvous is signer-scoped: it subscribes under the hex of
-        // the signer's verifying key — the same string the registries key
-        // key-packages under, so it is exactly what an inviter resolving this
-        // participant arrives at. The MLS credential below carries the
-        // participant id.
-        let signer = ident.signer_key().clone();
+        let pq_inbox = InboxV2::new(&ident, &mut delivery).map_err(ChatError::generic)?;
         let mls_identity = MlsIdentityProvider::new(ident);
         let mls_provider = MlsEphemeralPqProvider::new().map_err(ChatError::generic)?;
         let causal = CausalHistoryStore::new();
-        let pq_inbox = InboxV2::new(signer);
-
-        // Subscribe to the InboxV2 rendezvous address.
-        delivery
-            .subscribe(&pq_inbox.delivery_address())
-            .map_err(ChatError::generic)?;
 
         Ok(Self {
             services: ServiceContext {
@@ -143,10 +132,13 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         &self.services.store
     }
 
-    /// The signer id this core receives InboxV2 invites under — the hex of the
-    /// signer's verifying key.
-    pub fn signer(&'a self) -> SignerRef<'a> {
-        self.pq_inbox.signer()
+    /// The signer id this core operates under
+    pub fn signer_key(&'a self) -> SignerRef<'a> {
+        self.services.mls_identity.signer_key()
+    }
+
+    pub fn participant_id(&self) -> ParticipantId {
+        self.services.mls_identity.participant_id()
     }
 
     /// Submit the local account's MLS KeyPackage to the registration service.
@@ -154,10 +146,6 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
     /// the most recent N submissions; older entries are pruned).
     pub fn register_keypackage(&mut self) -> Result<(), ChatError> {
         self.pq_inbox.register(&mut self.services)
-    }
-
-    pub fn installation_name(&self) -> String {
-        self.services.mls_identity.signer_key().to_string()
     }
 
     pub fn create_direct_convo(
