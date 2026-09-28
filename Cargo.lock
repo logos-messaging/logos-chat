@@ -3169,11 +3169,13 @@ dependencies = [
 name = "integration_tests_core"
 version = "0.1.0"
 dependencies = [
+ "chat-proto",
  "chat-sqlite",
  "components",
  "crypto",
  "hex",
  "libchat",
+ "prost",
  "tempfile",
  "tracing",
  "tracing-subscriber",

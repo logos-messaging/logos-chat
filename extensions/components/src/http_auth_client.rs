@@ -6,7 +6,7 @@
 //! ```
 
 use std::io::Read;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use account_log::{
     AccountLog, AccountLogError, CHATSIGNER_CONTEXT, Context, Ed25519VerifyingKey,
@@ -19,6 +19,11 @@ use reqwest::blocking::{Client, Response};
 use reqwest::header::CONTENT_TYPE;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Retries of a lookup the server sheds. The backoff doubles from
+/// `LOOKUP_BACKOFF_MS`, so the retries add at most 3 s of waiting.
+const LOOKUP_RETRIES: u32 = 4;
+const LOOKUP_BACKOFF_MS: u64 = 200;
 
 /// The largest valid response: a 64-byte Ed25519 signature, then the payload.
 const MAX_ARTIFACT_BYTES: u64 = 64 + MAX_PAYLOAD_BYTES as u64;
@@ -62,6 +67,34 @@ impl Endpoint {
     fn url(&self, addr: &AccountAddr) -> String {
         format!("{}/v1/account/{addr}", self.base_url)
     }
+
+    /// GET the log at `addr`, retrying a 5xx or 429: the server sheds a
+    /// concurrent burst with one and serves the request once it clears.
+    /// Every inbound message waits on this, so a timeout is not retried.
+    fn get(&self, addr: &AccountAddr) -> reqwest::Result<Response> {
+        let url = self.url(addr);
+        let mut attempt = 0;
+        loop {
+            let resp = self.http.get(&url).send()?;
+            let status = resp.status();
+            let shed = status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS;
+            if !shed || attempt == LOOKUP_RETRIES {
+                return Ok(resp);
+            }
+            std::thread::sleep(lookup_backoff(attempt));
+            attempt += 1;
+        }
+    }
+}
+
+/// A random delay up to `LOOKUP_BACKOFF_MS * 2^attempt`, so lookups shed
+/// together retry apart. The wall clock's nanoseconds stand in for an RNG.
+fn lookup_backoff(attempt: u32) -> Duration {
+    let ceiling = LOOKUP_BACKOFF_MS << attempt;
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::from(d.subsec_nanos()));
+    Duration::from_millis(nanos % (ceiling + 1))
 }
 
 /// A non-success status as [`HttpAccountError::Server`], with the server's message.
@@ -115,7 +148,7 @@ impl AccountProvider for HttpAuthClient {
     type Error = HttpAccountError;
 
     fn fetch(&self, addr: &AccountAddr) -> Result<Option<SignedAccountLog>, Self::Error> {
-        let resp = self.endpoint.http.get(self.endpoint.url(addr)).send()?;
+        let resp = self.endpoint.get(addr)?;
         if resp.status() == StatusCode::NOT_FOUND {
             return Ok(None);
         }
@@ -209,5 +242,83 @@ impl AuthService for HttpAuthClient {
             return Err(HttpAccountError::NotChatEnabled);
         }
         Ok(signers)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+    use std::net::TcpListener;
+
+    use account_log::{AccountLogDraft, Ed25519SigningKey, EntryData};
+    use libchat::ParticipantId;
+
+    use super::*;
+
+    /// Answers one connection per `(status, body)`, in order, and returns the
+    /// base URL.
+    fn serve(responses: Vec<(&'static str, Vec<u8>)>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                // Closing with the request unread would reset the connection.
+                let mut request = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    let n = stream.read(&mut buf).unwrap();
+                    request.extend_from_slice(&buf[..n]);
+                }
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .unwrap();
+                stream.write_all(&body).unwrap();
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn signer_lookup_outlasts_a_503() {
+        let account = Ed25519SigningKey::generate();
+        let signer = Ed25519SigningKey::generate().verifying_key();
+        let mut draft = AccountLogDraft::new();
+        draft
+            .add(
+                CHATSIGNER_CONTEXT.clone(),
+                EntryData::Ed25519Key(signer.as_ref().try_into().unwrap()),
+            )
+            .unwrap();
+        let payload = draft.log().encode().unwrap();
+        let signature = account.sign(payload.as_bytes());
+        let log = SignedAccountLog { payload, signature };
+
+        let url = serve(vec![
+            ("503 Service Unavailable", Vec::new()),
+            ("200 OK", log.to_bytes()),
+        ]);
+        let participant =
+            ParticipantId::from(AccountAddr::from(account.verifying_key()).to_bytes());
+        let result = HttpAuthClient::new(url)
+            .validate_signer(SignerKey::from(signer.as_ref()), participant)
+            .expect("the retry lands");
+        assert!(matches!(result, AuthResult::Valid), "{result:?}");
+    }
+
+    #[test]
+    fn missing_account_is_not_retried() {
+        // One response only, so a retry would find the server gone.
+        let url = serve(vec![("404 Not Found", Vec::new())]);
+        let account = Ed25519SigningKey::generate().verifying_key();
+        let signer = Ed25519SigningKey::generate().verifying_key();
+        let participant = ParticipantId::from(AccountAddr::from(account).to_bytes());
+        let result = HttpAuthClient::new(url)
+            .validate_signer(SignerKey::from(signer.as_ref()), participant)
+            .expect("a 404 answers the lookup");
+        assert!(matches!(result, AuthResult::Invalid), "{result:?}");
     }
 }
