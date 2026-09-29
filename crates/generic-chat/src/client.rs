@@ -229,6 +229,14 @@ where
         Ok(pending.into_iter().filter_map(decode_signer).collect())
     }
 
+    /// Installations this client invited whose add the group voted down, until
+    /// they are invited again. Each rejection raises
+    /// [`Event::ConversationMembersChanged`]. A direct conversation has none.
+    pub fn rejected_members(&self, convo_id: &str) -> Result<Vec<Signer>, ClientError> {
+        let rejected = self.core.lock().group_rejected_signers(convo_id)?;
+        Ok(rejected.into_iter().filter_map(decode_signer).collect())
+    }
+
     /// The accounts with at least one member in the conversation.
     pub fn participants(&self, convo_id: &str) -> Result<HashSet<AccountAddr>, ClientError> {
         Ok(self

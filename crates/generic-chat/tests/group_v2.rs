@@ -344,6 +344,80 @@ fn pending_clears_once_the_add_commits() {
     );
 }
 
+/// A proposal with two voters needs both votes, so a two-member group whose
+/// other member stopped running votes every add down. The invite moves from
+/// pending to rejected, the roster change is announced, and inviting the
+/// member again puts it back to a vote.
+#[test]
+fn an_invite_the_group_votes_down_is_reported_rejected() {
+    let bus = MessageBus::default();
+    let reg = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
+
+    // Long enough that the re-invite below is read before its own vote ends.
+    let slow_vote = GroupV2Config {
+        consensus_timeout: Duration::from_secs(2),
+        ..fast_group_v2_config()
+    };
+    let (mut saro, saro_events, saro_addr) =
+        create_test_client_with(bus.clone(), reg.clone(), &auth, slow_vote);
+    let (raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
+    let (_pax, _pax_events, pax_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
+
+    let convo_id = saro
+        .create_group_conversation(&[&raya_addr], unnamed_group())
+        .expect("saro create group");
+    wait_for_group_started(&raya_events, "raya ConversationStarted");
+    wait_for_participants(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
+
+    // Raya keeps her seat but will never vote again.
+    drop(raya);
+
+    saro.add_group_participants(&convo_id, &[&pax_addr])
+        .expect("saro invites pax");
+    wait_for_event(
+        &saro_events,
+        "saro ConversationMembersChanged for the rejection",
+        Duration::from_secs(10),
+        |e| match e {
+            Event::ConversationMembersChanged { .. }
+                if !saro
+                    .rejected_members(&convo_id)
+                    .expect("rejected_members")
+                    .is_empty() =>
+            {
+                Some(())
+            }
+            _ => None,
+        },
+    );
+
+    let accounts = |members: Vec<Signer>| -> Vec<String> {
+        members.iter().map(|m| m.account.to_string()).collect()
+    };
+    assert_eq!(
+        accounts(saro.rejected_members(&convo_id).expect("rejected_members")),
+        vec![pax_addr.clone()]
+    );
+    let pending = saro.pending_members(&convo_id).expect("pending_members");
+    assert!(
+        pending.is_empty(),
+        "a rejected invite is still pending: {pending:?}"
+    );
+
+    saro.add_group_participants(&convo_id, &[&pax_addr])
+        .expect("saro invites pax again");
+    assert_eq!(
+        accounts(saro.pending_members(&convo_id).expect("pending_members")),
+        vec![pax_addr.clone()]
+    );
+    let rejected = saro.rejected_members(&convo_id).expect("rejected_members");
+    assert!(
+        rejected.is_empty(),
+        "a re-sent invite is still rejected: {rejected:?}"
+    );
+}
+
 /// A batch add is validated before any member is proposed: a member whose
 /// account resolves to an installation that registered no key
 /// package fails the whole call, the resolvable member in the same batch is

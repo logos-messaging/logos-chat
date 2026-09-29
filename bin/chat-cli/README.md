@@ -71,7 +71,8 @@ and copies it to the clipboard.
 2. Saro types `/add <raya's address>` to invite Raya; the invite stays pending
    until the group commits it.
 3. `/members` lists the roster — Raya shows `(pending)` until the commit lands,
-   then appears without it. Once committed, both can chat.
+   then appears without it. Once committed, both can chat. An invite the group
+   votes down shows `(add failed)` instead, and `/add` sends it again.
 
 ### Optional: KeyPackage registry
 

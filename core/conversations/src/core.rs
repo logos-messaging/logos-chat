@@ -328,6 +328,20 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
             .collect())
     }
 
+    /// Invites sent here that the group voted down. A direct conversation has
+    /// none.
+    pub fn group_rejected_signers(&self, convo_id: &str) -> Result<Vec<Signer>, ChatError> {
+        let convo = self
+            .cached_convos
+            .get(convo_id)
+            .ok_or_else(|| ChatError::NoConvo(convo_id.to_string()))?;
+
+        let ConvoTypeOwned::Group(group_convo) = convo else {
+            return Ok(Vec::new());
+        };
+        group_convo.rejected_signers()
+    }
+
     /// Every conversation this client knows — persisted or loaded this session.
     /// Membership in this list means the conversation *exists*; it says nothing
     /// about whether content can be sent or retrieved (see [`Self::can_send`] /

@@ -605,8 +605,12 @@ where
                     .client
                     .pending_members(&chat_id)
                     .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                let rejected = self
+                    .client
+                    .rejected_members(&chat_id)
+                    .map_err(|e| anyhow::anyhow!("{e:?}"))?;
                 // One row per account; an account with a committed installation is not
-                // also listed as pending.
+                // also listed as pending, nor one still invited as rejected.
                 let joined: BTreeSet<String> =
                     participants.iter().map(AccountAddr::to_string).collect();
                 let invited: BTreeSet<String> = pending
@@ -614,22 +618,26 @@ where
                     .map(|m| m.account.to_string())
                     .filter(|account| !joined.contains(account))
                     .collect();
+                let refused: BTreeSet<String> = rejected
+                    .iter()
+                    .map(|m| m.account.to_string())
+                    .filter(|account| !joined.contains(account) && !invited.contains(account))
+                    .collect();
                 let total = joined.len() + invited.len();
                 let my_addr = self.client.addr().to_string();
                 self.add_system_message(&format!("── Members ({total}) ──"));
                 let rows = joined
                     .iter()
-                    .map(|account| (account, false))
-                    .chain(invited.iter().map(|account| (account, true)));
-                for (id, is_pending) in rows {
+                    .map(|account| (account, ""))
+                    .chain(invited.iter().map(|account| (account, " (pending)")))
+                    .chain(refused.iter().map(|account| (account, " (add failed)")));
+                for (id, state) in rows {
                     let short = &id[..16.min(id.len())];
                     let mut tags = String::new();
                     if *id == my_addr {
                         tags.push_str(" (you)");
                     }
-                    if is_pending {
-                        tags.push_str(" (pending)");
-                    }
+                    tags.push_str(state);
                     self.add_system_message(&format!("  • {short}…{tags}"));
                 }
                 Ok(Some(format!("{total} member(s)")))
