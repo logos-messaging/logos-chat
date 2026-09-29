@@ -18,6 +18,8 @@ use reqwest::StatusCode;
 use reqwest::blocking::{Client, Response};
 use reqwest::header::CONTENT_TYPE;
 
+use crate::account_auth::{endorsed_signers, verdict};
+
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The largest valid response: a 64-byte Ed25519 signature, then the payload.
@@ -166,24 +168,10 @@ impl AuthService for HttpAuthClient {
         };
 
         let Some(account_log) = self.get_account_log(&addr)? else {
-            return Ok(libchat::AuthResult::Invalid);
+            return Ok(AuthResult::Invalid);
         };
 
-        Ok(
-            if account_log
-                .ed25519_keys_for(&self.context)
-                .contains(&signer)
-            {
-                AuthResult::Valid
-            } else if account_log
-                .revoked_ed25519_keys_for(&self.context)
-                .contains(&signer)
-            {
-                AuthResult::Revoked
-            } else {
-                AuthResult::Invalid
-            },
-        )
+        Ok(verdict(&account_log, &self.context, &signer))
     }
 
     fn signers_for_participant(
@@ -199,11 +187,7 @@ impl AuthService for HttpAuthClient {
             return Err(HttpAccountError::AccountNotFound(addr.to_string()));
         };
 
-        let signers: Vec<SignerKey> = account_log
-            .ed25519_keys_for(&self.context)
-            .into_iter()
-            .map(|k| SignerKey::from(k.as_ref()))
-            .collect();
+        let signers = endorsed_signers(&account_log, &self.context);
 
         if signers.is_empty() {
             return Err(HttpAccountError::NotChatEnabled);
