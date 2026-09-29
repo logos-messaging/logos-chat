@@ -80,6 +80,10 @@ pub(crate) trait GroupConvo<S: ExternalServices>: Convo<S> + std::fmt::Debug + S
     /// yet. Covers only invites [`Self::add_signer`] made here, and is empty for
     /// a conversation kind whose add takes effect within that call.
     fn pending_signers(&self) -> Result<Vec<Signer>, ChatError>;
+
+    /// Each signer this conversation invited whose add the group voted down,
+    /// until [`Self::add_signer`] invites it again or it is seated.
+    fn rejected_signers(&self) -> Result<Vec<Signer>, ChatError>;
     // All GroupConvos MUST return ConvoMetadata
     // the return type is Option<_> to support legacy ConvoTypes which
     // are being phased out.

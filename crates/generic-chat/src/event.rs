@@ -59,7 +59,8 @@ pub enum Event {
         message_id: String,
         sender_hint: SignerKey,
     },
-    /// A commit changed a conversation's membership.
+    /// A commit changed a conversation's membership, or the group voted down an
+    /// invite this client sent.
     ConversationMembersChanged {
         convo_id: Arc<str>,
     },
