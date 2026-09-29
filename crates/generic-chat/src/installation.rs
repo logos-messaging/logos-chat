@@ -191,7 +191,7 @@ impl Installation {
     pub(crate) fn validate(&self, auth: &impl AuthService) -> Result<(), ClientError> {
         match auth.validate_signer(self.signer.clone(), self.participant_id()) {
             Ok(AuthResult::Valid) => Ok(()),
-            Ok(verdict) => Err(ClientError::NotEndorsed(format!("{verdict:?}"))),
+            Ok(verdict) => Err(ClientError::NotEndorsed(format!(">>>{verdict:?}"))),
             Err(e) if self.origin == Origin::Stored => {
                 tracing::warn!(
                     error = %e,
