@@ -16,6 +16,8 @@ use crate::error::AccountLogError;
 /// only that every endorsement carries a context.
 pub static CHATSIGNER_CONTEXT: LazyLock<Context> =
     LazyLock::new(|| Context::new("chat.signer").expect("valid context"));
+pub static PROFILE_DISPLAYNAME: LazyLock<Context> =
+    LazyLock::new(|| Context::new("profile.displayname").expect("valid context"));
 
 /// Longest namespace and label, in octets.
 const MAX_NAMESPACE: usize = 16;

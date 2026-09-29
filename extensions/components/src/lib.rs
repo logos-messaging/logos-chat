@@ -1,3 +1,4 @@
+mod account_auth;
 mod contact_registry;
 pub mod delivery;
 mod http_auth_client;

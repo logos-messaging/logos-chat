@@ -1,4 +1,5 @@
 mod app;
+mod keystore;
 mod transport;
 mod ui;
 mod utils;
@@ -70,7 +71,7 @@ struct Cli {
     name: String,
 
     /// Which delivery transport to use.
-    #[arg(long, value_enum, default_value_t = TransportKind::File)]
+    #[arg(long, value_enum, default_value_t = TransportKind::LogosDelivery)]
     transport: TransportKind,
 
     /// How quickly group membership changes commit. `fast` makes `/add` and
@@ -173,9 +174,9 @@ fn main() -> Result<()> {
                 #[allow(deprecated)]
                 config.set_group_v2_config(group_v2);
             }
-            let (client, events) = logos_chat::open(config)
-                .map_err(|e| anyhow::anyhow!("{e:?}"))
-                .context("failed to open chat client")?;
+
+            let installation = keystore::Keystore::new("tmp").install(cli.name.as_str())?;
+            let (client, events) = logos_chat::client_with(installation, config)?;
 
             println!("Node connected.");
             launch_tui(client, events, &cli)

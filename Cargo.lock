@@ -1415,12 +1415,15 @@ dependencies = [
 name = "chat-cli"
 version = "0.1.0"
 dependencies = [
+ "account",
  "anyhow",
  "arboard",
  "base64",
  "clap",
+ "components",
  "crossbeam-channel",
  "crossterm 0.29.0",
+ "crypto",
  "logos-chat",
  "message-types",
  "ratatui",

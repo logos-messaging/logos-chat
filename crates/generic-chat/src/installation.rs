@@ -73,6 +73,7 @@ impl PendingInstallation {
 
 /// An installation paired with its account: the identity a
 /// [`ChatClient`](crate::ChatClient) runs as.
+#[derive(Debug)]
 pub struct Installation {
     signing_key: Ed25519SigningKey,
     /// The public key, which is what this installation signs under.
@@ -82,6 +83,17 @@ pub struct Installation {
 }
 
 impl Installation {
+    pub fn make(signing_key: Ed25519SigningKey, account: AccountAddr) -> Self {
+        let signer = signing_key.verifying_key().into();
+
+        Self {
+            signing_key,
+            signer,
+            account,
+            origin: Origin::Stored,
+        }
+    }
+
     pub fn account(&self) -> &AccountAddr {
         &self.account
     }
@@ -179,7 +191,7 @@ impl Installation {
     pub(crate) fn validate(&self, auth: &impl AuthService) -> Result<(), ClientError> {
         match auth.validate_signer(self.signer.clone(), self.participant_id()) {
             Ok(AuthResult::Valid) => Ok(()),
-            Ok(verdict) => Err(ClientError::NotEndorsed(format!("{verdict:?}"))),
+            Ok(verdict) => Err(ClientError::NotEndorsed(format!(">>>{verdict:?}"))),
             Err(e) if self.origin == Origin::Stored => {
                 tracing::warn!(
                     error = %e,
