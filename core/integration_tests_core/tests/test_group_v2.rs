@@ -298,6 +298,98 @@ fn remove_signer_rejects_a_non_signer() {
 }
 
 #[test]
+fn a_removal_during_the_freeze_reports_the_group_busy() {
+    // In a group of two both members are stewards, and Raya cannot commit her
+    // own removal, so Saro's freeze never gets the second candidate that would
+    // end it early: it runs its whole window, many harness steps long.
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_test_writer()
+        .try_init();
+
+    let mut harness = TestHarness::<2>::new(|_, _| {});
+
+    let raya_account = harness.raya().account();
+    let convo_id = harness
+        .saro()
+        .create_group_convo_v2(std::slice::from_ref(&raya_account), "", "")
+        .expect("Saro create");
+
+    harness.process_until_label("Raya join", |h| h.raya().convo_count() == 1);
+
+    harness
+        .saro()
+        .group_remove_participants(&convo_id, std::slice::from_ref(&raya_account))
+        .expect("Saro remove Raya");
+
+    // Asking again is a no-op while the first removal is in flight, and
+    // refused from the moment Saro freezes for its commit.
+    harness.process_until_label("Saro freezes", |h| {
+        h.saro()
+            .group_remove_participants(&convo_id, std::slice::from_ref(&raya_account))
+            .is_err()
+    });
+    let err = harness
+        .saro()
+        .group_remove_participants(&convo_id, std::slice::from_ref(&raya_account))
+        .expect_err("refused during the freeze");
+    assert!(matches!(err, ChatError::GroupBusy), "{err:?}");
+
+    // The refusal passes: the removal in flight still lands.
+    harness.process_until_label("Raya removed", |h| {
+        h.saro().group_signers(&convo_id).map_or(0, |m| m.len()) == 1
+    });
+}
+
+#[test]
+fn a_removed_member_is_told_it_is_no_longer_one() {
+    // de-mls leaves the group of a member it removed mid-commit for good, so
+    // each of Pax's calls would otherwise read as the group being busy.
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_test_writer()
+        .try_init();
+
+    let mut harness = TestHarness::<4>::new(|_, _| {});
+
+    let raya_account = harness.raya().account();
+    let pax_account = harness.pax().account();
+    let mira_account = harness.mira().account();
+    let convo_id = harness
+        .saro()
+        .create_group_convo_v2(&[raya_account.clone(), pax_account.clone()], "", "")
+        .expect("Saro create");
+
+    harness.process_until_label("Raya + Pax join", |h| {
+        h.raya().convo_count() == 1 && h.pax().convo_count() == 1
+    });
+
+    harness
+        .saro()
+        .group_remove_participants(&convo_id, &[pax_account])
+        .expect("Saro remove Pax");
+    harness.process_until_label("Pax removed", |h| !h.pax().can_send(&convo_id));
+
+    let err = harness
+        .pax()
+        .send_content(&convo_id, b"still here?")
+        .expect_err("Pax's send is refused");
+    assert!(matches!(err, ChatError::NoLongerAMember), "{err:?}");
+
+    let err = harness
+        .pax()
+        .group_add_participants(&convo_id, &[mira_account])
+        .expect_err("Pax's add is refused");
+    assert!(matches!(err, ChatError::NoLongerAMember), "{err:?}");
+
+    let err = harness
+        .pax()
+        .group_remove_participants(&convo_id, &[raya_account])
+        .expect_err("Pax's removal is refused");
+    assert!(matches!(err, ChatError::NoLongerAMember), "{err:?}");
+}
+
+#[test]
 fn group_name_propagation() {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)

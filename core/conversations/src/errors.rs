@@ -43,7 +43,7 @@ pub enum ChatError {
     #[error("mls error: {0}")]
     MlsError(#[from] MlsError),
     #[error("demls error: {0}")]
-    DeMlsError(#[from] ConversationError),
+    DeMlsError(#[source] ConversationError),
     // Used when a core function is called with a convo_id which is unsupported
     #[error("convo:{0} does not support {1}")]
     UnsupportedFunction(ConversationId, String),
@@ -55,6 +55,13 @@ pub enum ChatError {
     NotAGroupMember,
     #[error("you can't start a direct conversation with yourself")]
     CannotMessageSelf,
+    // A send while the group is mid-commit, and an add or a removal also
+    // while it re-elects its stewards or votes on an emergency.
+    #[error("the group is busy, try again shortly")]
+    GroupBusy,
+    // A send, add or removal by a member a commit has removed from the group.
+    #[error("you are no longer a member of this group")]
+    NoLongerAMember,
     #[error("authentication failed: SignerKey({0}) is not valid for participant_id({1})")]
     Auth(String, String),
     #[error("participant resolution failed: {0}")]
@@ -65,5 +72,16 @@ impl ChatError {
     // This is a stopgap until there is a proper error system in place
     pub fn generic(e: impl ToString) -> Self {
         Self::Generic(e.to_string())
+    }
+}
+
+impl From<ConversationError> for ChatError {
+    fn from(e: ConversationError) -> Self {
+        match e {
+            ConversationError::ConversationBlocked(_) | ConversationError::PartialFreeze => {
+                Self::GroupBusy
+            }
+            e => Self::DeMlsError(e),
+        }
     }
 }
