@@ -313,6 +313,16 @@ impl GroupV2Convo {
         self.own_signer().is_some()
     }
 
+    /// Refuses a call once a commit has removed us, which de-mls would refuse
+    /// as busy for good.
+    fn ensure_member(&self) -> Result<(), ChatError> {
+        if self.is_member() {
+            Ok(())
+        } else {
+            Err(ChatError::NoLongerAMember)
+        }
+    }
+
     /// The seat each named signer holds, in group order, skipping those with no
     /// leaf. A signer id is the hex of its MLS signature key.
     fn seats_of(&self, members: &[SignerRef]) -> Vec<MemberId> {
@@ -361,6 +371,7 @@ where
         service_ctx: &mut super::ServiceContext<S>,
         content: &[u8],
     ) -> Result<MessageId, ChatError> {
+        self.ensure_member()?;
         let reliable = service_ctx.causal.on_send(
             &self.convo_id,
             service_ctx.mls_identity.signer_key(),
@@ -449,6 +460,7 @@ where
         service_ctx: &mut ServiceContext<S>,
         members: &[SignerKey],
     ) -> Result<(), ChatError> {
+        self.ensure_member()?;
         // Fetch every signer's key package + joiner credential up front (deduped),
         // failing before any proposal opens if one has no key package.
         let members_to_add = fetch_key_packages(service_ctx, members)?;
@@ -506,6 +518,7 @@ where
         service_ctx: &mut ServiceContext<S>,
         members: &[SignerRef],
     ) -> Result<(), ChatError> {
+        self.ensure_member()?;
         if let Some(me) = self.own_signer()
             && members.contains(&&me)
         {
