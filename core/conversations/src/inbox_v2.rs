@@ -16,6 +16,7 @@ pub(crate) use mls_provider::MlsEphemeralPqProvider;
 use crate::ChatError;
 use crate::DeliveryService;
 use crate::RegistrationService;
+use crate::conversation::ConversationIdRef;
 use crate::conversation::GroupConvo;
 use crate::conversation::GroupV1Convo;
 use crate::conversation::GroupV2Convo;
@@ -125,12 +126,14 @@ impl InboxV2 {
 
     /// The convo built from an invite, paired with the display class its invite
     /// type implies: `InviteType::GroupV1` carries the pairwise DirectV1 welcome,
-    /// so it is `Dm`; `InviteType::GroupV2` is a real group.
+    /// so it is `Dm`; `InviteType::GroupV2` is a real group, joined only if
+    /// `admit` accepts the conversation id, author and epoch of its welcome.
     #[instrument(name = "inboxV2.handle_frame", skip_all, fields(user_id = %service_ctx.mls_identity.display_name()))]
     pub fn handle_frame<S: ExternalServices>(
         &self,
         service_ctx: &mut ServiceContext<S>,
         payload_bytes: &[u8],
+        admit: impl FnOnce(ConversationIdRef, SignerRef, u64) -> Result<(), ChatError>,
     ) -> Result<Option<ClassifiedConvo<S>>, ChatError> {
         // On a broadcast transport the inbox address also receives traffic
         // that isn't an invite (or that prost decodes into an empty frame).
@@ -152,7 +155,7 @@ impl InboxV2 {
                 info!("Process WelcomeMessage");
                 let mw =
                     MemberWelcome::decode(welcome_bytes.as_slice()).map_err(ChatError::generic)?;
-                let convo = GroupV2Convo::new_from_welcome(service_ctx, &mw)?;
+                let convo = GroupV2Convo::new_from_welcome(service_ctx, &mw, admit)?;
                 Ok(Some((Box::new(convo), ConversationClass::Group)))
             }
         }

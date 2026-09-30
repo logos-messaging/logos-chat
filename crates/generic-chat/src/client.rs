@@ -473,6 +473,7 @@ fn convo_events(outcome: ConvoOutcome) -> Vec<Event> {
         convo_id,
         content,
         members_changed,
+        left,
     } = outcome;
     let convo_id: Arc<str> = Arc::from(convo_id);
     let mut events = Vec::new();
@@ -487,7 +488,12 @@ fn convo_events(outcome: ConvoOutcome) -> Vec<Event> {
         });
     }
     if members_changed {
-        events.push(Event::ConversationMembersChanged { convo_id });
+        events.push(Event::ConversationMembersChanged {
+            convo_id: Arc::clone(&convo_id),
+        });
+    }
+    if left {
+        events.push(Event::ConversationLeft { convo_id });
     }
     events
 }

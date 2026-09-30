@@ -69,11 +69,16 @@ impl LocalBroadcaster {
     /// Pulls all messages this consumer has not yet seen on `address`,
     /// applying any registered filter.  Advances the cursor so the same
     /// messages are not returned again.
+    pub fn poll(&mut self) -> Option<Vec<u8>> {
+        self.poll_envelope().map(|envelope| envelope.data)
+    }
+
+    /// [`Self::poll`], returning the whole envelope rather than its data.
     // clippy's question_mark (1.97+) wants `self.shared.borrow().read(next)?`, but
     // `read` returns a reference into the RefCell `Ref`; the `?` form drops that
     // guard at the `;` and `ae` would dangle. Keep the explicit match.
     #[allow(clippy::question_mark)]
-    pub fn poll(&mut self) -> Option<Vec<u8>> {
+    pub fn poll_envelope(&mut self) -> Option<AddressedEnvelope> {
         loop {
             let next = self.cursor;
             match self.shared.borrow().read(next) {
@@ -83,7 +88,7 @@ impl LocalBroadcaster {
                     if self.subscriptions.contains(ae.delivery_address.as_str())
                         && self.is_inbound(ae)
                     {
-                        return Some(ae.data.clone());
+                        return Some(ae.clone());
                     }
                 }
             }

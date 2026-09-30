@@ -341,6 +341,7 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
             convo_id: self.id().to_string(),
             content,
             members_changed: false,
+            left: false,
         })
     }
 
@@ -488,5 +489,13 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
 
     fn metadata(&self) -> Option<ConvoMetadata> {
         None
+    }
+
+    fn has_left(&self) -> bool {
+        false
+    }
+
+    fn check_rejoin(&self, _author: SignerRef, _epoch: u64) -> Result<(), ChatError> {
+        Ok(())
     }
 }

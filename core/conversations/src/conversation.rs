@@ -84,6 +84,16 @@ pub(crate) trait GroupConvo<S: ExternalServices>: Convo<S> + std::fmt::Debug + S
     // the return type is Option<_> to support legacy ConvoTypes which
     // are being phased out.
     fn metadata(&self) -> Option<ConvoMetadata>;
+
+    /// Whether a commit ended our membership and the conversation was torn
+    /// down: it still answers reads, and takes no further part in the group.
+    fn has_left(&self) -> bool;
+
+    /// Refuses a welcome back into the group we left unless `author`, who
+    /// signed it, is a member of the group as our removal left it and `epoch`
+    /// is later than the one that removal opened. Refuses nothing while we are
+    /// a member.
+    fn check_rejoin(&self, author: SignerRef, epoch: u64) -> Result<(), ChatError>;
 }
 
 pub(crate) trait Identified {

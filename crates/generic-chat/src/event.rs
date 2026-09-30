@@ -63,6 +63,14 @@ pub enum Event {
     ConversationMembersChanged {
         convo_id: Arc<str>,
     },
+    /// A commit ended this client's membership of a conversation, which stays
+    /// readable but can no longer be sent to. A welcome back into the group,
+    /// signed by a member of the group as that commit left it and for a later
+    /// epoch, raises [`Event::ConversationStarted`] for it again; any other
+    /// welcome for its id is refused, raising [`Event::InboundError`].
+    ConversationLeft {
+        convo_id: Arc<str>,
+    },
     InboundError {
         message: String,
     },
