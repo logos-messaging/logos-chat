@@ -1,6 +1,6 @@
 use crate::causal_history::{CausalHistoryStore, DeliveryAck, MissingMessage};
 use crate::conversation::{
-    ConversationIdRef, DirectV1Convo, GroupV1Convo, GroupV2Convo, Identified, MessageId,
+    ConversationIdRef, DirectV1Convo, GroupV1Convo, GroupV2, GroupV2Convo, Identified, MessageId,
 };
 use crate::identity::{AuthenticatedSigner, ParticipantId, Signer, SignerKey, SignerRef};
 use crate::service_context::{ExternalServices, ServiceContext};
@@ -213,7 +213,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         let convo = GroupV2Convo::new(&mut self.services, name, desc, &signers)?;
         let convo_id = convo.id().to_string();
 
-        self.register_convo(ConvoTypeOwned::Group(Box::new(convo)))?;
+        self.register_convo(ConvoTypeOwned::Group(Box::new(GroupV2::from(convo))))?;
 
         Ok(convo_id)
     }
@@ -437,14 +437,31 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     // Dispatch encrypted payload to the post-quantum inbox.
     fn dispatch_to_inbox2(&mut self, payload: &[u8]) -> Result<PayloadOutcome, ChatError> {
-        if let Some((convo, class)) = self.pq_inbox.handle_frame(&mut self.services, payload)? {
+        // Set when the invite is a welcome back into a group we left.
+        let mut rejoin = false;
+        let admit = |convo_id: ConversationIdRef, author: SignerRef, epoch: u64| {
+            let Some(ConvoTypeOwned::Group(convo)) = self.cached_convos.get(convo_id) else {
+                return Ok(());
+            };
+            rejoin = convo.has_left();
+            convo.check_rejoin(author, epoch)
+        };
+        if let Some((convo, class)) =
+            self.pq_inbox
+                .handle_frame(&mut self.services, payload, admit)?
+        {
             let convo_id = convo.id().to_string();
             // Cache convos created by InboxV2
             let convo = match class {
                 ConversationClass::Dm => ConvoTypeOwned::Direct(convo),
                 ConversationClass::Group => ConvoTypeOwned::Group(convo),
             };
-            self.register_convo(convo)?;
+            // Only the welcome the group we left admitted takes its place.
+            if rejoin {
+                self.cached_convos.insert(convo_id.clone(), convo);
+            } else {
+                self.register_convo(convo)?;
+            }
 
             Ok(PayloadOutcome::Inbox(InboxOutcome {
                 new_conversation: crate::NewConversation { convo_id, class },

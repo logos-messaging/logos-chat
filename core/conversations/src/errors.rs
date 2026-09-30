@@ -53,6 +53,14 @@ pub enum ChatError {
     // Also covers a pending invite: it holds no seat either.
     #[error("no one named is a member of this group")]
     NotAGroupMember,
+    // A send, add or removal by a member a commit has removed from the group.
+    #[error("you are no longer a member of this group")]
+    NoLongerAMember,
+    // A welcome back into a group we were removed from, refused.
+    #[error("only someone in the group when you were removed can add you back to it")]
+    RejoinFromNonMember,
+    #[error("this invite back into a group you were removed from is older than your removal")]
+    StaleRejoin,
     #[error("you can't start a direct conversation with yourself")]
     CannotMessageSelf,
     #[error("authentication failed: SignerKey({0}) is not valid for participant_id({1})")]

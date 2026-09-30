@@ -67,7 +67,7 @@ impl AddressedEncryptedPayload {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConvoMetadata {
     pub name: String,
     pub desc: String,

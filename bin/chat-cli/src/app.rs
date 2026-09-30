@@ -288,7 +288,12 @@ where
         match event {
             Event::ConversationStarted { convo_id, class } => {
                 let chat_id = convo_id.to_string();
-                if self.state.chats.contains_key(&chat_id) {
+                // A chat already listed: a welcome back into its group.
+                if let Some(session) = self.state.chats.get(&chat_id) {
+                    self.status = format!("Rejoined {}.", session.display_name());
+                    if self.state.active_chat.as_deref() == Some(&chat_id) {
+                        self.is_active = self.client.can_send(&chat_id);
+                    }
                     return;
                 }
                 let label = chat_id[..8.min(chat_id.len())].to_string();
@@ -381,6 +386,12 @@ where
                 // otherwise only recomputed on a chat switch.
                 if self.state.active_chat.as_deref() == Some(&chat_id) {
                     self.is_active = self.client.can_send(&chat_id);
+                }
+            }
+            Event::ConversationLeft { convo_id } => {
+                if let Some(session) = self.state.chats.get(convo_id.as_ref()) {
+                    self.status =
+                        format!("You are no longer a member of {}.", session.display_name());
                 }
             }
             Event::InboundError { message } => {
