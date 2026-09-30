@@ -149,9 +149,9 @@ impl CausalHistoryStore {
         Self::default()
     }
 
-    /// Build the reliability envelope for an outbound message: advance the
-    /// Lamport clock, derive a deterministic ID, and attach the causal
-    /// frontier.
+    /// Build the reliability envelope for an outbound message: the next
+    /// Lamport timestamp, a deterministic ID, and the causal frontier. Nothing
+    /// is recorded until [`Self::on_sent`].
     pub fn on_send(
         &self,
         conversation_id: &str,
@@ -161,10 +161,8 @@ impl CausalHistoryStore {
         let mut inner = self.inner.borrow_mut();
         let state = inner.convos.entry(conversation_id.to_owned()).or_default();
 
-        state.lamport_clock += 1;
-        let lamport = state.lamport_clock;
+        let lamport = state.lamport_clock + 1;
         let message_id = derive_message_id(conversation_id, &sender.to_string(), lamport, content);
-        let frontier = Frontier::new(sender.clone(), message_id.clone());
 
         let causal_history = state
             .frontiers
@@ -176,12 +174,6 @@ impl CausalHistoryStore {
             })
             .collect();
 
-        // Our own message joins the seen-set so it appears in our future
-        // causal history, and the own-set so a peer referencing it back is
-        // recognised as acknowledging this send.
-        state.own.insert(message_id.clone());
-        state.record_seen(frontier);
-
         ReliablePayload {
             message_id,
             sender_id: sender.to_string(),
@@ -191,6 +183,20 @@ impl CausalHistoryStore {
             bloom_filter: Bytes::new(),
             content: Bytes::copy_from_slice(content),
         }
+    }
+
+    /// Record a message built by [`Self::on_send`] once the group has accepted
+    /// it. A refused send stays out, or peers would report it missing.
+    pub fn on_sent(&self, conversation_id: &str, sender: &SignerKey, payload: &ReliablePayload) {
+        let mut inner = self.inner.borrow_mut();
+        let state = inner.convos.entry(conversation_id.to_owned()).or_default();
+
+        state.lamport_clock = state.lamport_clock.max(payload.lamport_timestamp);
+        // Our own message joins the seen-set so it appears in our future
+        // causal history, and the own-set so a peer referencing it back is
+        // recognised as acknowledging this send.
+        state.own.insert(payload.message_id.clone());
+        state.record_seen(Frontier::new(sender.clone(), payload.message_id.clone()));
     }
 
     /// Process an inbound reliability envelope. Records the message as seen,
@@ -306,7 +312,9 @@ mod tests {
         sender: &SignerKey,
         body: &[u8],
     ) -> ReliablePayload {
-        store.on_send(convo, sender, body)
+        let payload = store.on_send(convo, sender, body);
+        store.on_sent(convo, sender, &payload);
+        payload
     }
 
     fn new_signer() -> SignerKey {
@@ -324,6 +332,16 @@ mod tests {
         // Second message's causal history references the first.
         assert_eq!(b.causal_history.len(), 1);
         assert_eq!(b.causal_history[0].message_id, a.message_id);
+    }
+
+    #[test]
+    fn a_message_never_sent_leaves_no_trace() {
+        let saro = new_signer();
+        let s = CausalHistoryStore::new();
+        let refused = s.on_send("c", &saro, b"refused");
+        let sent = payload(&s, "c", &saro, b"sent");
+        assert_eq!(sent.lamport_timestamp, refused.lamport_timestamp);
+        assert!(sent.causal_history.is_empty());
     }
 
     #[test]
