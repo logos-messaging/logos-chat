@@ -423,8 +423,20 @@ fn a_removed_member_leaves_the_roster() {
             _ => None,
         },
     );
+    let left = wait_for_event(
+        &pax_events,
+        "pax ConversationLeft",
+        Duration::from_secs(10),
+        |e| match e {
+            Event::ConversationLeft { convo_id: id } => Some(id.to_string()),
+            _ => None,
+        },
+    );
+    assert_eq!(left, convo_id);
     // Pax applied the same commit and sees its own leaf gone.
     assert!(!pax.can_send(&convo_id));
+    pax.group_metadata(&convo_id)
+        .expect("pax reads the metadata after leaving");
 
     // The group carries on for the two members that remain.
     saro.send_message(&convo_id, b"just us now").unwrap();

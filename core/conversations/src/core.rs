@@ -437,7 +437,16 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     // Dispatch encrypted payload to the post-quantum inbox.
     fn dispatch_to_inbox2(&mut self, payload: &[u8]) -> Result<PayloadOutcome, ChatError> {
-        if let Some((convo, class)) = self.pq_inbox.handle_frame(&mut self.services, payload)? {
+        let admit = |convo_id: ConversationIdRef, author: SignerRef, epoch: u64| {
+            let Some(ConvoTypeOwned::Group(convo)) = self.cached_convos.get(convo_id) else {
+                return Ok(());
+            };
+            convo.check_rejoin(author, epoch)
+        };
+        if let Some((convo, class)) =
+            self.pq_inbox
+                .handle_frame(&mut self.services, payload, admit)?
+        {
             let convo_id = convo.id().to_string();
             // Cache convos created by InboxV2
             let convo = match class {
@@ -505,6 +514,13 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     fn register_convo(&mut self, convo: ConvoTypeOwned<S>) -> Result<(), ChatError> {
         match self.cached_convos.entry(convo.id().to_string()) {
+            // A welcome back into a group we left replaces it when signed by a
+            // member of the group as our removal left it, for a later epoch;
+            // any other welcome for its id was refused before joining.
+            Entry::Occupied(mut slot) if slot.get().has_left() => {
+                slot.insert(convo);
+                Ok(())
+            }
             Entry::Occupied(_) => Err(ChatError::generic("Convo already exists. Cannot save")),
             Entry::Vacant(slot) => {
                 slot.insert(convo);
@@ -594,6 +610,12 @@ impl<S: ExternalServices> Identified for ConvoTypeOwned<S> {
             ConvoTypeOwned::Direct(convo) => convo.id(),
             ConvoTypeOwned::Group(group_convo) => group_convo.id(),
         }
+    }
+}
+
+impl<S: ExternalServices> ConvoTypeOwned<S> {
+    fn has_left(&self) -> bool {
+        matches!(self, ConvoTypeOwned::Group(group_convo) if group_convo.has_left())
     }
 }
 

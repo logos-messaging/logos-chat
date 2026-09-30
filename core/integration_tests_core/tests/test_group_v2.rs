@@ -1,6 +1,106 @@
-use integration_tests_core::TestHarness;
-use libchat::{ChatError, DeliveryAck, MissingMessage};
+use std::time::Duration;
+
+use integration_tests_core::{Observation, TestHarness, Trigger};
+use libchat::{
+    ChatError, ConvoOutcome, DeliveryAck, DeliveryService, MissingMessage, PayloadOutcome,
+    SignerKey,
+};
 use tracing::info;
+
+/// What drove each outcome that reported `convo_id` left at `ident`, in order.
+fn left_triggers(observations: &[Observation], ident: &SignerKey, convo_id: &str) -> Vec<Trigger> {
+    observations
+        .iter()
+        .filter_map(|observation| match &observation.outcome {
+            PayloadOutcome::Convo(ConvoOutcome {
+                convo_id: id,
+                left: true,
+                ..
+            }) if observation.ident == *ident && id == convo_id => Some(observation.trigger),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Step the harness through `duration` of virtual time, so every timer armed
+/// in that span fires.
+fn run_for<const N: usize>(harness: &mut TestHarness<N>, duration: Duration) {
+    let step = Duration::from_millis(50);
+    for _ in 0..duration.as_millis() / step.as_millis() {
+        harness.process(step);
+    }
+}
+
+/// Saro's group, which Raya joins at genesis and Pax after it. The genesis
+/// commit made Saro and Raya the stewards, so both mint a candidate for Pax's
+/// removal, and Pax's round ends on the frame that brings the second.
+fn group_with_pax_added_after_genesis(harness: &mut TestHarness<3>) -> String {
+    let raya_account = harness.raya().account();
+    let pax_account = harness.pax().account();
+    let convo_id = harness
+        .saro()
+        .create_group_convo_v2(&[raya_account], "", "")
+        .expect("Saro create");
+    harness.process_until_label("Raya join", |h| h.raya().convo_count() == 1);
+
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &[pax_account])
+        .expect("Saro add Pax");
+    harness.process_until_label("Pax join", |h| h.pax().convo_count() == 1);
+    harness
+        .saro()
+        .send_content(&convo_id, b"all three")
+        .expect("Saro send");
+    harness.process_until_label("all three", |h| {
+        h.raya().check(&convo_id, b"all three") && h.pax().check(&convo_id, b"all three")
+    });
+    convo_id
+}
+
+/// Saro removes Pax, whose leave `trigger` reports and tears its conversation
+/// down, then adds Pax back: the welcome starts a new conversation in its
+/// place, which receives and sends.
+fn pax_rejoins_after_removal(harness: &mut TestHarness<3>, convo_id: &str, trigger: Trigger) {
+    let pax_signer = harness.pax().signer_key();
+    let pax_account = harness.pax().account();
+    let members = harness
+        .saro()
+        .group_signers(convo_id)
+        .expect("members")
+        .len();
+    harness
+        .saro()
+        .group_remove_participants(convo_id, std::slice::from_ref(&pax_account))
+        .expect("Saro remove Pax");
+    harness.process_until_label("Pax removed", |h| {
+        !h.pax().can_send(convo_id)
+            && h.saro().group_signers(convo_id).map_or(0, |m| m.len()) == members - 1
+    });
+    assert_eq!(
+        left_triggers(&harness.observed_outcomes, &pax_signer, convo_id),
+        [trigger]
+    );
+
+    harness
+        .saro()
+        .group_add_participants(convo_id, &[pax_account])
+        .expect("Saro add Pax back");
+    harness.process_until_label("Pax back", |h| h.pax().can_send(convo_id));
+
+    harness
+        .saro()
+        .send_content(convo_id, b"welcome back")
+        .expect("Saro send");
+    harness.process_until_label("Pax receives", |h| h.pax().check(convo_id, b"welcome back"));
+    harness
+        .pax()
+        .send_content(convo_id, b"glad to be back")
+        .expect("Pax send");
+    harness.process_until_label("Saro receives", |h| {
+        h.saro().check(convo_id, b"glad to be back")
+    });
+}
 
 #[test]
 fn groupv2_2way_roundtrip() {
@@ -230,6 +330,178 @@ fn core_client_remove_signer() {
         .send_content(&convo_id, MSG)
         .expect("Saro send");
     harness.process_until_label("Raya receives", |h| h.raya().check(&convo_id, MSG));
+}
+
+#[test]
+fn a_removal_applied_by_a_frame_reports_the_leave_once() {
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_test_writer()
+        .try_init();
+
+    let mut harness = TestHarness::<3>::new(|_, _| {});
+    let convo_id = group_with_pax_added_after_genesis(&mut harness);
+
+    let pax_signer = harness.pax().signer_key();
+    let pax_account = harness.pax().account();
+    harness
+        .saro()
+        .group_remove_participants(&convo_id, &[pax_account])
+        .expect("Saro remove Pax");
+    harness.process_until_label("Pax removed", |h| !h.pax().can_send(&convo_id));
+    run_for(&mut harness, Duration::from_secs(5));
+
+    assert_eq!(
+        left_triggers(&harness.observed_outcomes, &pax_signer, &convo_id),
+        [Trigger::Frame]
+    );
+}
+
+#[test]
+fn a_removal_applied_by_a_wakeup_reports_the_leave_once() {
+    // In a group of two both members are stewards, and Raya cannot commit her
+    // own removal: her round never fills, and ends on the wakeup armed for the
+    // end of her freeze.
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_test_writer()
+        .try_init();
+
+    let mut harness = TestHarness::<2>::new(|_, _| {});
+
+    let raya_signer = harness.raya().signer_key();
+    let raya_account = harness.raya().account();
+    let convo_id = harness
+        .saro()
+        .create_group_convo_v2(std::slice::from_ref(&raya_account), "", "")
+        .expect("Saro create");
+    harness.process_until_label("Raya join", |h| h.raya().convo_count() == 1);
+
+    harness
+        .saro()
+        .group_remove_participants(&convo_id, &[raya_account])
+        .expect("Saro remove Raya");
+    harness.process_until_label("Raya removed", |h| !h.raya().can_send(&convo_id));
+    run_for(&mut harness, Duration::from_secs(5));
+
+    assert_eq!(
+        left_triggers(&harness.observed_outcomes, &raya_signer, &convo_id),
+        [Trigger::Wakeup]
+    );
+}
+
+#[test]
+fn a_member_removed_by_a_frame_rejoins_when_added_back() {
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_test_writer()
+        .try_init();
+
+    let mut harness = TestHarness::<3>::new(|_, _| {});
+    let convo_id = group_with_pax_added_after_genesis(&mut harness);
+
+    pax_rejoins_after_removal(&mut harness, &convo_id, Trigger::Frame);
+}
+
+#[test]
+fn a_member_removed_by_a_wakeup_rejoins_when_added_back() {
+    // In a group of two both members are stewards, and Pax cannot commit its
+    // own removal: its round never fills, and ends on the wakeup armed for the
+    // end of its freeze.
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_test_writer()
+        .try_init();
+
+    let mut harness = TestHarness::<3>::new(|_, _| {});
+
+    let pax_account = harness.pax().account();
+    let convo_id = harness
+        .saro()
+        .create_group_convo_v2(&[pax_account], "", "")
+        .expect("Saro create");
+    harness.process_until_label("Pax join", |h| h.pax().convo_count() == 1);
+
+    pax_rejoins_after_removal(&mut harness, &convo_id, Trigger::Wakeup);
+}
+
+#[test]
+fn a_removed_member_refuses_its_first_welcome_replayed() {
+    // Anyone who captured the welcome that first added Pax can publish it
+    // again once Pax is removed; it is older than the removal.
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_test_writer()
+        .try_init();
+
+    let mut harness = TestHarness::<3>::new(|_, _| {});
+    // A second reader of Pax's inbox, to capture the welcome Pax receives.
+    let mut pax_inbox = harness.pax().ds().clone();
+    let convo_id = group_with_pax_added_after_genesis(&mut harness);
+    let welcome = pax_inbox.poll_envelope().expect("Pax's welcome");
+
+    let pax_signer = harness.pax().signer_key();
+    let pax_account = harness.pax().account();
+    let members = harness
+        .saro()
+        .group_signers(&convo_id)
+        .expect("members")
+        .len();
+    harness
+        .saro()
+        .group_remove_participants(&convo_id, std::slice::from_ref(&pax_account))
+        .expect("Saro remove Pax");
+    harness.process_until_label("Pax removed", |h| {
+        !h.pax().can_send(&convo_id)
+            && h.saro().group_signers(&convo_id).map_or(0, |m| m.len()) == members - 1
+    });
+
+    harness.tolerate_inbound_errors();
+    pax_inbox.publish(welcome).expect("replay the welcome");
+    run_for(&mut harness, Duration::from_secs(1));
+
+    assert_eq!(
+        harness.pax().inbound_errors(),
+        [format!("{:?}", ChatError::StaleRejoin)]
+    );
+    assert!(!harness.pax().can_send(&convo_id));
+    let started = harness
+        .observed_outcomes
+        .iter()
+        .filter(|o| o.ident == pax_signer && matches!(o.outcome, PayloadOutcome::Inbox(_)))
+        .count();
+    assert_eq!(started, 1, "only the first join started a conversation");
+
+    // Refused before joining, so it stored nothing that would stand in the
+    // way of a real welcome back.
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &[pax_account])
+        .expect("Saro add Pax back");
+    harness.process_until_label("Pax back", |h| h.pax().can_send(&convo_id));
+}
+
+#[test]
+fn a_member_refuses_its_welcome_replayed() {
+    // Pax's client holds the group live, so its own welcome sent again is
+    // refused and Pax stays in the group.
+    let mut harness = TestHarness::<3>::new(|_, _| {});
+    let mut pax_inbox = harness.pax().ds().clone();
+    let convo_id = group_with_pax_added_after_genesis(&mut harness);
+    let welcome = pax_inbox.poll_envelope().expect("Pax's welcome");
+
+    harness.tolerate_inbound_errors();
+    pax_inbox.publish(welcome).expect("replay the welcome");
+    run_for(&mut harness, Duration::from_secs(1));
+
+    assert_eq!(harness.pax().inbound_errors().len(), 1);
+    harness
+        .pax()
+        .send_content(&convo_id, b"still here")
+        .expect("Pax send");
+    harness.process_until_label("Saro receives", |h| {
+        h.saro().check(&convo_id, b"still here")
+    });
 }
 
 #[test]
