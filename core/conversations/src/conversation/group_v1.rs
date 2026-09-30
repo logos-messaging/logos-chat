@@ -210,6 +210,8 @@ impl GroupV1Convo {
             .mls_group
             .create_message(&cx.mls_provider, &cx.mls_identity, &wire)
             .map_err(ChatError::generic)?;
+        cx.causal
+            .on_sent(&self.convo_id, cx.mls_identity.signer_key(), &reliable);
 
         let msg_bytes = mls_message_out.to_bytes()?;
         self.send_payload(cx, msg_bytes)?;
