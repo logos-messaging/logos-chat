@@ -1,7 +1,9 @@
 mod direct_v1;
 pub mod group_v1;
 mod group_v2;
+mod group_v3;
 pub mod mls_extensions;
+mod mls_utils;
 
 pub use crate::errors::ChatError;
 use crate::identity::{Signer, SignerKey, SignerRef};
@@ -12,6 +14,7 @@ use crate::types::ConvoMetadata;
 pub use direct_v1::DirectV1Convo;
 pub use group_v1::GroupV1Convo;
 pub use group_v2::{GroupV2Clock, GroupV2Convo};
+pub use group_v3::GroupV3Convo;
 
 pub type ConversationId = String;
 pub type ConversationIdRef<'a> = &'a str;
