@@ -73,6 +73,26 @@ pub fn invite_user_v2<DS: DeliveryService>(
     .map_err(ChatError::generic)
 }
 
+pub fn invite_user_v3<DS: DeliveryService>(
+    ds: &mut DS,
+    signer: SignerRef,
+    welcome: Vec<u8>, // Placeholder
+) -> Result<(), ChatError> {
+    let frame = InboxV2Frame {
+        payload: Some(InviteType::GroupV3(welcome)),
+    };
+    let envelope = EnvelopeV1 {
+        conversation_hint: conversation_id_for(signer),
+        salt: 0,
+        payload: frame.encode_to_vec().into(),
+    };
+    ds.publish(AddressedEnvelope {
+        delivery_address: delivery_address_for(signer),
+        data: envelope.encode_to_vec(),
+    })
+    .map_err(ChatError::generic)
+}
+
 /// A convo built from an InboxV2 invite, paired with the display class its
 /// invite type implies.
 type ClassifiedConvo<S> = (Box<dyn GroupConvo<S>>, ConversationClass);
@@ -154,6 +174,10 @@ impl InboxV2 {
                     MemberWelcome::decode(welcome_bytes.as_slice()).map_err(ChatError::generic)?;
                 let convo = GroupV2Convo::new_from_welcome(service_ctx, &mw)?;
                 Ok(Some((Box::new(convo), ConversationClass::Group)))
+            }
+            InviteType::GroupV3(welcome_bytes) => {
+                info!("Process V3 WelcomeMessage");
+                todo!();
             }
         }
     }
@@ -238,6 +262,8 @@ pub enum InviteType {
     GroupV1(GroupV1HeavyInvite),
     #[prost(bytes, tag = "2")]
     GroupV2(Vec<u8>),
+    #[prost(bytes, tag = "3")]
+    GroupV3(Vec<u8>),
 }
 
 #[derive(Clone, PartialEq, Message)]
