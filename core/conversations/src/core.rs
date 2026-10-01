@@ -1,6 +1,7 @@
 use crate::causal_history::{CausalHistoryStore, DeliveryAck, MissingMessage};
 use crate::conversation::{
-    ConversationIdRef, DirectV1Convo, GroupV1Convo, GroupV2Convo, Identified, MessageId,
+    ConversationIdRef, DirectV1Convo, GroupV1Convo, GroupV2Convo, GroupV3Convo, Identified,
+    MessageId,
 };
 use crate::identity::{AuthenticatedSigner, ParticipantId, Signer, SignerKey, SignerRef};
 use crate::service_context::{ExternalServices, ServiceContext};
@@ -211,6 +212,21 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
         let signers = self.get_signers_for_participants(participants)?;
         let convo = GroupV2Convo::new(&mut self.services, name, desc, &signers)?;
+        let convo_id = convo.id().to_string();
+
+        self.register_convo(ConvoTypeOwned::Group(Box::new(convo)))?;
+
+        Ok(convo_id)
+    }
+
+    pub fn create_group_convo_v3(
+        &mut self,
+        participants: &[ParticipantId],
+        name: &str,
+        desc: &str,
+    ) -> Result<ConversationId, ChatError> {
+        let signers = self.get_signers_for_participants(participants)?;
+        let convo = GroupV3Convo::new(&mut self.services, name, desc, &signers)?;
         let convo_id = convo.id().to_string();
 
         self.register_convo(ConvoTypeOwned::Group(Box::new(convo)))?;
