@@ -12,7 +12,6 @@ use tracing::info;
 use tracing::instrument;
 
 pub use identity::MlsIdentityProvider;
-pub(crate) use identity::parse_credential;
 pub(crate) use mls_provider::MlsEphemeralPqProvider;
 
 use crate::ChatError;
@@ -176,7 +175,7 @@ impl InboxV2 {
                 let convo = GroupV2Convo::new_from_welcome(service_ctx, &mw)?;
                 Ok(Some((Box::new(convo), ConversationClass::Group)))
             }
-            InviteType::GroupV3(welcome_bytes) => {
+            InviteType::GroupV3(_welcome_bytes) => {
                 info!("Process V3 WelcomeMessage");
                 todo!();
             }

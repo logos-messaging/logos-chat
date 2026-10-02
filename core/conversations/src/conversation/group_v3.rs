@@ -13,15 +13,15 @@ use openmls::framing::MlsMessageOut;
 use openmls::group::{MlsGroup, MlsGroupCreateConfig};
 use openmls::key_packages::KeyPackage;
 
-use crate::conversation::mls_extensions::{
-    ConvoMetaInfo, GROUP_METADATA_EXTENSION_TYPE, capabilities_with_group_metadata,
-};
 use crate::conversation::{ConversationIdRef, Convo, GroupConvo, Identified};
 use crate::errors::SendError;
 use crate::service_context::ServiceContext;
 use crate::utils::{blake2b_hex, hash_size};
 use crate::{AddressedEnvelope, ChatError, DeliveryService, ExternalServices, SignerKey};
 
+use super::mls_extensions::{
+    ConvoMetaInfo, GROUP_METADATA_EXTENSION_TYPE, capabilities_with_group_metadata,
+};
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
 use self::payloads::frame_id;
@@ -195,8 +195,8 @@ where
 
     fn remove_signer(
         &mut self,
-        cx: &mut ServiceContext<S>,
-        signer: &[crate::SignerRef],
+        _cx: &mut ServiceContext<S>,
+        _signer: &[crate::SignerRef],
     ) -> Result<(), ChatError> {
         todo!()
     }
@@ -225,13 +225,13 @@ where
 
     fn handle_frame(
         &mut self,
-        cx: &mut ServiceContext<S>,
-        enc: chat_proto::logoschat::encryption::EncryptedPayload,
+        _cx: &mut ServiceContext<S>,
+        _enc: chat_proto::logoschat::encryption::EncryptedPayload,
     ) -> Result<crate::ConvoOutcome, ChatError> {
         todo!()
     }
 
-    fn wakeup(&mut self, cx: &mut ServiceContext<S>) -> Result<crate::ConvoOutcome, ChatError> {
+    fn wakeup(&mut self, _cx: &mut ServiceContext<S>) -> Result<crate::ConvoOutcome, ChatError> {
         todo!()
     }
 

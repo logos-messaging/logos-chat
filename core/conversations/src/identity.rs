@@ -10,16 +10,14 @@
 //!
 //! The model and the reasoning behind it: `docs/adr/0003-identity-model.md`.
 
-use std::{fmt, path::Display};
+use std::fmt;
 
 use crypto::Ed25519VerifyingKey;
 use openmls::{
     credentials::{BasicCredential, Credential},
-    key_packages::KeyPackage,
     treesync::LeafNode,
 };
 
-use super::inbox_v2::parse_credential;
 use crate::{
     errors::TypeConversionError,
     service_traits::{AuthResult, AuthService},
@@ -82,7 +80,7 @@ impl TryFrom<&str> for SignerKey {
 /// business, and MLS checks the key itself.
 impl From<&openmls::prelude::SignaturePublicKey> for SignerKey {
     fn from(value: &openmls::prelude::SignaturePublicKey) -> Self {
-        Self::try_from(value.as_slice()).expect("mls::SignaturePublicKey must be a valid SignerKey")
+        Self::from(value.as_slice())
     }
 }
 
@@ -194,7 +192,7 @@ impl Signer {
 
 /// The auth service's verdict on a member, as of when it was asked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AuthStatus {
+pub enum AuthStatus {
     Valid,
     /// Was valid; withdrawn since.
     Revoked,
@@ -205,7 +203,7 @@ pub(crate) enum AuthStatus {
 }
 
 impl AuthStatus {
-    pub fn to_str(&self) -> &str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             AuthStatus::Valid => "Valid",
             AuthStatus::Revoked => "Revoked",
@@ -227,7 +225,7 @@ impl From<AuthResult> for AuthStatus {
 
 impl std::fmt::Display for AuthStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.to_str())
+        f.write_str(self.as_str())
     }
 }
 

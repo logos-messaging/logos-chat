@@ -1,5 +1,4 @@
 use integration_tests_core::TestHarness;
-use libchat::{ChatError, DeliveryAck, MissingMessage};
 use tracing::info;
 
 #[test]

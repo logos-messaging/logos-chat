@@ -1,22 +1,14 @@
 use openmls::{
-    extensions::ExtensionType,
-    key_packages::{KeyPackage, KeyPackageIn, key_package_in},
-    prelude::{
-        Capabilities,
-        tls_codec::{Deserialize, Error as TlsError, Serialize, Size, VLByteSlice, VLBytes},
-    },
+    key_packages::{KeyPackage, KeyPackageIn},
+    prelude::tls_codec::Deserialize,
     versions::ProtocolVersion,
 };
 use openmls_traits::OpenMlsProvider;
-use std::{
-    collections::HashSet,
-    io::{Read, Write},
-};
+use std::collections::HashSet;
 
 use crate::{
-    AuthResult, AuthService, ChatError, ExternalServices, ParticipantId, RegistrationService,
+    ChatError, ExternalServices, RegistrationService,
     Signer, SignerKey, errors::KeyPackageError, service_context::ServiceContext,
-    types::ConvoMetadata,
 };
 
 pub fn unique<'a, T, I>(iter: I) -> impl Iterator<Item = &'a T>
@@ -28,10 +20,10 @@ where
     iter.into_iter().filter(move |x| seen.insert(*x))
 }
 
-pub fn member_diff<'a>(
-    new: &'a [SignerKey],
+pub fn member_diff(
+    new: &[SignerKey],
     existing: impl Iterator<Item = Signer>,
-) -> impl Iterator<Item = &'a SignerKey> {
+) -> impl Iterator<Item = &SignerKey> {
     let existing: HashSet<SignerKey> = existing.map(|s| s.signer).collect();
     new.iter().filter(move |s| !existing.contains(*s))
 }
@@ -46,7 +38,7 @@ pub(super) fn fetch_key_packages<'a, S: ExternalServices>(
     signers
         .filter(|s| seen.insert(s.as_bytes()))
         .map(|signer| {
-            let mut kp_bytes = service_ctx
+            let kp_bytes = service_ctx
                 .registry
                 .retrieve(&signer.to_string())
                 .map_err(ChatError::generic)?
