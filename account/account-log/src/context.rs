@@ -12,7 +12,7 @@ use crate::error::AccountLogError;
 ///
 /// Allocated by libchat, not by the account-log format: the format defines
 /// only that every endorsement carries a context.
-pub const CHATSIGNER_CONTEXT: Context = Context::from_static("chat.signer");
+pub const CHATSIGNER_CONTEXT: Context = Context::literal("chat.signer");
 
 /// Longest namespace and label, in octets.
 const MAX_NAMESPACE: usize = 16;
@@ -26,10 +26,6 @@ const MAX_CONTEXT: usize = MAX_NAMESPACE + 1 + MAX_LABEL;
 ///
 /// The namespace names the specification that defines the context; the label
 /// names one use within it.
-///
-/// Stored inline rather than boxed so [`from_static`](Self::from_static) can
-/// run in a `const`. Unused bytes are zero, and `0x00` is outside the charset,
-/// so the derived `Ord` matches ordering the strings themselves.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Context {
     buf: [u8; MAX_CONTEXT],
@@ -44,9 +40,9 @@ impl Context {
         Self::from_bytes(context.as_bytes())
     }
 
-    /// [`new`](Self::new) for a literal, checked while compiling: an invalid
-    /// one fails the build rather than the first use.
-    pub const fn from_static(context: &'static str) -> Self {
+    /// [`new`](Self::new) for a context known at compile time. Declare it as a
+    /// `const` and an invalid one fails the build; it panics if called at runtime.
+    pub const fn literal(context: &str) -> Self {
         match Self::checked(context.as_bytes()) {
             Ok(context) => context,
             Err(detail) => panic!("{}", detail),
@@ -64,8 +60,7 @@ impl Context {
         })
     }
 
-    /// The one implementation of the rule, so the `const` and runtime paths
-    /// cannot drift apart. `Err` carries the detail each reports.
+    /// The rule, shared by both constructors. `Err` carries the detail.
     const fn checked(context: &[u8]) -> Result<Self, &'static str> {
         // Split at the *first* full stop: the rest belongs to the label,
         // which may contain further stops.
@@ -143,7 +138,6 @@ impl std::fmt::Display for Context {
     }
 }
 
-/// The 81-byte buffer is noise; the context is the string in it.
 impl std::fmt::Debug for Context {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("Context").field(&self.as_str()).finish()
