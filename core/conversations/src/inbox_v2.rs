@@ -1,6 +1,7 @@
 mod identity;
 mod mls_provider;
 
+use crate::errors::SendError;
 use crate::storage::{ConversationKind, ConversationMeta, ConversationStore};
 use chat_proto::logoschat::envelope::EnvelopeV1;
 use de_mls::protos::de_mls::messages::v1::MemberWelcome;
@@ -11,6 +12,7 @@ use tracing::info;
 use tracing::instrument;
 
 pub use identity::MlsIdentityProvider;
+pub(crate) use identity::parse_credential;
 pub(crate) use mls_provider::MlsEphemeralPqProvider;
 
 use crate::ChatError;
@@ -73,24 +75,23 @@ pub fn invite_user_v2<DS: DeliveryService>(
     .map_err(ChatError::generic)
 }
 
-pub fn invite_user_v3<DS: DeliveryService>(
-    ds: &mut DS,
+pub fn create_invite_v3(
     signer: SignerRef,
-    welcome: Vec<u8>, // Placeholder
-) -> Result<(), ChatError> {
+    welcome: &MlsMessageOut,
+) -> Result<AddressedEnvelope, SendError> {
     let frame = InboxV2Frame {
-        payload: Some(InviteType::GroupV3(welcome)),
+        payload: Some(InviteType::GroupV3(welcome.to_bytes()?)),
     };
     let envelope = EnvelopeV1 {
         conversation_hint: conversation_id_for(signer),
         salt: 0,
         payload: frame.encode_to_vec().into(),
     };
-    ds.publish(AddressedEnvelope {
+
+    Ok(AddressedEnvelope {
         delivery_address: delivery_address_for(signer),
         data: envelope.encode_to_vec(),
     })
-    .map_err(ChatError::generic)
 }
 
 /// A convo built from an InboxV2 invite, paired with the display class its

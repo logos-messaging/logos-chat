@@ -1,7 +1,10 @@
 use std::ops::Deref;
 
-use crate::identity::{ParticipantId, SignerRef};
-use openmls::credentials::{BasicCredential, CredentialWithKey};
+use crate::{
+    ChatError::{self, ParticipantResolution},
+    identity::{ParticipantId, SignerRef},
+};
+use openmls::credentials::{BasicCredential, Credential, CredentialWithKey};
 use openmls_traits::{
     signatures::{Signer, SignerError},
     types::SignatureScheme,
@@ -65,4 +68,11 @@ impl<T: IdentityProvider> Signer for MlsIdentityProvider<T> {
     fn signature_scheme(&self) -> SignatureScheme {
         SignatureScheme::ED25519
     }
+}
+
+pub fn parse_credential(bytes: Credential) -> Result<ParticipantId, ChatError> {
+    let cred = BasicCredential::try_from(bytes)
+        .map_err(|e| ChatError::ParticipantResolution(e.to_string()))?;
+
+    Ok(ParticipantId::from(cred.identity()))
 }
