@@ -297,7 +297,7 @@ mod tests {
 
     fn key() -> AccountEntry {
         AccountEntry::add(
-            CHATSIGNER_CONTEXT.clone(),
+            CHATSIGNER_CONTEXT,
             EntryData::Ed25519Key(key_bytes()),
         )
     }
@@ -328,7 +328,7 @@ mod tests {
                 body: vec![0xde, 0xad, 0xbe, 0xef],
             },
             AccountEntry::add(
-                CHATSIGNER_CONTEXT.clone(),
+                CHATSIGNER_CONTEXT,
                 EntryData::Unknown {
                     tag: 0x7f,
                     body: vec![1, 2, 3],
@@ -351,7 +351,7 @@ mod tests {
     #[test]
     fn empty_text_roundtrips() {
         let log = make_log(vec![AccountEntry::add(
-            CHATSIGNER_CONTEXT.clone(),
+            CHATSIGNER_CONTEXT,
             EntryData::Text(String::new()),
         )]);
         assert_eq!(
@@ -527,8 +527,8 @@ mod tests {
         let big = Context::new("chat.signer").unwrap();
         let filler = "x".repeat(60_000);
         let entries = vec![
-            AccountEntry::add(big.clone(), EntryData::Text(filler.clone())),
-            AccountEntry::add(big.clone(), EntryData::Text(filler.clone())),
+            AccountEntry::add(big, EntryData::Text(filler.clone())),
+            AccountEntry::add(big, EntryData::Text(filler.clone())),
             AccountEntry::add(big, EntryData::Text(filler)),
         ];
         assert!(matches!(
@@ -657,3 +657,4 @@ mod tests {
         assert_eq!(compare(&old, &sibling), LogFreshness::Diverged);
     }
 }
+

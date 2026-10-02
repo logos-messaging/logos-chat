@@ -384,11 +384,11 @@ mod tests {
     }
 
     fn key(bytes: [u8; 32]) -> AccountEntry {
-        AccountEntry::add(CHATSIGNER_CONTEXT.clone(), EntryData::Ed25519Key(bytes))
+        AccountEntry::add(CHATSIGNER_CONTEXT, EntryData::Ed25519Key(bytes))
     }
 
     fn text(value: &str) -> AccountEntry {
-        AccountEntry::add(CHATSIGNER_CONTEXT.clone(), EntryData::Text(value.into()))
+        AccountEntry::add(CHATSIGNER_CONTEXT, EntryData::Text(value.into()))
     }
 
     /// Tombstones are applied and add order is preserved.
@@ -441,7 +441,7 @@ mod tests {
         let (a, b) = (key_bytes(), key_bytes());
         let log = AccountLog::from_entries(vec![
             key(a),
-            AccountEntry::add(other.clone(), EntryData::Ed25519Key(b)),
+            AccountEntry::add(other, EntryData::Ed25519Key(b)),
         ])
         .unwrap();
 

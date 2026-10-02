@@ -134,7 +134,7 @@ mod tests {
 
     fn entry() -> AccountEntry {
         AccountEntry::add(
-            CHATSIGNER_CONTEXT.clone(),
+            CHATSIGNER_CONTEXT,
             EntryData::Ed25519Key(key_bytes()),
         )
     }

@@ -99,7 +99,7 @@ mod tests {
         let mut draft = AccountLogDraft::new();
         for value in values {
             draft
-                .add(CHATSIGNER_CONTEXT.clone(), EntryData::Text((*value).into()))
+                .add(CHATSIGNER_CONTEXT, EntryData::Text((*value).into()))
                 .expect("valid entry");
         }
         let payload = draft.log().encode().expect("within the size limit");

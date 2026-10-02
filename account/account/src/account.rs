@@ -157,7 +157,7 @@ mod tests {
         let signed = account
             .update()
             .push(AccountEntry::add(
-                elsewhere.clone(),
+                elsewhere,
                 EntryData::Text("opaque".into()),
             ))
             .publish()
@@ -176,9 +176,9 @@ mod tests {
 
         let signed = account
             .update()
-            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &first)
-            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &second)
-            .endorse_text(CHATSIGNER_CONTEXT.clone(), "alice")
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT, &first)
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT, &second)
+            .endorse_text(CHATSIGNER_CONTEXT, "alice")
             .publish()
             .unwrap();
 
@@ -202,12 +202,12 @@ mod tests {
 
         let first = account
             .update()
-            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &device())
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT, &device())
             .publish()
             .unwrap();
         let second = account
             .update()
-            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &device())
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT, &device())
             .publish()
             .unwrap();
 
@@ -233,7 +233,7 @@ mod tests {
 
         let first = account
             .update()
-            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &ours)
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT, &ours)
             .publish()
             .unwrap();
 
@@ -242,7 +242,7 @@ mod tests {
         let mut elsewhere = AccountLogDraft::from_log(&first.verify(&addr).unwrap()).unwrap();
         elsewhere
             .add(
-                CHATSIGNER_CONTEXT.clone(),
+                CHATSIGNER_CONTEXT,
                 EntryData::Ed25519Key(theirs.to_bytes()),
             )
             .unwrap();
@@ -257,7 +257,7 @@ mod tests {
         let mine = device();
         let latest = account
             .update()
-            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &mine)
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT, &mine)
             .publish()
             .unwrap();
 
@@ -278,7 +278,7 @@ mod tests {
 
         account
             .update()
-            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &device())
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT, &device())
             .publish()
             .unwrap();
         let after = account.update().revoke(0).publish().unwrap();
@@ -297,7 +297,7 @@ mod tests {
 
         let before = account
             .update()
-            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &key)
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT, &key)
             .publish()
             .unwrap();
 
@@ -305,8 +305,8 @@ mod tests {
         assert!(
             account
                 .update()
-                .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &device())
-                .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &key)
+                .endorse_ed25519_key(CHATSIGNER_CONTEXT, &device())
+                .endorse_ed25519_key(CHATSIGNER_CONTEXT, &key)
                 .publish()
                 .is_err()
         );
@@ -323,7 +323,7 @@ mod tests {
 
         let first = account
             .update()
-            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &device())
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT, &device())
             .publish()
             .unwrap();
 
@@ -333,7 +333,7 @@ mod tests {
 
         let second = imported
             .update()
-            .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &device())
+            .endorse_ed25519_key(CHATSIGNER_CONTEXT, &device())
             .publish()
             .unwrap();
 
