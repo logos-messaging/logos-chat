@@ -1,13 +1,30 @@
+// TESTING ONLY
+// Group Conversation that uses a commit validator to ensure valid commit order.
+//
+// Invariants:
+//  - Signers are not allowed change their SigningKey.
+//  - Everyone is an "Admin"
+//
+
+mod payloads;
+
 use openmls::extensions::{Extension, Extensions, UnknownExtension};
+use openmls::framing::MlsMessageOut;
 use openmls::group::{MlsGroup, MlsGroupCreateConfig};
+use openmls::key_packages::KeyPackage;
 
 use crate::conversation::mls_extensions::{
     ConvoMetaInfo, GROUP_METADATA_EXTENSION_TYPE, capabilities_with_group_metadata,
 };
 use crate::conversation::{ConversationIdRef, Convo, GroupConvo, Identified};
+use crate::errors::SendError;
 use crate::service_context::ServiceContext;
 use crate::utils::{blake2b_hex, hash_size};
-use crate::{ChatError, DeliveryService, ExternalServices, SignerKey};
+use crate::{AddressedEnvelope, ChatError, DeliveryService, ExternalServices, SignerKey};
+
+use super::mls_utils::{fetch_key_packages, member_diff, unique};
+
+use self::payloads::frame_id;
 
 // Type Aliases
 type Frame = payloads::GroupV3Frame;
@@ -91,8 +108,53 @@ impl GroupV3Convo {
         &mut self,
         cx: &mut ServiceContext<S>,
         frame: Frame,
-    ) -> Result<super::MessageId, ChatError> {
-        todo!()
+    ) -> Result<super::MessageId, SendError> {
+        let frame = frame.encode();
+        let frame_id = frame_id(frame.as_slice());
+
+        let mls_msg =
+            self.mls_group
+                .create_message(&cx.mls_provider, &cx.mls_identity, frame.as_slice())?;
+
+        self.send_mls_msg(cx, mls_msg)?;
+
+        Ok(frame_id)
+    }
+
+    fn send_mls_msg<S: ExternalServices>(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        msg: MlsMessageOut,
+    ) -> Result<(), SendError> {
+        cx.ds
+            .publish(self.to_envelope(msg)?)
+            .map_err(|e| SendError::Delivery(e.to_string()))?;
+
+        Ok(())
+    }
+
+    // Handles pending_commit
+    fn process_generated_commit<S: ExternalServices>(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        commit: MlsMessageOut,
+        dependent_msgs: Vec<AddressedEnvelope>,
+    ) -> Result<(), SendError> {
+        // Check if can commit
+        // ????
+        // Send Commit
+        self.send_mls_msg(cx, commit)?;
+
+        // Update State
+        self.mls_group.merge_pending_commit(&cx.mls_provider)?;
+
+        // Send Welcomes
+        for env in dependent_msgs {
+            cx.ds
+                .publish(env)
+                .map_err(|e| SendError::Delivery(e.to_string()))?;
+        }
+        Ok(())
     }
 }
 
@@ -111,7 +173,24 @@ where
         cx: &mut ServiceContext<S>,
         signers: &[SignerKey],
     ) -> Result<(), ChatError> {
-        todo!()
+        // filter for duplicates and existing signers
+        let existing = <GroupV3Convo as Convo<S>>::signers(self)?.into_iter();
+        let signers = unique(member_diff(signers, existing));
+
+        let key_packages: Vec<KeyPackage> = fetch_key_packages(cx, signers)?;
+        let (commit, welcome, _) = self
+            .mls_group
+            .add_members(&cx.mls_provider, &cx.mls_identity, key_packages.as_slice())
+            .map_err(ChatError::generic)?;
+
+        let dependent_messages: Result<Vec<AddressedEnvelope>, SendError> = key_packages
+            .iter()
+            .map(|s| crate::inbox_v2::create_invite_v3(&SignerKey::from(s.leaf_node()), &welcome))
+            .collect();
+
+        self.process_generated_commit(cx, commit, dependent_messages?)?;
+
+        Ok(())
     }
 
     fn remove_signer(
@@ -140,7 +219,8 @@ where
         cx: &mut ServiceContext<S>,
         content: &[u8],
     ) -> Result<super::MessageId, ChatError> {
-        todo!()
+        let frame = Frame::from_content(content);
+        self.send_frame(cx, frame).map_err(Into::into)
     }
 
     fn handle_frame(
