@@ -14,10 +14,10 @@ use openmls::group::{MlsGroup, MlsGroupCreateConfig};
 use openmls::key_packages::KeyPackage;
 
 use crate::conversation::{ConversationIdRef, Convo, GroupConvo, Identified};
-use crate::errors::SendError;
+use crate::errors::{SendError, TypeConversionError};
 use crate::service_context::ServiceContext;
 use crate::utils::{blake2b_hex, hash_size};
-use crate::{AddressedEnvelope, ChatError, DeliveryService, ExternalServices, SignerKey};
+use crate::{AddressedEnvelope, ChatError, DeliveryService, ExternalServices, Signer, SignerKey};
 
 use super::mls_extensions::{
     ConvoMetaInfo, GROUP_METADATA_EXTENSION_TYPE, capabilities_with_group_metadata,
@@ -53,6 +53,20 @@ fn group_create_config(name: &str, desc: &str) -> MlsGroupCreateConfig {
         .build()
 }
 
+fn create_group<S: ExternalServices>(
+    cx: &mut ServiceContext<S>,
+    name: &str,
+    desc: &str,
+) -> Result<MlsGroup, ChatError> {
+    MlsGroup::new(
+        &cx.mls_provider,
+        &cx.mls_identity,
+        &group_create_config(name, desc),
+        cx.mls_identity.get_credential(),
+    )
+    .map_err(|e| ChatError::GroupCreate(e.to_string()))
+}
+
 fn delivery_address_from_id(convo_id: &str) -> String {
     blake2b_hex::<hash_size::DeliveryAddr>(&["delivery_addr|", convo_id])
 }
@@ -73,14 +87,7 @@ impl GroupV3Convo {
         let convo_id = rand_string();
 
         // Create MlsGroup
-        let config = group_create_config(name, desc);
-        let mls_group = MlsGroup::new(
-            &cx.mls_provider,
-            &cx.mls_identity,
-            &config,
-            cx.mls_identity.get_credential(),
-        )
-        .map_err(|e| ChatError::GroupCreate(e.to_string()))?;
+        let mls_group = create_group(cx, name, desc)?;
 
         let mut convo = Self {
             convo_id,
@@ -88,7 +95,6 @@ impl GroupV3Convo {
         };
 
         convo.init(cx)?;
-
         convo.add_signer(cx, signers)?;
         Ok(convo)
     }
@@ -236,7 +242,13 @@ where
     }
 
     fn signers(&self) -> Result<Vec<crate::Signer>, ChatError> {
-        todo!()
+        let signers: Result<Vec<Signer>, TypeConversionError> = self
+            .mls_group
+            .members()
+            .map(|m| Signer::from_member(&m))
+            .collect();
+
+        Ok(signers?)
     }
 
     fn can_send(&self) -> bool {
