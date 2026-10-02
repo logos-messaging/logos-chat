@@ -241,10 +241,7 @@ mod tests {
         let theirs = device();
         let mut elsewhere = AccountLogDraft::from_log(&first.verify(&addr).unwrap()).unwrap();
         elsewhere
-            .add(
-                CHATSIGNER_CONTEXT,
-                EntryData::Ed25519Key(theirs.to_bytes()),
-            )
+            .add(CHATSIGNER_CONTEXT, EntryData::Ed25519Key(theirs.to_bytes()))
             .unwrap();
         let payload = elsewhere.log().encode().unwrap();
         let signature = account.signing_key.sign(payload.as_bytes());

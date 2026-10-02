@@ -133,10 +133,7 @@ mod tests {
     }
 
     fn entry() -> AccountEntry {
-        AccountEntry::add(
-            CHATSIGNER_CONTEXT,
-            EntryData::Ed25519Key(key_bytes()),
-        )
+        AccountEntry::add(CHATSIGNER_CONTEXT, EntryData::Ed25519Key(key_bytes()))
     }
 
     /// A record holding a one-entry log, plus the account that signed it.

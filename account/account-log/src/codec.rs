@@ -296,10 +296,7 @@ mod tests {
     }
 
     fn key() -> AccountEntry {
-        AccountEntry::add(
-            CHATSIGNER_CONTEXT,
-            EntryData::Ed25519Key(key_bytes()),
-        )
+        AccountEntry::add(CHATSIGNER_CONTEXT, EntryData::Ed25519Key(key_bytes()))
     }
 
     fn make_log(entries: Vec<AccountEntry>) -> AccountLog {
@@ -657,4 +654,3 @@ mod tests {
         assert_eq!(compare(&old, &sibling), LogFreshness::Diverged);
     }
 }
-
