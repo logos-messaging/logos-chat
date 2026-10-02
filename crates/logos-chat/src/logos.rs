@@ -244,7 +244,7 @@ fn register_account<A: AccountPublisher + AccountProvider>(
 
     let _ = account
         .update()
-        .endorse_ed25519_key(CHATSIGNER_CONTEXT.clone(), &key)
+        .endorse_ed25519_key(CHATSIGNER_CONTEXT, &key)
         .publish()?;
 
     Ok(pending.complete(account.addr()))
