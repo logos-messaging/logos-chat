@@ -1,20 +1,12 @@
-use chat_proto::logoschat::{
-    encryption::{EncryptedPayload, Plaintext, encrypted_payload},
-    envelope::EnvelopeV1,
-};
-use openmls::{
-    framing::MlsMessageBodyOut as MlsMsg, framing::MlsMessageOut, prelude::tls_codec::Serialize,
-};
+use chat_proto::logoschat::encryption::{EncryptedPayload, Plaintext, encrypted_payload};
+use openmls::framing::MlsMessageOut;
 use prost::{Message, Oneof, bytes::Bytes};
 
 use super::{GroupV3Convo, delivery_address_from_id};
 
 use crate::{
-    AddressedEnvelope, ChatError, SignerKey,
-    conversation::{
-        Identified,
-        group_v3::{Frame, FrameId},
-    },
+    AddressedEnvelope,
+    conversation::{Identified, group_v3::FrameId},
     errors::SendError,
     types::AddressedEncryptedPayload,
     utils::{blake2b_hex, hash_size},
