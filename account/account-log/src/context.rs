@@ -6,20 +6,19 @@
 //! module defines only what a context is and how it is encoded; which
 //! contexts exist is allocated by the protocols above the log.
 
-use std::sync::LazyLock;
-
 use crate::error::AccountLogError;
 
 /// The context libchat endorses device (LocalIdentity) signing keys under.
 ///
 /// Allocated by libchat, not by the account-log format: the format defines
 /// only that every endorsement carries a context.
-pub static CHATSIGNER_CONTEXT: LazyLock<Context> =
-    LazyLock::new(|| Context::new("chat.signer").expect("valid context"));
+pub const CHATSIGNER_CONTEXT: Context = Context::from_static("chat.signer");
 
 /// Longest namespace and label, in octets.
 const MAX_NAMESPACE: usize = 16;
 const MAX_LABEL: usize = 64;
+/// `<namespace>.<label>`, so the separator too. Its length fits `ctx_len`.
+const MAX_CONTEXT: usize = MAX_NAMESPACE + 1 + MAX_LABEL;
 
 /// A validated context, `<namespace>.<label>`. Comparison is a raw byte
 /// compare — permitting general UTF-8 would admit normalization forms and case
@@ -27,8 +26,15 @@ const MAX_LABEL: usize = 64;
 ///
 /// The namespace names the specification that defines the context; the label
 /// names one use within it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Context(Box<str>);
+///
+/// Stored inline rather than boxed so [`from_static`](Self::from_static) can
+/// run in a `const`. Unused bytes are zero, and `0x00` is outside the charset,
+/// so the derived `Ord` matches ordering the strings themselves.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Context {
+    buf: [u8; MAX_CONTEXT],
+    len: u8,
+}
 
 impl Context {
     /// Validate `context` as `<namespace>.<label>`: a namespace of 1-16
@@ -38,66 +44,109 @@ impl Context {
         Self::from_bytes(context.as_bytes())
     }
 
+    /// [`new`](Self::new) for a literal, checked while compiling: an invalid
+    /// one fails the build rather than the first use.
+    pub const fn from_static(context: &'static str) -> Self {
+        match Self::checked(context.as_bytes()) {
+            Ok(context) => context,
+            Err(detail) => panic!("{}", detail),
+        }
+    }
+
     /// [`new`](Self::new) over raw bytes — what the decoder holds. The
     /// charset is a subset of ASCII, so a passing byte string is valid UTF-8.
     pub(crate) fn from_bytes(context: &[u8]) -> Result<Self, AccountLogError> {
-        let invalid = |detail: &str| {
-            Err(AccountLogError::InvalidContext(format!(
+        Self::checked(context).map_err(|detail| {
+            AccountLogError::InvalidContext(format!(
                 "context {}: {detail}",
                 String::from_utf8_lossy(context)
-            )))
-        };
-        // Split at the *first* full stop: the rest belongs to the label,
-        // which may contain further stops.
-        let Some(dot) = context.iter().position(|&b| b == b'.') else {
-            return invalid("must contain a '.' separating namespace from label");
-        };
-        let (namespace, label) = (&context[..dot], &context[dot + 1..]);
-
-        if namespace.is_empty() || namespace.len() > MAX_NAMESPACE {
-            return invalid("namespace must be 1-16 octets");
-        }
-        if label.is_empty() || label.len() > MAX_LABEL {
-            return invalid("label must be 1-64 octets");
-        }
-        if !namespace[0].is_ascii_lowercase() {
-            return invalid("namespace must begin with a-z");
-        }
-        if !label[0].is_ascii_lowercase() {
-            return invalid("label must begin with a-z");
-        }
-        if !namespace
-            .iter()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
-        {
-            return invalid("namespace must be a-z 0-9 - only");
-        }
-        if !label
-            .iter()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'.'))
-        {
-            return invalid("label must be a-z 0-9 - . only");
-        }
-        Ok(Self(
-            String::from_utf8(context.to_vec())
-                .expect("charset is ASCII")
-                .into_boxed_str(),
-        ))
+            ))
+        })
     }
 
-    pub fn as_str(&self) -> &str {
-        &self.0
+    /// The one implementation of the rule, so the `const` and runtime paths
+    /// cannot drift apart. `Err` carries the detail each reports.
+    const fn checked(context: &[u8]) -> Result<Self, &'static str> {
+        // Split at the *first* full stop: the rest belongs to the label,
+        // which may contain further stops.
+        let mut dot = usize::MAX;
+        let mut i = 0;
+        while i < context.len() {
+            if context[i] == b'.' {
+                dot = i;
+                break;
+            }
+            i += 1;
+        }
+        if dot == usize::MAX {
+            return Err("must contain a '.' separating namespace from label");
+        }
+        let (namespace, label) = (context.split_at(dot).0, context.split_at(dot + 1).1);
+
+        if namespace.is_empty() || namespace.len() > MAX_NAMESPACE {
+            return Err("namespace must be 1-16 octets");
+        }
+        if label.is_empty() || label.len() > MAX_LABEL {
+            return Err("label must be 1-64 octets");
+        }
+        if !namespace[0].is_ascii_lowercase() {
+            return Err("namespace must begin with a-z");
+        }
+        if !label[0].is_ascii_lowercase() {
+            return Err("label must begin with a-z");
+        }
+        let mut i = 0;
+        while i < namespace.len() {
+            let b = namespace[i];
+            if !(b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
+                return Err("namespace must be a-z 0-9 - only");
+            }
+            i += 1;
+        }
+        let mut i = 0;
+        while i < label.len() {
+            let b = label[i];
+            if !(b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.') {
+                return Err("label must be a-z 0-9 - . only");
+            }
+            i += 1;
+        }
+
+        let mut buf = [0u8; MAX_CONTEXT];
+        let mut i = 0;
+        while i < context.len() {
+            buf[i] = context[i];
+            i += 1;
+        }
+        Ok(Self {
+            buf,
+            len: context.len() as u8,
+        })
+    }
+
+    pub const fn as_str(&self) -> &str {
+        match std::str::from_utf8(self.as_bytes()) {
+            Ok(context) => context,
+            Err(_) => panic!("charset is ASCII"),
+        }
     }
 
     /// The encoded form. At most 81 bytes, so its length fits `ctx_len`.
-    pub fn as_bytes(&self) -> &[u8] {
-        self.0.as_bytes()
+    pub const fn as_bytes(&self) -> &[u8] {
+        self.buf.split_at(self.len as usize).0
     }
 }
 
 impl std::fmt::Display for Context {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(self.as_str())
+    }
+}
+
+/// The 81-byte buffer is noise; the context is the string in it.
+impl std::fmt::Debug for Context {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Context").field(&self.as_str()).finish()
     }
 }
 
@@ -153,7 +202,7 @@ mod tests {
         }
     }
 
-    /// The pinned context is valid, so its LazyLock cannot panic at first use.
+    /// Invalid would now be a build failure, so this only pins the value.
     #[test]
     fn signer_context_is_valid() {
         assert_eq!(CHATSIGNER_CONTEXT.as_str(), "chat.signer");
