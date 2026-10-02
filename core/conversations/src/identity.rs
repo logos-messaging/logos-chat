@@ -15,6 +15,7 @@ use std::fmt;
 use crypto::Ed25519VerifyingKey;
 use openmls::{
     credentials::{BasicCredential, Credential},
+    group::Member,
     treesync::LeafNode,
 };
 
@@ -155,6 +156,13 @@ pub struct Signer {
 }
 
 impl Signer {
+    pub(crate) fn from_member(member: &Member) -> Result<Self, TypeConversionError> {
+        Ok(Self {
+            signer: SignerKey::from(member.signature_key.as_slice()),
+            participant_id: ParticipantId::try_from(member.credential.to_owned())?,
+        })
+    }
+
     pub(crate) fn from_leaf_node(leaf: &LeafNode) -> Result<Self, TypeConversionError> {
         Ok(Self {
             signer: SignerKey::from(leaf),

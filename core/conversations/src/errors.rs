@@ -72,6 +72,9 @@ pub enum ChatError {
 
     #[error("SendError: {0}")]
     SendError(#[from] SendError),
+
+    #[error("type conversion: {0}")]
+    ConversionError(#[from] TypeConversionError),
 }
 
 impl ChatError {

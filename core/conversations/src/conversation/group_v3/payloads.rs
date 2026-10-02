@@ -29,8 +29,6 @@ pub enum GroupV3Payload {
     Content(Bytes),
     #[prost(message, tag = "7")]
     ConsensusMessage(Bytes),
-    #[prost(message, tag = "8")]
-    MlsProtoMessage(Bytes),
 }
 
 impl GroupV3Frame {
