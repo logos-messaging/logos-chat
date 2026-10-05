@@ -4,15 +4,12 @@
 //!
 //! Specification: <https://lip.logos.co/identity/raw/profile.html>
 
-use std::sync::LazyLock;
-
 use account_log::{AccountRecord, Context};
 
 use crate::{AccountProvider, AccountPublisher, AccountUpdate};
 
 /// The name an account presents itself under.
-pub static PROFILE_DISPLAYNAME: LazyLock<Context> =
-    LazyLock::new(|| Context::new("profile.displayname").expect("valid context"));
+const PROFILE_DISPLAYNAME: Context = Context::literal("profile.displayname");
 
 /// Reading an account's profile.
 pub trait ProfileRead {
@@ -46,7 +43,7 @@ pub trait ProfileWrite {
 
 impl<AP: AccountProvider + AccountPublisher> ProfileWrite for AccountUpdate<'_, AP> {
     fn set_display_name(self, name: impl Into<String>) -> Self {
-        self.endorse_text(PROFILE_DISPLAYNAME.clone(), name)
+        self.endorse_text(PROFILE_DISPLAYNAME, name)
     }
 }
 

@@ -9,16 +9,9 @@ type ErrorType = String;
 /// A AccountProvide + AccountPublisher used for tests
 /// It does not rely on network, and can be used safely within a single test.
 /// Results are ephemeral
+#[derive(Default)]
 pub struct TestAccountProvider {
     state: HashMap<AccountAddr, SignedAccountLog>,
-}
-
-impl Default for TestAccountProvider {
-    fn default() -> Self {
-        Self {
-            state: Default::default(),
-        }
-    }
 }
 
 impl TestAccountProvider {
