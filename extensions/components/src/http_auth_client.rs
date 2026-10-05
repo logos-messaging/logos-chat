@@ -9,11 +9,10 @@ use std::io::Read;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use account_log::{
-    AccountLog, AccountLogError, CHATSIGNER_CONTEXT, Context, Ed25519VerifyingKey,
-    MAX_PAYLOAD_BYTES, SignedAccountLog,
+    AccountLogError, AccountRecord, Ed25519VerifyingKey, MAX_PAYLOAD_BYTES, SignedAccountLog,
 };
 use libchat::{AuthResult, AuthService, SignerKey};
-use logos_account::{AccountAddr, AccountProvider, AccountPublisher};
+use logos_account::{AccountAddr, AccountProvider, AccountPublisher, ChatRead};
 use reqwest::StatusCode;
 use reqwest::blocking::{Client, Response};
 use reqwest::header::CONTENT_TYPE;
@@ -109,14 +108,9 @@ fn success(resp: Response) -> Result<Response, HttpAccountError> {
     ))
 }
 
-fn default_context() -> Context {
-    CHATSIGNER_CONTEXT
-}
-
 #[derive(Debug, Clone)]
 pub struct HttpAuthClient {
     endpoint: Endpoint,
-    context: Context,
 }
 
 impl Default for HttpAuthClient {
@@ -129,18 +123,15 @@ impl HttpAuthClient {
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
             endpoint: Endpoint::new(base_url.into()),
-            context: default_context(),
         }
     }
 
-    fn get_account_log(&self, addr: &AccountAddr) -> Result<Option<AccountLog>, HttpAccountError> {
+    fn get_account(&self, addr: &AccountAddr) -> Result<Option<AccountRecord>, HttpAccountError> {
         let Some(signed_log) = self.fetch(addr)? else {
             return Ok(None);
         };
-        signed_log
-            .verify(addr)
-            .map(Some)
-            .map_err(HttpAccountError::from)
+
+        Ok(Some(AccountRecord::new(addr.to_owned(), signed_log)?))
     }
 }
 
@@ -198,25 +189,17 @@ impl AuthService for HttpAuthClient {
             return Ok(AuthResult::Invalid);
         };
 
-        let Some(account_log) = self.get_account_log(&addr)? else {
+        let Some(account) = self.get_account(&addr)? else {
             return Ok(libchat::AuthResult::Invalid);
         };
 
-        Ok(
-            if account_log
-                .ed25519_keys_for(&self.context)
-                .contains(&signer)
-            {
-                AuthResult::Valid
-            } else if account_log
-                .revoked_ed25519_keys_for(&self.context)
-                .contains(&signer)
-            {
-                AuthResult::Revoked
-            } else {
-                AuthResult::Invalid
-            },
-        )
+        Ok(if account.chat_signers().contains(&signer) {
+            AuthResult::Valid
+        } else if account.revoked_chat_signers().contains(&signer) {
+            AuthResult::Revoked
+        } else {
+            AuthResult::Invalid
+        })
     }
 
     fn signers_for_participant(
@@ -227,13 +210,13 @@ impl AuthService for HttpAuthClient {
         let addr =
             AccountAddr::try_from(participant_id.as_bytes()).map_err(HttpAccountError::from)?;
 
-        let Some(account_log) = self.get_account_log(&addr)? else {
+        let Some(account) = self.get_account(&addr)? else {
             // The server has returned a success code but
             return Err(HttpAccountError::AccountNotFound(addr.to_string()));
         };
 
-        let signers: Vec<SignerKey> = account_log
-            .ed25519_keys_for(&self.context)
+        let signers: Vec<SignerKey> = account
+            .chat_signers()
             .into_iter()
             .map(|k| SignerKey::from(k.as_ref()))
             .collect();
@@ -250,8 +233,10 @@ mod tests {
     use std::io::Write;
     use std::net::TcpListener;
 
-    use account_log::{AccountLogDraft, Ed25519SigningKey, EntryData};
+    use account_log::Ed25519SigningKey;
     use libchat::ParticipantId;
+    use logos_account::test_support::TestAccountProvider;
+    use logos_account::{Account, ChatWrite};
 
     use super::*;
 
@@ -284,25 +269,20 @@ mod tests {
 
     #[test]
     fn signer_lookup_outlasts_a_503() {
-        let account = Ed25519SigningKey::generate();
+        let mut account = Account::new(TestAccountProvider::default());
         let signer = Ed25519SigningKey::generate().verifying_key();
-        let mut draft = AccountLogDraft::new();
-        draft
-            .add(
-                CHATSIGNER_CONTEXT,
-                EntryData::Ed25519Key(signer.as_ref().try_into().unwrap()),
-            )
-            .unwrap();
-        let payload = draft.log().encode().unwrap();
-        let signature = account.sign(payload.as_bytes());
-        let log = SignedAccountLog { payload, signature };
+        let signed_log = account
+            .update()
+            .endorse_chat_signer(&signer)
+            .publish()
+            .expect("succeeds");
 
         let url = serve(vec![
             ("503 Service Unavailable", Vec::new()),
-            ("200 OK", log.to_bytes()),
+            ("200 OK", signed_log.to_bytes()),
         ]);
-        let participant =
-            ParticipantId::from(AccountAddr::from(account.verifying_key()).to_bytes());
+        let participant = ParticipantId::from(account.addr().to_bytes());
+
         let result = HttpAuthClient::new(url)
             .validate_signer(SignerKey::from(signer.as_ref()), participant)
             .expect("the retry lands");

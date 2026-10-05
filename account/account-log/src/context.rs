@@ -8,12 +8,6 @@
 
 use crate::error::AccountLogError;
 
-/// The context libchat endorses device (LocalIdentity) signing keys under.
-///
-/// Allocated by libchat, not by the account-log format: the format defines
-/// only that every endorsement carries a context.
-pub const CHATSIGNER_CONTEXT: Context = Context::literal("chat.signer");
-
 /// Longest namespace and label, in octets.
 const MAX_NAMESPACE: usize = 16;
 const MAX_LABEL: usize = 64;
