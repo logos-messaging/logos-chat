@@ -19,6 +19,7 @@ use crate::{
     proto::{EncryptedPayload, EnvelopeV1, Message},
 };
 use openmls::group::GroupId;
+use openmls::prelude::OpenMlsProvider as _;
 use std::collections::{HashMap, hash_map::Entry};
 use std::fmt::Debug;
 use tracing::{info, instrument};
@@ -141,6 +142,12 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         self.services.mls_identity.participant_id()
     }
 
+    /// The id every invite to this core carries as its hint.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn inbox_id(&self) -> ConversationIdRef<'_> {
+        self.pq_inbox.id()
+    }
+
     /// Submit the local account's MLS KeyPackage to the registration service.
     /// Idempotent on the server side (registries that retain history will keep
     /// the most recent N submissions; older entries are pruned).
@@ -182,11 +189,20 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         &mut self,
         participants: &[ParticipantId],
     ) -> Result<ConversationId, ChatError> {
+        let group_id = GroupId::random(self.services.mls_provider.rand());
+        self.create_group_convo_v1_under(group_id, participants)
+    }
+
+    fn create_group_convo_v1_under(
+        &mut self,
+        group_id: GroupId,
+        participants: &[ParticipantId],
+    ) -> Result<ConversationId, ChatError> {
         // TODO: (P1) Ensure errors are handled properly. This is a high chance for
         // desynchronized state: MlsGroup persistence, conversation persistence, and
         // invite delivery all happen separately.
         let signers = self.get_signers_for_participants(participants)?;
-        let mut convo = GroupV1Convo::new(&mut self.services)?;
+        let mut convo = GroupV1Convo::with_group_id(&mut self.services, group_id)?;
         self.services.store.save_conversation(&ConversationMeta {
             local_convo_id: convo.id().to_string(),
             kind: ConversationKind::GroupV1,
@@ -211,6 +227,33 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
         let signers = self.get_signers_for_participants(participants)?;
         let convo = GroupV2Convo::new(&mut self.services, name, desc, &signers)?;
+        let convo_id = convo.id().to_string();
+
+        self.register_convo(ConvoTypeOwned::Group(Box::new(convo)))?;
+
+        Ok(convo_id)
+    }
+
+    /// Creates a GroupV1 under a chosen hex id, as a modified client can.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn create_group_convo_v1_with_id(
+        &mut self,
+        convo_id: ConversationIdRef,
+        participants: &[ParticipantId],
+    ) -> Result<ConversationId, ChatError> {
+        let group_id = GroupId::from_slice(&hex::decode(convo_id).map_err(ChatError::generic)?);
+        self.create_group_convo_v1_under(group_id, participants)
+    }
+
+    /// Creates a GroupV2 under a chosen id, as a modified client can.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn create_group_convo_v2_with_id(
+        &mut self,
+        convo_id: ConversationIdRef,
+        participants: &[ParticipantId],
+    ) -> Result<ConversationId, ChatError> {
+        let signers = self.get_signers_for_participants(participants)?;
+        let convo = GroupV2Convo::with_id(&mut self.services, convo_id.into(), "", "", &signers)?;
         let convo_id = convo.id().to_string();
 
         self.register_convo(ConvoTypeOwned::Group(Box::new(convo)))?;

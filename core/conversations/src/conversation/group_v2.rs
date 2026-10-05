@@ -6,6 +6,7 @@ use crate::conversation::mls_extensions::{
     ConvoMetaInfo, GROUP_METADATA_EXTENSION_TYPE, capabilities_with_group_metadata,
 };
 use crate::identity::{Signer, SignerKey, SignerRef};
+use crate::inbox_v2::refuse_inbox_id;
 use crate::types::{AddressedEncryptedPayload, ConvoMetadata};
 use crate::{Content, WakeupService};
 use alloy::signers::local::PrivateKeySigner;
@@ -193,7 +194,17 @@ impl GroupV2Convo {
         desc: &str,
         signers: &[SignerKey],
     ) -> Result<Self, ChatError> {
-        let convo_id = rand_string(5);
+        Self::with_id(service_ctx, rand_string(5), name, desc, signers)
+    }
+
+    /// Creates the group under a chosen id, which only a modified client does.
+    pub(crate) fn with_id<S: ExternalServices>(
+        service_ctx: &mut ServiceContext<S>,
+        convo_id: String,
+        name: &str,
+        desc: &str,
+        signers: &[SignerKey],
+    ) -> Result<Self, ChatError> {
         let group_config = group_config(name, desc);
         let invites = fetch_key_packages(service_ctx, signers)?;
         let initial_members: Vec<&[u8]> =
@@ -239,6 +250,7 @@ impl GroupV2Convo {
     pub fn new_from_welcome<S: ExternalServices>(
         service_ctx: &mut ServiceContext<S>,
         welcome: &MemberWelcome,
+        inbox_id: ConversationIdRef,
     ) -> Result<Self, ChatError> {
         let Some(conv) = Conversation::join(
             &service_ctx.mls_provider,
@@ -254,6 +266,7 @@ impl GroupV2Convo {
         else {
             return Err(ChatError::generic("welcome not addressed to this member"));
         };
+        refuse_inbox_id(conv.id(), inbox_id)?;
 
         let mut convo = GroupV2Convo {
             convo_id: conv.id().to_string(),
