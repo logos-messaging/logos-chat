@@ -317,9 +317,6 @@ impl GroupV2Convo {
     /// leaf. A signer id is the hex of its MLS signature key.
     fn seats_of(&self, members: &[SignerRef]) -> Vec<MemberId> {
         let wanted: HashSet<&[u8]> = members.iter().map(|m| m.as_bytes()).collect();
-        dbg!(&wanted);
-        dbg!(self.conversation.members_view());
-
         self.conversation
             .members_view()
             .iter()
