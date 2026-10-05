@@ -13,7 +13,7 @@ use blake2::{Blake2b, Digest, digest::consts::U6};
 use chat_proto::logoschat::encryption::{EncryptedPayload, Plaintext, encrypted_payload};
 use chat_proto::logoschat::reliability::ReliablePayload;
 use de_mls::protos::de_mls::messages::v1::{
-    AppMessage as AppMessageProto, MemberWelcome, app_message,
+    AppMessage as AppMessageProto, MemberWelcome, app_message, conversation_update_request,
 };
 use de_mls::{
     Conversation, ConversationError, ConversationEvent, MemberId, MockClock, PeerScoringService,
@@ -92,6 +92,11 @@ pub struct GroupV2Convo {
     conversation: Conversation<DefaultConsensusPlugin, InMemoryPeerScoreStorage, GroupV2Clock>,
     /// Map of invited members: signature key to credential.
     pending_invites: HashMap<Vec<u8>, Vec<u8>>,
+    /// The de-mls proposal opened for each invite: proposal id to signature key.
+    invite_proposals: HashMap<u32, Vec<u8>>,
+    /// Invites the group voted down: signature key to credential. Inviting the
+    /// signer again moves it back to `pending_invites`.
+    rejected_invites: HashMap<Vec<u8>, Vec<u8>>,
     /// Keeps track of current group members: maps de-mls `MemberId` handles to signer ids.
     /// We update this list when members are added or removed.
     member_directory: HashMap<MemberId, SignerKey>,
@@ -220,6 +225,8 @@ impl GroupV2Convo {
             convo_id,
             conversation,
             pending_invites,
+            invite_proposals: HashMap::new(),
+            rejected_invites: HashMap::new(),
             member_directory: HashMap::new(),
         };
         // Genesis members are seeded inside `create` and never surface as a
@@ -259,6 +266,8 @@ impl GroupV2Convo {
             convo_id: conv.id().to_string(),
             conversation: conv,
             pending_invites: HashMap::new(),
+            invite_proposals: HashMap::new(),
+            rejected_invites: HashMap::new(),
             member_directory: HashMap::new(),
         };
         // The welcome already carries the full member set; the members present
@@ -404,8 +413,8 @@ where
         )?;
         self.conversation
             .poll(&service_ctx.mls_provider, &service_ctx.mls_identity);
-        let events = self.after_op(service_ctx)?; // route + publish + re-arm, returns events
-        self.outcome_from_events(service_ctx, &events)
+        let drained = self.after_op(service_ctx)?; // route + publish + re-arm, returns events
+        self.outcome_from_events(service_ctx, &drained)
     }
 
     #[instrument(name = "groupv2.wakeup", skip_all, fields(user_id = %ctx.mls_identity.display_name()))]
@@ -418,8 +427,8 @@ where
             // this convo from its map;
             tracing::warn!(convo = %self.convo_id, "conversation requested teardown");
         }
-        let events = self.after_op(ctx)?; // publish what poll produced + re-arm alarm
-        self.outcome_from_events(ctx, &events)
+        let drained = self.after_op(ctx)?; // publish what poll produced + re-arm alarm
+        self.outcome_from_events(ctx, &drained)
     }
 
     fn signers(&self) -> Result<Vec<Signer>, ChatError> {
@@ -474,7 +483,9 @@ where
                 &service_ctx.mls_identity,
                 &key_package,
             ) {
-                Ok(()) => {}
+                Ok(()) => {
+                    self.rejected_invites.remove(&signature_key);
+                }
                 // Already seated — it raced the check above. Nothing to invite,
                 // and no reason to drop the rest of the batch.
                 Err(ConversationError::AlreadyMember) => {
@@ -543,6 +554,14 @@ where
             .collect())
     }
 
+    fn rejected_signers(&self) -> Result<Vec<Signer>, ChatError> {
+        Ok(self
+            .rejected_invites
+            .iter()
+            .map(|(signature_key, credential)| Signer::from_leaf(signature_key, credential))
+            .collect())
+    }
+
     fn metadata(&self) -> Option<ConvoMetadata> {
         let res = self.conversation.extensions().iter().find_map(|ext| {
             if let Extension::Unknown(ext_type, UnknownExtension(bytes)) = ext
@@ -565,20 +584,30 @@ where
     // }
 }
 
+/// What one [`GroupV2Convo::after_op`] drained.
+struct Drained {
+    events: Vec<ConversationEvent>,
+    /// An invite sent here was voted down, which changes the roster this client
+    /// reports without any event saying so.
+    invite_rejected: bool,
+}
+
 impl GroupV2Convo {
     fn after_op<S: ExternalServices>(
         &mut self,
         service_ctx: &mut ServiceContext<S>,
-    ) -> Result<Vec<ConversationEvent>, ChatError> {
+    ) -> Result<Drained, ChatError> {
         // Pull everything first (these are &self, take-all):
         let events = self.conversation.drain_events();
         let outbound = self.conversation.drain_outbound(); // Vec<de_mls::session::Outbound>
         let wakeup = self.conversation.next_wakeup_in();
+        let mut invite_rejected = false;
 
         // 1. Route welcomes for joiners WE invited: every member sees the
         //    WelcomeReady, and the welcome travels to the joiner's signer id —
         //    its InboxV2 transport address. In the same pass, keep the member
-        //    directory current from the membership deltas de-mls reports.
+        //    directory current from the membership deltas de-mls reports, and
+        //    move an invite the group voted down out of the pending ones.
         for evt in &events {
             match evt {
                 ConversationEvent::WelcomeReady { welcome, .. } => {
@@ -595,9 +624,45 @@ impl GroupV2Convo {
                             MemberId::from(m),
                             SignerKey::from(m.signature_key.as_slice()),
                         );
+                        self.rejected_invites.remove(m.signature_key.as_slice());
                     }
                     for mid in removed {
                         self.member_directory.remove(mid);
+                    }
+                }
+                // Only `add_signer` raises an invite here, with a key package
+                // it validated, so the unverified read names that invite.
+                ConversationEvent::OwnProposalSubmitted {
+                    proposal_id,
+                    request,
+                } => {
+                    if let Some(conversation_update_request::Payload::MemberInvite(invite)) =
+                        &request.payload
+                    {
+                        let key_package = KeyPackageIn::tls_deserialize(
+                            &mut invite.key_package_bytes.as_slice(),
+                        )?;
+                        self.invite_proposals.insert(
+                            *proposal_id,
+                            key_package
+                                .unverified_credential()
+                                .signature_key
+                                .as_slice()
+                                .to_vec(),
+                        );
+                    }
+                }
+                ConversationEvent::ConsensusReached {
+                    proposal_id,
+                    approved,
+                    ..
+                } => {
+                    if let Some(signature_key) = self.invite_proposals.remove(proposal_id)
+                        && !approved
+                        && let Some(credential) = self.pending_invites.remove(&signature_key)
+                    {
+                        self.rejected_invites.insert(signature_key, credential);
+                        invite_rejected = true;
                     }
                 }
                 _ => {}
@@ -630,7 +695,10 @@ impl GroupV2Convo {
                 .wakeup_service
                 .wakeup_in(d, self.convo_id.clone());
         }
-        Ok(events)
+        Ok(Drained {
+            events,
+            invite_rejected,
+        })
     }
 
     /// Turn drained de-mls events into a [`ConvoOutcome`], unwrapping the
@@ -642,8 +710,12 @@ impl GroupV2Convo {
     fn outcome_from_events<S: ExternalServices>(
         &self,
         service_ctx: &ServiceContext<S>,
-        events: &[ConversationEvent],
+        drained: &Drained,
     ) -> Result<ConvoOutcome, ChatError> {
+        let Drained {
+            events,
+            invite_rejected,
+        } = drained;
         let content = events
             .iter()
             .find_map(|evt| match evt {
@@ -686,7 +758,7 @@ impl GroupV2Convo {
                     | ConversationEvent::WelcomeReady { .. }
                     | ConversationEvent::Leaving
             )
-        });
+        }) || *invite_rejected;
         Ok(ConvoOutcome {
             convo_id: self.convo_id.clone(),
             content,

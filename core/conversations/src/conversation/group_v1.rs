@@ -486,6 +486,11 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
         Ok(Vec::new())
     }
 
+    /// Always empty: no vote stands between `add_member` and its commit.
+    fn rejected_signers(&self) -> Result<Vec<Signer>, ChatError> {
+        Ok(Vec::new())
+    }
+
     fn metadata(&self) -> Option<ConvoMetadata> {
         None
     }
