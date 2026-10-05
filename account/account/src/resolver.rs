@@ -78,9 +78,9 @@ impl<P: AccountProvider> AccountResolver<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use account_log::{
-        AccountLogDraft, CHATSIGNER_CONTEXT, Ed25519SigningKey, EntryData, SignedAccountLog,
-    };
+    use account_log::{AccountLogDraft, Context, Ed25519SigningKey, EntryData, SignedAccountLog};
+
+    const CONTEXT: Context = Context::literal("abc.def");
 
     /// Serves whatever it was given, under whatever address it was given.
     #[derive(Debug, Default)]
@@ -99,7 +99,7 @@ mod tests {
         let mut draft = AccountLogDraft::new();
         for value in values {
             draft
-                .add(CHATSIGNER_CONTEXT, EntryData::Text((*value).into()))
+                .add(CONTEXT, EntryData::Text((*value).into()))
                 .expect("valid entry");
         }
         let payload = draft.log().encode().expect("within the size limit");
@@ -108,7 +108,7 @@ mod tests {
     }
 
     fn names(record: &AccountRecord) -> Vec<&str> {
-        record.log().text_for(&CHATSIGNER_CONTEXT)
+        record.log().text_for(&CONTEXT)
     }
 
     #[test]

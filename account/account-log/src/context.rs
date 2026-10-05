@@ -189,10 +189,4 @@ mod tests {
             );
         }
     }
-
-    /// Invalid would now be a build failure, so this only pins the value.
-    #[test]
-    fn signer_context_is_valid() {
-        assert_eq!(CHATSIGNER_CONTEXT.as_str(), "chat.signer");
-    }
 }
