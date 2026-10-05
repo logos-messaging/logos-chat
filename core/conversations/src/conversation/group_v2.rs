@@ -676,14 +676,14 @@ impl GroupV2Convo {
             .transpose()?
             .flatten();
 
-        // `Leaving` is de-mls's "your own removal just committed". Listed in
-        // its own right rather than inferred from the `CommitApplied` beside
-        // it, which would depend on the path that delivered the commit.
+        // A commit that only removes comes with no `CommitApplied`: the members
+        // who stay get `MembersChanged`, and the removed one `Leaving`.
         let members_changed = events.iter().any(|evt| {
             matches!(
                 evt,
                 ConversationEvent::CommitApplied(_)
                     | ConversationEvent::WelcomeReady { .. }
+                    | ConversationEvent::MembersChanged { .. }
                     | ConversationEvent::Leaving
             )
         });

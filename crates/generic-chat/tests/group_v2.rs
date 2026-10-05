@@ -393,7 +393,7 @@ fn a_removed_member_leaves_the_roster() {
     let reg = EphemeralRegistry::new();
     let auth = AcceptAllAuth::default();
 
-    let (mut saro, _saro_events, saro_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
+    let (mut saro, saro_events, saro_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
     let (mut raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
     let (mut pax, pax_events, pax_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
 
@@ -405,6 +405,10 @@ fn a_removed_member_leaves_the_roster() {
     wait_for_participants(&mut saro, &convo_id, &[&saro_addr, &raya_addr, &pax_addr]);
     wait_for_participants(&mut pax, &convo_id, &[&saro_addr, &raya_addr, &pax_addr]);
 
+    // Only what the removal raises counts from here.
+    saro_events.try_iter().for_each(drop);
+    raya_events.try_iter().for_each(drop);
+
     // A consensus round: pax is still seated when the call returns and drops
     // off each roster as the ejecting commit is applied.
     saro.remove_group_participants(&convo_id, &[&pax_addr])
@@ -412,6 +416,19 @@ fn a_removed_member_leaves_the_roster() {
     wait_for_participants(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
     wait_for_participants(&mut raya, &convo_id, &[&saro_addr, &raya_addr]);
     wait_for_participants(&mut pax, &convo_id, &[&saro_addr, &raya_addr]);
+
+    // The members who stay are told as well: an application refetches its
+    // roster on this event.
+    for (events, label) in [
+        (&saro_events, "saro ConversationMembersChanged"),
+        (&raya_events, "raya ConversationMembersChanged"),
+    ] {
+        let changed = wait_for_event(events, label, Duration::from_secs(10), |e| match e {
+            Event::ConversationMembersChanged { convo_id: id } => Some(id.to_string()),
+            _ => None,
+        });
+        assert_eq!(changed, convo_id);
+    }
 
     // Pax is told it is out rather than left to notice its roster shrank.
     wait_for_event(
