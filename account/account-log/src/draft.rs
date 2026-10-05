@@ -136,7 +136,7 @@ mod tests {
             .as_ref()
             .try_into()
             .expect("32 bytes");
-        AccountEntry::add(CHATSIGNER_CONTEXT.clone(), EntryData::Ed25519Key(bytes))
+        AccountEntry::add(CHATSIGNER_CONTEXT, EntryData::Ed25519Key(bytes))
     }
 
     /// A draft carries prior entries over untouched, so what it produces
@@ -180,7 +180,7 @@ mod tests {
             .expect("32 bytes");
         let mut draft = AccountLogDraft::new();
         draft
-            .add(CHATSIGNER_CONTEXT.clone(), EntryData::Ed25519Key(bytes))
+            .add(CHATSIGNER_CONTEXT, EntryData::Ed25519Key(bytes))
             .unwrap();
 
         assert!(matches!(
@@ -193,7 +193,7 @@ mod tests {
 
         draft.revoke(0).unwrap();
         draft
-            .add(CHATSIGNER_CONTEXT.clone(), EntryData::Ed25519Key(bytes))
+            .add(CHATSIGNER_CONTEXT, EntryData::Ed25519Key(bytes))
             .unwrap();
         assert_eq!(draft.live_entries().len(), 1);
     }
@@ -238,7 +238,7 @@ mod tests {
                 body: vec![0xde, 0xad],
             },
             AccountEntry::add(
-                CHATSIGNER_CONTEXT.clone(),
+                CHATSIGNER_CONTEXT,
                 EntryData::Unknown {
                     tag: 0x7f,
                     body: vec![1, 2, 3],

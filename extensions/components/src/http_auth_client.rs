@@ -110,7 +110,7 @@ fn success(resp: Response) -> Result<Response, HttpAccountError> {
 }
 
 fn default_context() -> Context {
-    CHATSIGNER_CONTEXT.clone()
+    CHATSIGNER_CONTEXT
 }
 
 #[derive(Debug, Clone)]
@@ -289,7 +289,7 @@ mod tests {
         let mut draft = AccountLogDraft::new();
         draft
             .add(
-                CHATSIGNER_CONTEXT.clone(),
+                CHATSIGNER_CONTEXT,
                 EntryData::Ed25519Key(signer.as_ref().try_into().unwrap()),
             )
             .unwrap();
