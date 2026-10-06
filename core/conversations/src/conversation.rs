@@ -51,7 +51,6 @@ pub(crate) trait Convo<S: ExternalServices>: Identified + ConvoBase + Send {
 /// Separate from [`Convo`] because these take no [`ServiceContext`]: a type
 /// implements `Convo<S>` for every `S`, so reaching them through it needs a
 /// turbofish.
-
 pub(crate) trait ConvoBase {
     /// Each current signer, self included.
     fn signers(&self) -> Result<Vec<Signer>, ChatError>;
