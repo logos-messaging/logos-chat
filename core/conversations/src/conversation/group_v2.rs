@@ -16,15 +16,18 @@ use de_mls::protos::de_mls::messages::v1::{
     AppMessage as AppMessageProto, MemberWelcome, app_message,
 };
 use de_mls::{
-    Conversation, ConversationError, ConversationEvent, MemberId, MockClock, PeerScoringService,
-    ScoringConfig, WallClock, default_score_deltas,
+    Conversation, ConversationError, ConversationEvent, DispatchOutcome, MemberId, MockClock,
+    PeerScoringService, ScoringConfig, WallClock, default_score_deltas,
     defaults::{DefaultConsensusPlugin, DefaultPeerScoring, InMemoryPeerScoreStorage},
+    mls_crypto::MlsError,
 };
 use hashgraph_like_consensus::signing::EthereumConsensusSigner;
 use openmls::extensions::{Extension, Extensions, UnknownExtension};
-use openmls::group::MlsGroupCreateConfig;
+use openmls::group::{MlsGroupCreateConfig, MlsGroupJoinConfig, StagedWelcome, WelcomeError};
 use openmls::prelude::tls_codec::Deserialize as _;
-use openmls::prelude::{KeyPackageIn, OpenMlsProvider as _, ProtocolVersion};
+use openmls::prelude::{
+    KeyPackageIn, MlsMessageBodyIn, MlsMessageIn, OpenMlsProvider as _, ProtocolVersion,
+};
 use prost::Message;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -186,6 +189,27 @@ fn fetch_key_packages<S: ExternalServices>(
         .collect()
 }
 
+/// Stages a welcome as de-mls's join does, storing nothing. `None` when it is
+/// not a welcome to one of our key packages.
+fn stage_welcome<S: ExternalServices>(
+    service_ctx: &ServiceContext<S>,
+    welcome_bytes: &[u8],
+) -> Result<Option<StagedWelcome>, ChatError> {
+    let MlsMessageBodyIn::Welcome(welcome) =
+        MlsMessageIn::tls_deserialize(&mut &welcome_bytes[..])?.extract()
+    else {
+        return Ok(None);
+    };
+    let config = MlsGroupJoinConfig::builder()
+        .use_ratchet_tree_extension(true)
+        .build();
+    match StagedWelcome::new_from_welcome(&service_ctx.mls_provider, &config, welcome, None) {
+        Ok(staged) => Ok(Some(staged)),
+        Err(WelcomeError::NoMatchingKeyPackage | WelcomeError::JoinerSecretNotFound) => Ok(None),
+        Err(e) => Err(MlsError::from(e).into()),
+    }
+}
+
 impl GroupV2Convo {
     pub fn new<S: ExternalServices>(
         service_ctx: &mut ServiceContext<S>,
@@ -234,12 +258,29 @@ impl GroupV2Convo {
     /// Joiner side: ingest a de-mls welcome handed over the InboxV2 1-1
     /// channel. `from_welcome` attaches MLS and applies the bundled
     /// `ConversationSync` in one call; we then subscribe to the
-    /// conversation address and flush the join broadcast.
+    /// conversation address and flush the join broadcast. Nothing is joined
+    /// unless `admit` accepts the welcome's conversation id, author and epoch.
     #[instrument(name = "groupv2.new_from_welcome", skip_all, fields(user_id = %service_ctx.mls_identity.display_name()))]
     pub fn new_from_welcome<S: ExternalServices>(
         service_ctx: &mut ServiceContext<S>,
         welcome: &MemberWelcome,
+        admit: impl FnOnce(ConversationIdRef, SignerRef, u64) -> Result<(), ChatError>,
     ) -> Result<Self, ChatError> {
+        // TODO: de-mls should expose a welcome's author and epoch before its
+        // join stores the group, so the welcome is decrypted once. Staging it
+        // here as well holds while the key package survives the first staging.
+        let Some(staged) = stage_welcome(service_ctx, &welcome.welcome_bytes)? else {
+            return Err(ChatError::generic("welcome not addressed to this member"));
+        };
+        let context = staged.group_context();
+        let author = staged.welcome_sender().map_err(ChatError::generic)?;
+        // de-mls names a conversation by its group id, read as UTF-8.
+        admit(
+            &String::from_utf8_lossy(context.group_id().as_slice()),
+            &SignerKey::from(author.signature_key().as_slice()),
+            context.epoch().as_u64(),
+        )?;
+
         let Some(conv) = Conversation::join(
             &service_ctx.mls_provider,
             &service_ctx.mls_identity,
@@ -342,18 +383,9 @@ impl GroupV2Convo {
     }
 }
 
-impl Identified for GroupV2Convo {
-    fn id(&self) -> ConversationIdRef<'_> {
-        &self.convo_id
-    }
-}
-
-impl<S> Convo<S> for GroupV2Convo
-where
-    S: ExternalServices,
-{
+impl GroupV2Convo {
     #[instrument(name = "groupv2.send_content", skip_all, fields(user_id = %service_ctx.mls_identity.display_name(), content))]
-    fn send_content(
+    fn send_content<S: ExternalServices>(
         &mut self,
         service_ctx: &mut super::ServiceContext<S>,
         content: &[u8],
@@ -374,7 +406,7 @@ where
     }
 
     #[instrument(name = "groupv2.handle_frame", skip_all, fields(user_id = %service_ctx.mls_identity.display_name()))]
-    fn handle_frame(
+    fn handle_frame<S: ExternalServices>(
         &mut self,
         service_ctx: &mut super::ServiceContext<S>,
         encoded_payload: EncryptedPayload,
@@ -396,39 +428,46 @@ where
             _ => return Ok(ConvoOutcome::empty(self.convo_id.clone())),
         };
 
-        self.conversation.process_inbound(
+        let dispatched = self.conversation.process_inbound(
             &service_ctx.mls_provider,
             &service_ctx.mls_identity,
             &frame.sender_app_id,
             &inner,
         )?;
-        self.conversation
-            .poll(&service_ctx.mls_provider, &service_ctx.mls_identity);
+        // No poll once the frame itself has asked for teardown.
+        let leave_requested = dispatched == DispatchOutcome::LeaveRequested
+            || self
+                .conversation
+                .poll(&service_ctx.mls_provider, &service_ctx.mls_identity)
+                .leave_requested;
+        if leave_requested {
+            return Ok(self.leave_outcome(service_ctx));
+        }
         let events = self.after_op(service_ctx)?; // route + publish + re-arm, returns events
         self.outcome_from_events(service_ctx, &events)
     }
 
     #[instrument(name = "groupv2.wakeup", skip_all, fields(user_id = %ctx.mls_identity.display_name()))]
-    fn wakeup(&mut self, ctx: &mut ServiceContext<S>) -> Result<ConvoOutcome, ChatError> {
+    fn wakeup<S: ExternalServices>(
+        &mut self,
+        ctx: &mut ServiceContext<S>,
+    ) -> Result<ConvoOutcome, ChatError> {
         info!(convo = %self.convo_id, "Wakeup");
 
         let poll_outcome = self.conversation.poll(&ctx.mls_provider, &ctx.mls_identity);
         if poll_outcome.leave_requested {
-            // Commit ejected us (or join expired). Real handling - drops
-            // this convo from its map;
-            tracing::warn!(convo = %self.convo_id, "conversation requested teardown");
+            return Ok(self.leave_outcome(ctx));
         }
         let events = self.after_op(ctx)?; // publish what poll produced + re-arm alarm
         self.outcome_from_events(ctx, &events)
     }
 
-    fn signers(&self) -> Result<Vec<Signer>, ChatError> {
-        Ok(self
-            .conversation
+    fn signers(&self) -> Vec<Signer> {
+        self.conversation
             .members_view()
             .into_iter()
             .map(|m| Signer::from_leaf(&m.signature_key, m.credential.serialized_content()))
-            .collect())
+            .collect()
     }
 
     fn can_send(&self) -> bool {
@@ -436,12 +475,9 @@ where
     }
 }
 
-impl<S> GroupConvo<S> for GroupV2Convo
-where
-    S: ExternalServices,
-{
+impl GroupV2Convo {
     #[instrument(name = "groupv2.add_member", skip_all, fields(user_id = %service_ctx.mls_identity.display_name()))]
-    fn add_signer(
+    fn add_signer<S: ExternalServices>(
         &mut self,
         service_ctx: &mut ServiceContext<S>,
         members: &[SignerKey],
@@ -498,7 +534,7 @@ where
     /// member is still seated when this returns and the commit ejecting them
     /// surfaces later as a `MembersChanged`.
     #[instrument(name = "groupv2.remove_member", skip_all, fields(user_id = %service_ctx.mls_identity.display_name()))]
-    fn remove_signer(
+    fn remove_signer<S: ExternalServices>(
         &mut self,
         service_ctx: &mut ServiceContext<S>,
         members: &[SignerRef],
@@ -633,6 +669,47 @@ impl GroupV2Convo {
         Ok(events)
     }
 
+    /// Flushes what de-mls still holds once a commit removed us, and returns the
+    /// outcome that reports the leave.
+    fn leave_outcome<S: ExternalServices>(
+        &mut self,
+        service_ctx: &mut ServiceContext<S>,
+    ) -> ConvoOutcome {
+        info!(convo = %self.convo_id, "left the conversation");
+        // Logged rather than raised: an error here would lose the outcome
+        // that reports the leave.
+        let flushed = self
+            .after_op(service_ctx)
+            .and_then(|events| self.outcome_from_events(service_ctx, &events))
+            .unwrap_or_else(|e| {
+                tracing::warn!(convo = %self.convo_id, error = %e, "flush after leaving failed");
+                ConvoOutcome::empty(self.convo_id.clone())
+            });
+        ConvoOutcome {
+            members_changed: true,
+            left: true,
+            ..flushed
+        }
+    }
+
+    fn left_group(&self) -> LeftGroup {
+        // de-mls deleted the group from storage, but its in-memory state still
+        // reports the epoch the removal opened.
+        let epoch = match self.conversation.epoch_and_retry() {
+            Ok((epoch, _)) => epoch,
+            Err(e) => {
+                tracing::warn!(convo = %self.convo_id, error = %e, "epoch unreadable after leaving");
+                u64::MAX
+            }
+        };
+        LeftGroup {
+            convo_id: self.convo_id.clone(),
+            signers: self.signers(),
+            metadata: self.metadata(),
+            epoch,
+        }
+    }
+
     /// Turn drained de-mls events into a [`ConvoOutcome`], unwrapping the
     /// message from its causal-history envelope.
     ///
@@ -691,7 +768,170 @@ impl GroupV2Convo {
             convo_id: self.convo_id.clone(),
             content,
             members_changed,
+            left: false,
         })
+    }
+}
+
+/// A GroupV2 group this client holds: its conversation while we are a member,
+/// and the group as our removal left it afterwards.
+#[derive(Debug)]
+pub enum GroupV2 {
+    Member(Box<GroupV2Convo>),
+    Left(LeftGroup),
+}
+
+/// A group as the commit that removed us left it.
+#[derive(Debug)]
+pub struct LeftGroup {
+    convo_id: String,
+    signers: Vec<Signer>,
+    metadata: Option<ConvoMetadata>,
+    /// The epoch the removal opened; `u64::MAX`, which admits no welcome
+    /// back, when de-mls could not report it.
+    epoch: u64,
+}
+
+impl LeftGroup {
+    /// Admits a welcome back only when its `author` stayed in the group at
+    /// our removal and its `epoch` is later than the one that removal opened.
+    fn check_rejoin(&self, author: SignerRef, epoch: u64) -> Result<(), ChatError> {
+        if !self.signers.iter().any(|s| &s.signer == author) {
+            return Err(ChatError::RejoinFromNonMember);
+        }
+        if epoch <= self.epoch {
+            return Err(ChatError::StaleRejoin);
+        }
+        Ok(())
+    }
+}
+
+impl From<GroupV2Convo> for GroupV2 {
+    fn from(convo: GroupV2Convo) -> Self {
+        Self::Member(Box::new(convo))
+    }
+}
+
+impl Identified for GroupV2 {
+    fn id(&self) -> ConversationIdRef<'_> {
+        match self {
+            Self::Member(convo) => convo.id(),
+            Self::Left(left) => &left.convo_id,
+        }
+    }
+}
+
+impl<S> Convo<S> for GroupV2
+where
+    S: ExternalServices,
+{
+    fn send_content(
+        &mut self,
+        service_ctx: &mut super::ServiceContext<S>,
+        content: &[u8],
+    ) -> Result<MessageId, ChatError> {
+        match self {
+            Self::Member(convo) => convo.send_content(service_ctx, content),
+            Self::Left(_) => Err(ChatError::NoLongerAMember),
+        }
+    }
+
+    fn handle_frame(
+        &mut self,
+        service_ctx: &mut super::ServiceContext<S>,
+        encoded_payload: EncryptedPayload,
+    ) -> Result<ConvoOutcome, ChatError> {
+        match self {
+            Self::Member(convo) => {
+                let outcome = convo.handle_frame(service_ctx, encoded_payload)?;
+                if outcome.left {
+                    *self = Self::Left(convo.left_group());
+                }
+                Ok(outcome)
+            }
+            // The group goes on publishing to an address we still listen on.
+            Self::Left(left) => Ok(ConvoOutcome::empty(left.convo_id.clone())),
+        }
+    }
+
+    fn wakeup(&mut self, ctx: &mut ServiceContext<S>) -> Result<ConvoOutcome, ChatError> {
+        match self {
+            Self::Member(convo) => {
+                let outcome = convo.wakeup(ctx)?;
+                if outcome.left {
+                    *self = Self::Left(convo.left_group());
+                }
+                Ok(outcome)
+            }
+            // Alarms armed before the leave still fire.
+            Self::Left(left) => Ok(ConvoOutcome::empty(left.convo_id.clone())),
+        }
+    }
+
+    fn signers(&self) -> Result<Vec<Signer>, ChatError> {
+        match self {
+            Self::Member(convo) => Ok(convo.signers()),
+            Self::Left(left) => Ok(left.signers.clone()),
+        }
+    }
+
+    fn can_send(&self) -> bool {
+        match self {
+            Self::Member(convo) => convo.can_send(),
+            Self::Left(_) => false,
+        }
+    }
+}
+
+impl<S> GroupConvo<S> for GroupV2
+where
+    S: ExternalServices,
+{
+    fn add_signer(
+        &mut self,
+        service_ctx: &mut ServiceContext<S>,
+        members: &[SignerKey],
+    ) -> Result<(), ChatError> {
+        match self {
+            Self::Member(convo) => convo.add_signer(service_ctx, members),
+            Self::Left(_) => Err(ChatError::NoLongerAMember),
+        }
+    }
+
+    fn remove_signer(
+        &mut self,
+        service_ctx: &mut ServiceContext<S>,
+        members: &[SignerRef],
+    ) -> Result<(), ChatError> {
+        match self {
+            Self::Member(convo) => convo.remove_signer(service_ctx, members),
+            Self::Left(_) => Err(ChatError::NoLongerAMember),
+        }
+    }
+
+    fn pending_signers(&self) -> Result<Vec<Signer>, ChatError> {
+        match self {
+            Self::Member(convo) => convo.pending_signers(),
+            Self::Left(_) => Ok(Vec::new()),
+        }
+    }
+
+    fn metadata(&self) -> Option<ConvoMetadata> {
+        match self {
+            Self::Member(convo) => convo.metadata(),
+            Self::Left(left) => left.metadata.clone(),
+        }
+    }
+
+    fn has_left(&self) -> bool {
+        matches!(self, Self::Left(_))
+    }
+
+    fn check_rejoin(&self, author: SignerRef, epoch: u64) -> Result<(), ChatError> {
+        match self {
+            Self::Member(_) => Ok(()),
+            Self::Left(left) => left.check_rejoin(author, epoch),
+        }
     }
 }
 
@@ -711,4 +951,53 @@ pub enum GroupV2Payload {
     DeMlsWrapper(Bytes),
     #[prost(message, tag = "3")]
     MlsCommitMessage(Bytes),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Saro and Raya stayed when Pax was removed, at epoch 5.
+    const LEFT_EPOCH: u64 = 5;
+
+    fn signer(name: &str) -> SignerKey {
+        SignerKey::from(name.as_bytes())
+    }
+
+    fn left_group() -> LeftGroup {
+        LeftGroup {
+            convo_id: "group".into(),
+            signers: ["saro", "raya"]
+                .map(|name| Signer::from_leaf(name.as_bytes(), name.as_bytes()))
+                .into(),
+            metadata: None,
+            epoch: LEFT_EPOCH,
+        }
+    }
+
+    #[test]
+    fn a_member_at_the_removal_is_admitted_for_a_later_epoch() {
+        let admitted = left_group().check_rejoin(&signer("raya"), LEFT_EPOCH + 1);
+        assert!(admitted.is_ok(), "{admitted:?}");
+    }
+
+    #[test]
+    fn a_welcome_from_anyone_else_is_refused() {
+        let refused = left_group().check_rejoin(&signer("mira"), LEFT_EPOCH + 1);
+        assert!(
+            matches!(refused, Err(ChatError::RejoinFromNonMember)),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn a_welcome_at_or_before_the_removal_is_refused() {
+        for epoch in [LEFT_EPOCH - 1, LEFT_EPOCH] {
+            let refused = left_group().check_rejoin(&signer("saro"), epoch);
+            assert!(
+                matches!(refused, Err(ChatError::StaleRejoin)),
+                "{refused:?}"
+            );
+        }
+    }
 }

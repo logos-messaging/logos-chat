@@ -157,10 +157,17 @@ impl DerefMut for TestClient {
     }
 }
 
-#[allow(unused)]
+/// What drove the core to an outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Trigger {
+    Frame,
+    Wakeup,
+}
+
 pub struct Observation {
-    ident: SignerKey,
-    outcome: PayloadOutcome,
+    pub ident: SignerKey,
+    pub trigger: Trigger,
+    pub outcome: PayloadOutcome,
 }
 
 #[allow(unused)]
@@ -295,6 +302,7 @@ impl<const N: usize> TestHarness<N> {
                 info!(id = ?client.signer_key(), ?outcome, "Process drain");
                 self.observed_outcomes.push(Observation {
                     ident: client.signer_key().clone(),
+                    trigger: Trigger::Frame,
                     outcome: outcome.clone(),
                 });
                 info!(id = ?client.signer_key(), ?outcome, "Process drain");
@@ -305,9 +313,17 @@ impl<const N: usize> TestHarness<N> {
 
     fn process_records(&mut self, records: Vec<WakeupRecord>) {
         for record in records {
-            self.clients[record.client_index]
+            let client = &mut self.clients[record.client_index];
+            let outcome = client
                 .wakeup(&record.convo_id)
                 .expect("Error During wakeup");
+            if !matches!(outcome, PayloadOutcome::Empty) {
+                self.observed_outcomes.push(Observation {
+                    ident: client.signer_key(),
+                    trigger: Trigger::Wakeup,
+                    outcome,
+                });
+            }
         }
     }
 }

@@ -24,7 +24,8 @@ use crate::AuthenticatedSigner;
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum Event {
-    /// A new conversation has appeared.
+    /// A new conversation has appeared, or a welcome brought this client back
+    /// into one it had left.
     ConversationStarted {
         convo_id: Arc<str>,
         class: ConversationClass,
@@ -61,6 +62,11 @@ pub enum Event {
     },
     /// A commit changed a conversation's membership.
     ConversationMembersChanged {
+        convo_id: Arc<str>,
+    },
+    /// A commit ended this client's membership of a conversation, which stays
+    /// readable but can no longer be sent to.
+    ConversationLeft {
         convo_id: Arc<str>,
     },
     InboundError {
