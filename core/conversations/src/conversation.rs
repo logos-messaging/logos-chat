@@ -22,7 +22,7 @@ pub type ConversationIdRef<'a> = &'a str;
 pub type MessageId = String;
 
 /// Behaviour shared by every conversation kind.
-pub(crate) trait Convo<S: ExternalServices>: Identified + Send {
+pub(crate) trait Convo<S: ExternalServices>: Identified + ConvoBase + Send {
     /// Encrypt and publish `content`, returning the id assigned to it.
     fn send_content(
         &mut self,
@@ -44,9 +44,19 @@ pub(crate) trait Convo<S: ExternalServices>: Identified + Send {
     /// Advances any time-driven protocol work (de-mls consensus deadlines) and
     /// reports what it observed, mirroring [`Self::handle_frame`].
     fn wakeup(&mut self, service_ctx: &mut ServiceContext<S>) -> Result<ConvoOutcome, ChatError>;
+}
 
+/// Basic functions for a ConversationType
+///
+/// These fun
+pub(crate) trait ConvoBase {
     /// Each current signer, self included.
     fn signers(&self) -> Result<Vec<Signer>, ChatError>;
+
+    /// Each signer this conversation invited and the group has not committed
+    /// yet. Covers only invites [`Self::add_signer`] made here, and is empty for
+    /// a conversation kind whose add takes effect within that call.
+    fn pending_signers(&self) -> Result<Vec<Signer>, ChatError>;
 
     /// Whether the local identity may currently submit content: it is still a
     /// signer of this (loaded) conversation with send rights.
@@ -58,6 +68,11 @@ pub(crate) trait Convo<S: ExternalServices>: Identified + Send {
     /// (read-only / broadcast conversations) will refine this once roles carry
     /// that distinction; today it reflects live membership.
     fn can_send(&self) -> bool;
+
+    // All GroupConvos MUST return ConvoMetadata
+    // the return type is Option<_> to support legacy ConvoTypes which
+    // are being phased out.
+    fn metadata(&self) -> Option<ConvoMetadata>;
 }
 
 /// Group-only operations.
@@ -75,15 +90,6 @@ pub(crate) trait GroupConvo<S: ExternalServices>: Convo<S> + std::fmt::Debug + S
         cx: &mut ServiceContext<S>,
         signer: &[SignerRef],
     ) -> Result<(), ChatError>;
-
-    /// Each signer this conversation invited and the group has not committed
-    /// yet. Covers only invites [`Self::add_signer`] made here, and is empty for
-    /// a conversation kind whose add takes effect within that call.
-    fn pending_signers(&self) -> Result<Vec<Signer>, ChatError>;
-    // All GroupConvos MUST return ConvoMetadata
-    // the return type is Option<_> to support legacy ConvoTypes which
-    // are being phased out.
-    fn metadata(&self) -> Option<ConvoMetadata>;
 }
 
 pub(crate) trait Identified {
