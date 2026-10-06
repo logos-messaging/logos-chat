@@ -46,15 +46,18 @@ pub(crate) trait Convo<S: ExternalServices>: Identified + ConvoBase + Send {
     fn wakeup(&mut self, service_ctx: &mut ServiceContext<S>) -> Result<ConvoOutcome, ChatError>;
 }
 
-/// Basic functions for a ConversationType
+/// Base functionality for every conversation kind.
 ///
-/// These fun
+/// Separate from [`Convo`] because these take no [`ServiceContext`]: a type
+/// implements `Convo<S>` for every `S`, so reaching them through it needs a
+/// turbofish.
+
 pub(crate) trait ConvoBase {
     /// Each current signer, self included.
     fn signers(&self) -> Result<Vec<Signer>, ChatError>;
 
     /// Each signer this conversation invited and the group has not committed
-    /// yet. Covers only invites [`Self::add_signer`] made here, and is empty for
+    /// yet. Covers only invites [`GroupConvo::add_signer`] made here, and is empty for
     /// a conversation kind whose add takes effect within that call.
     fn pending_signers(&self) -> Result<Vec<Signer>, ChatError>;
 
