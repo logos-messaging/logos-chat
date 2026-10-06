@@ -752,6 +752,50 @@ fn remove_signer_rejects_a_non_signer() {
 }
 
 #[test]
+fn a_removal_during_the_freeze_reports_the_group_busy() {
+    // In a group of two both members are stewards, and Raya cannot commit its
+    // own removal, so Saro's freeze never gets the second candidate that would
+    // end it early: it runs its whole window, many harness steps long.
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_test_writer()
+        .try_init();
+
+    let mut harness = TestHarness::<2>::new(|_, _| {});
+
+    let raya_account = harness.raya().account();
+    let convo_id = harness
+        .saro()
+        .create_group_convo_v2(std::slice::from_ref(&raya_account), "", "")
+        .expect("Saro create");
+
+    harness.process_until_label("Raya join", |h| h.raya().convo_count() == 1);
+
+    harness
+        .saro()
+        .group_remove_participants(&convo_id, std::slice::from_ref(&raya_account))
+        .expect("Saro remove Raya");
+
+    // Asking again is a no-op while the first removal is in flight, and
+    // refused from the moment Saro freezes for its commit.
+    harness.process_until_label("Saro freezes", |h| {
+        h.saro()
+            .group_remove_participants(&convo_id, std::slice::from_ref(&raya_account))
+            .is_err()
+    });
+    let err = harness
+        .saro()
+        .group_remove_participants(&convo_id, std::slice::from_ref(&raya_account))
+        .expect_err("refused during the freeze");
+    assert!(matches!(err, ChatError::GroupBusy), "{err:?}");
+
+    // The refusal passes: the removal in flight still lands.
+    harness.process_until_label("Raya removed", |h| {
+        h.saro().group_signers(&convo_id).map_or(0, |m| m.len()) == 1
+    });
+}
+
+#[test]
 fn group_name_propagation() {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
