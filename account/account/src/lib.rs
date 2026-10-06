@@ -1,14 +1,22 @@
 mod account;
 mod error;
+mod namespaces;
 mod resolver;
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 
 use std::fmt::{Debug, Display};
 
-pub use crate::account::Account;
+use account_log::SignedAccountLog;
+pub use account_log::{AccountAddr, Ed25519VerifyingKey};
+
+pub use crate::account::{Account, AccountUpdate};
 pub use crate::error::AccountError;
 pub use crate::resolver::AccountResolver;
-use account_log::SignedAccountLog;
-pub use account_log::{AccountAddr, CHATSIGNER_CONTEXT, Ed25519VerifyingKey};
+
+// Blanket export of namespaces
+pub use namespaces::prelude::*;
 
 /// Read access to published account logs.
 ///
