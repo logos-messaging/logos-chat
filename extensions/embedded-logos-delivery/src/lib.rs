@@ -19,11 +19,10 @@ use std::time::Duration;
 
 use crossbeam_channel::Receiver;
 use libchat::{AddressedEnvelope, DeliveryService};
-use logos_delivery::DeliveryConfig;
 use logos_delivery::blocking::BlockingDeliveryNode;
 use tracing::{debug, warn};
 
-pub use logos_delivery::DeliveryError;
+pub use logos_delivery::{DeliveryConfig, DeliveryError};
 
 /// The content-topic prefix carrying logos-chat traffic.
 const CHAT_TOPIC_PREFIX: &str = "/logos-chat/1/";
@@ -34,23 +33,16 @@ pub fn content_topic_for(delivery_address: &str) -> String {
     format!("{CHAT_TOPIC_PREFIX}{delivery_address}/proto")
 }
 
-#[derive(Debug, Clone)]
-pub struct P2pConfig {
-    pub preset: String,
-    pub port: u16,
-    pub log_level: String,
-}
+/// The logos-delivery network preset joined by default.
+pub const DEFAULT_PRESET: &str = "logos.test";
 
-impl Default for P2pConfig {
-    // Connects to the `logos.test` network on an OS-assigned port, so several
-    // instances can run side by side.
-    fn default() -> Self {
-        Self {
-            preset: "logos.test".into(),
-            port: 0,
-            log_level: "ERROR".into(),
-        }
-    }
+/// The node configuration logos-chat starts from: the `logos.test` network on
+/// OS-assigned ports, so several instances can run side by side.
+pub fn default_delivery_config() -> DeliveryConfig {
+    DeliveryConfig::default()
+        .preset(DEFAULT_PRESET)
+        .tcp_port(0)
+        .discv5_udp_port(0)
 }
 
 /// logos-delivery backed delivery service. Cheap to clone — all clones share
@@ -71,13 +63,8 @@ impl std::fmt::Debug for EmbeddedLogosDelivery {
 impl EmbeddedLogosDelivery {
     /// Start the embedded logos-delivery node. Only chat payloads (on a
     /// `/logos-chat/1/…` content topic) reach the inbound queue.
-    pub fn start(cfg: P2pConfig) -> Result<Self, DeliveryError> {
-        let node = BlockingDeliveryNode::start(
-            DeliveryConfig::default()
-                .preset(cfg.preset)
-                .tcp_port(cfg.port)
-                .log_level(cfg.log_level),
-        )?;
+    pub fn start(config: DeliveryConfig) -> Result<Self, DeliveryError> {
+        let node = BlockingDeliveryNode::start(config)?;
         let inbound = node.inbound_queue(|m| {
             m.content_topic
                 .starts_with(CHAT_TOPIC_PREFIX)

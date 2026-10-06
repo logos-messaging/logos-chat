@@ -17,7 +17,7 @@
 
 use components::{ContactRegistry, HttpAuthClient, RegistryPublishMode};
 use crossbeam_channel::Receiver;
-use embedded_logos_delivery::{EmbeddedLogosDelivery, P2pConfig};
+use embedded_logos_delivery::{DeliveryConfig, EmbeddedLogosDelivery, default_delivery_config};
 use logos_account::AccountError;
 use logos_account::AccountProvider;
 use logos_account::AccountPublisher;
@@ -40,11 +40,11 @@ pub const REGISTRY_ENDPOINT: &str = "https://devnet.chat-kc.logos.co";
 /// never baked into the library. Everything else defaults: the identity to
 /// [`IdentityMode::LoadOrCreate`], so reopening the same database reopens the
 /// same installation; the registry endpoint to the baked-in Logos value; the
-/// embedded node's p2p settings to [`P2pConfig::default`]; and the GroupV2
+/// embedded node's settings to [`default_delivery_config`]; and the GroupV2
 /// timing to the de-mls library defaults. Override them with
 /// [`set_identity_mode`](Self::set_identity_mode),
 /// [`set_registry_url`](Self::set_registry_url),
-/// [`set_p2p_config`](Self::set_p2p_config), and
+/// [`set_delivery_config`](Self::set_delivery_config), and
 /// [`set_group_v2_config`](Self::set_group_v2_config).
 pub struct LogosConfig {
     db_path: String,
@@ -52,7 +52,7 @@ pub struct LogosConfig {
     identity_mode: IdentityMode,
     registry_url: String,
     registry_publish_mode: RegistryPublishMode,
-    p2p_config: P2pConfig,
+    delivery_config: DeliveryConfig,
     group_v2_config: Option<GroupV2Config>,
 }
 
@@ -71,7 +71,7 @@ impl LogosConfig {
             identity_mode: IdentityMode::default(),
             registry_url: REGISTRY_ENDPOINT.to_string(),
             registry_publish_mode: RegistryPublishMode::default(),
-            p2p_config: P2pConfig::default(),
+            delivery_config: default_delivery_config(),
             group_v2_config: None,
         }
     }
@@ -99,11 +99,11 @@ impl LogosConfig {
         self.registry_publish_mode = mode;
     }
 
-    /// Override the embedded node's p2p settings (defaults to
-    /// [`P2pConfig::default`]). Only [`open`] starts an embedded node, so
+    /// Override the embedded node's settings (defaults to
+    /// [`default_delivery_config`]). Only [`open`] starts an embedded node, so
     /// [`open_with_transport`] ignores this.
-    pub fn set_p2p_config(&mut self, p2p_config: P2pConfig) {
-        self.p2p_config = p2p_config;
+    pub fn set_delivery_config(&mut self, delivery_config: DeliveryConfig) {
+        self.delivery_config = delivery_config;
     }
 
     /// Override the GroupV2 timing/policy this client creates or joins groups
@@ -130,11 +130,11 @@ impl LogosConfig {
 }
 
 /// Open a client on the Logos stack per `config`, starting an embedded
-/// logos-delivery node per its p2p settings as the transport. A convenience
+/// logos-delivery node per its delivery settings as the transport. A convenience
 /// over [`open_with_transport`] that commits to the [`LogosChatClient`]
 /// transport.
 pub fn open(config: LogosConfig) -> Result<(LogosChatClient, Receiver<Event>), ClientError> {
-    let transport = EmbeddedLogosDelivery::start(config.p2p_config.clone())
+    let transport = EmbeddedLogosDelivery::start(config.delivery_config.clone())
         .map_err(|e| ClientError::Transport(e.to_string()))?;
     open_with_transport(config, transport)
 }
