@@ -216,7 +216,7 @@ impl<D: DeliveryService> RegistrationService for ContactRegistry<D> {
             .as_slice()
             .try_into()
             .map_err(|_| ContactRegistryError::Decode("device_id not a 32-byte key".into()))?;
-        let verifying_key = Ed25519VerifyingKey::from_bytes(&device_pubkey)
+        let verifying_key = Ed25519VerifyingKey::from_canonical_bytes(&device_pubkey)
             .map_err(|_| ContactRegistryError::Decode("device_id not a valid ed25519 vk".into()))?;
         verifying_key
             .verify(&payload, &Ed25519Signature::from(signature))
@@ -491,7 +491,7 @@ mod tests {
             .as_slice()
             .try_into()
             .unwrap();
-        Ed25519VerifyingKey::from_bytes(&recovered)
+        Ed25519VerifyingKey::from_canonical_bytes(&recovered)
             .unwrap()
             .verify(&payload, &signature)
             .expect("recovered key must verify the register-time signature");
