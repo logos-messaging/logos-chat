@@ -43,7 +43,7 @@ embedded-logos-delivery = { path = "extensions/embedded-logos-delivery" }
 integration_tests_core = { path = "core/integration_tests_core" }
 libchat = { path = "core/conversations" }
 logos-chat = { path = "crates/logos-chat" }
-logos-delivery = { git = "https://github.com/logos-messaging/logos-delivery-rust-bindings", rev = "444634068c61405f599a520386254becd24a55a7" }
+logos-delivery = { git = "https://github.com/logos-messaging/logos-delivery-rust-bindings", rev = "8841f50d9eb9c42a191630b9f660c9d6411057eb" }
 logos-generic-chat = { path = "crates/generic-chat" }
 message-types = { path = "extensions/message-types" }
 chat-proto = { git = "https://github.com/logos-messaging/chat_proto", rev = "948f4ad6dedb01b44e279204d8eb30a1eda5a330" }

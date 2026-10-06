@@ -20,7 +20,7 @@ use std::time::Duration;
 use crossbeam_channel::Receiver;
 use libchat::{AddressedEnvelope, DeliveryService};
 use logos_delivery::blocking::BlockingDeliveryNode;
-use tracing::{debug, warn};
+use tracing::debug;
 
 pub use logos_delivery::{DeliveryConfig, DeliveryError};
 
@@ -43,6 +43,7 @@ pub fn default_delivery_config() -> DeliveryConfig {
         .preset(DEFAULT_PRESET)
         .tcp_port(0)
         .discv5_udp_port(0)
+        .wait_for_connection(CONNECT_WAIT)
 }
 
 /// logos-delivery backed delivery service. Cheap to clone — all clones share
@@ -70,10 +71,6 @@ impl EmbeddedLogosDelivery {
                 .starts_with(CHAT_TOPIC_PREFIX)
                 .then_some(m.payload)
         });
-        // A node alone cannot deliver anything; a slow network is not fatal.
-        if let Err(e) = node.wait_connected(CONNECT_WAIT) {
-            warn!("no peers yet, continuing: {e}");
-        }
         Ok(Self { node, inbound })
     }
 
