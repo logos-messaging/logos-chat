@@ -3733,7 +3733,7 @@ dependencies = [
 [[package]]
 name = "logos-delivery"
 version = "0.1.0"
-source = "git+https://github.com/logos-messaging/logos-delivery-rust-bindings?rev=8841f50d9eb9c42a191630b9f660c9d6411057eb#8841f50d9eb9c42a191630b9f660c9d6411057eb"
+source = "git+https://github.com/logos-messaging/logos-delivery-rust-bindings?rev=6fb203b87f3dd343d3acc4cdac9027471140b4cd#6fb203b87f3dd343d3acc4cdac9027471140b4cd"
 dependencies = [
  "base64",
  "ciborium",
