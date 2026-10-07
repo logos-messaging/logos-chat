@@ -10,9 +10,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use crossbeam_channel::Receiver;
 use logos_chat::{
-    AuthService, ChatClient, ConversationStore, DEFAULT_PRESET, DbKey, DeliveryConfig, Event,
-    GroupV2Config, LogosConfig, RegistrationService, RegistryPublishMode, Transport,
-    default_delivery_config,
+    AuthService, ChatClient, ConversationStore, DbKey, Event, GroupV2Config, LogosConfig,
+    P2pConfig, RegistrationService, RegistryPublishMode, Transport,
 };
 
 use app::ChatApp;
@@ -148,13 +147,18 @@ fn main() -> Result<()> {
 
     match cli.transport {
         TransportKind::LogosDelivery => {
-            let preset = cli.preset.as_deref().unwrap_or(DEFAULT_PRESET);
-            let mut delivery_config: DeliveryConfig = default_delivery_config().preset(preset);
+            let mut p2p_config = P2pConfig::default();
             if let Some(port) = cli.port {
-                delivery_config = delivery_config.tcp_port(port);
+                p2p_config.port = port;
+            }
+            if let Some(preset) = cli.preset.as_deref() {
+                p2p_config.preset = preset.to_string();
             }
 
-            println!("Starting logos-delivery node (preset={preset})...");
+            println!(
+                "Starting logos-delivery node (preset={})...",
+                p2p_config.preset
+            );
             println!("This may take a few seconds while connecting to the network.");
 
             let mut config = LogosConfig::new(db_str, db_key());
@@ -162,7 +166,7 @@ fn main() -> Result<()> {
                 config.set_registry_url(registry_url);
             }
             config.set_registry_publish_mode(cli.registry_publish.into());
-            config.set_delivery_config(delivery_config);
+            config.set_p2p_config(p2p_config);
             if let Some(group_v2) = group_v2_override(cli.group_commit, cli.transport) {
                 // Demo/test-only fast timers; migrates once the library's
                 // wallclock/timer abstraction replaces this raw config.

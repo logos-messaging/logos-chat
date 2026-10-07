@@ -1,14 +1,14 @@
 use std::time::Duration;
 
-use embedded_logos_delivery::{EmbeddedLogosDelivery, default_delivery_config};
+use embedded_logos_delivery::{EmbeddedLogosDelivery, P2pConfig};
 use libchat::{AddressedEnvelope, DeliveryService};
 use logos_generic_chat::Transport;
 
 #[test]
 #[ignore = "needs network access and a linked liblogosdelivery"]
 fn two_embedded_nodes_exchange_a_message() {
-    let mut receiver = EmbeddedLogosDelivery::start(default_delivery_config()).expect("receiver");
-    let mut sender = EmbeddedLogosDelivery::start(default_delivery_config()).expect("sender");
+    let mut receiver = EmbeddedLogosDelivery::start(P2pConfig::default()).expect("receiver");
+    let mut sender = EmbeddedLogosDelivery::start(P2pConfig::default()).expect("sender");
 
     receiver.subscribe("addr-roundtrip").expect("subscribe");
     sender.subscribe("addr-roundtrip").expect("subscribe");
