@@ -19,7 +19,8 @@ pub enum AccountError {
 
 /// Routed through [`AccountLogError`] rather than added as a variant of its
 /// own: to a caller, bytes that are not a key are the same class of failure as
-/// a log that does not decode.
+/// a log that does not decode. `?` will not chain two conversions, so the hop
+/// `AccountLogError` already implements is not enough on its own.
 impl From<account_log::Ed25519Error> for AccountError {
     fn from(error: account_log::Ed25519Error) -> Self {
         Self::Log(error.into())
