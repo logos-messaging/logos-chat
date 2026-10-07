@@ -5,9 +5,10 @@ all-features = true
 
 [advisories]
 version = 2
-# libcrux crypto crates, exact-pinned (0.0.x) via openmls_libcrux_crypto 0.3.1.
-# The fix only exists on the openmls 0.9 prerelease line, which de-mls does not
-# support yet — revisit once openmls 0.9 is stable.
+# libcrux crypto crates arrive under openmls, exact-pinned (a 0.0.x requirement
+# matches only that version), so cargo update cannot move them. openmls 0.9
+# does not help — it still resolves to a vulnerable libcrux-kem.
+# Revisit when an openmls release resolves to libcrux-kem >= 0.0.10.
 ignore = [
     "RUSTSEC-2026-0073", # libcrux-poly1305
     "RUSTSEC-2026-0075", # libcrux-ed25519
@@ -18,6 +19,8 @@ ignore = [
     "RUSTSEC-2026-0209", # libcrux-aesgcm — AES-GCM, unused by our ciphersuite
     "RUSTSEC-2026-0211", # libcrux-aesgcm — AES-GCM, unused by our ciphersuite
     "RUSTSEC-2026-0210", # libcrux-aesgcm renamed
+    "RUSTSEC-2026-0330", # libcrux-kem — encapsulate_derand, never called
+    "RUSTSEC-2026-0331", # libcrux-kem — reachable: short init_key panics
     "RUSTSEC-2024-0436", # paste, unmaintained
     "RUSTSEC-2026-0173", # proc-macro-error2, unmaintained
 ]
