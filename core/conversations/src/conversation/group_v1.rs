@@ -21,7 +21,7 @@ use crate::types::ConvoMetadata;
 use crate::utils::{blake2b_hex, hash_size};
 use crate::{
     DeliveryService, IdentityProvider,
-    conversation::{ChatError, Convo, GroupConvo, Identified},
+    conversation::{ChatError, Convo, ConvoBase, GroupConvo, Identified},
     outcomes::{Content, ConvoOutcome},
     service_traits::KeyPackageProvider,
     types::AddressedEncryptedPayload,
@@ -347,20 +347,6 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
     fn wakeup(&mut self, _: &mut ServiceContext<S>) -> Result<ConvoOutcome, ChatError> {
         Ok(ConvoOutcome::empty(self.id().to_string()))
     }
-
-    fn signers(&self) -> Result<Vec<Signer>, ChatError> {
-        Ok(self
-            .mls_group
-            .members()
-            .map(|m| Signer::from_leaf(&m.signature_key, m.credential.serialized_content()))
-            .collect())
-    }
-
-    fn can_send(&self) -> bool {
-        // OpenMLS marks a group inactive once our own leaf is removed by a
-        // commit, so an inactive group is one we can no longer send to.
-        self.mls_group.is_active()
-    }
 }
 
 impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
@@ -479,11 +465,27 @@ impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {
         // ejects can still read it and learn they are out.
         self.send_payload(cx, commit.to_bytes()?)
     }
+}
+
+impl ConvoBase for GroupV1Convo {
+    fn signers(&self) -> Result<Vec<Signer>, ChatError> {
+        Ok(self
+            .mls_group
+            .members()
+            .map(|m| Signer::from_leaf(&m.signature_key, m.credential.serialized_content()))
+            .collect())
+    }
 
     /// Always empty: `add_member` merges its own commit, so an added member is
     /// on the roster by the time the call returns.
     fn pending_signers(&self) -> Result<Vec<Signer>, ChatError> {
         Ok(Vec::new())
+    }
+
+    fn can_send(&self) -> bool {
+        // OpenMLS marks a group inactive once our own leaf is removed by a
+        // commit, so an inactive group is one we can no longer send to.
+        self.mls_group.is_active()
     }
 
     fn metadata(&self) -> Option<ConvoMetadata> {
