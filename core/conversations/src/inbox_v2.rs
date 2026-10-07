@@ -29,6 +29,36 @@ use crate::{AddressedEnvelope, IdentityProvider, SignerRef};
 pub(crate) const CIPHER_SUITE: Ciphersuite =
     Ciphersuite::MLS_256_XWING_CHACHA20POLY1305_SHA256_Ed25519;
 
+/// HPKE public key length for [`CIPHER_SUITE`]: a 1184-byte ML-KEM-768 key
+/// followed by a 32-byte X25519 key.
+const HPKE_PUBLIC_KEY_LEN: usize = 1184 + 32;
+
+// The length above is XWing-specific; fail the build if the ciphersuite moves.
+const _: () = assert!(matches!(
+    CIPHER_SUITE.hpke_kem_algorithm(),
+    HpkeKemType::XWingKemDraft6
+));
+
+/// Reject an HPKE public key that is not the length [`CIPHER_SUITE`] requires.
+///
+/// RUSTSEC-2026-0331: `KeyPackageIn::validate` checks a key package's signatures
+/// but never its key lengths, and libcrux-kem 0.0.7 indexes `[0..1184]` decoding
+/// an XWing key, so a shorter one panics instead of erroring.
+///
+/// REMOVE, once the build resolves libcrux-kem >= 0.0.10:
+/// it returns `InvalidPublicKey` rather than panicking, so openmls can reject a
+/// malformed key on its own. That is the same gate as the deny.toml ignore, and
+/// `grep RUSTSEC-2026-0331` finds everything to delete.
+pub(crate) fn check_hpke_public_key(key: &[u8]) -> Result<(), ChatError> {
+    if key.len() != HPKE_PUBLIC_KEY_LEN {
+        return Err(ChatError::BadBundleValue(format!(
+            "HPKE public key is {} bytes, expected {HPKE_PUBLIC_KEY_LEN}",
+            key.len()
+        )));
+    }
+    Ok(())
+}
+
 // Define unique Identifiers derivations used in InboxV2
 fn delivery_address_for(signer: SignerRef) -> String {
     let id = signer.to_string();
@@ -244,4 +274,19 @@ pub enum InviteType {
 pub struct GroupV1HeavyInvite {
     #[prost(bytes, tag = "1")]
     pub welcome_bytes: Vec<u8>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HPKE_PUBLIC_KEY_LEN, check_hpke_public_key};
+
+    #[test]
+    fn hpke_public_key_length_is_enforced() {
+        assert!(check_hpke_public_key(&vec![0; HPKE_PUBLIC_KEY_LEN]).is_ok());
+        // A key short enough to panic libcrux-kem's decode (RUSTSEC-2026-0331).
+        assert!(check_hpke_public_key(&[]).is_err());
+        assert!(check_hpke_public_key(&vec![0; 1183]).is_err());
+        // Long enough to decode, still the wrong size.
+        assert!(check_hpke_public_key(&vec![0; HPKE_PUBLIC_KEY_LEN + 1]).is_err());
+    }
 }

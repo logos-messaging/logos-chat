@@ -171,6 +171,9 @@ impl GroupV1Convo {
 
         let key_package_in = KeyPackageIn::tls_deserialize(&mut keypkg_bytes.as_slice())?;
         let keypkg = key_package_in.validate(provider.crypto(), ProtocolVersion::Mls10)?; //TODO: P3 - Hardcoded Protocol Version
+        // RUSTSEC-2026-0331: a short init_key panics libcrux-kem once openmls
+        // encrypts the Welcome to it. Delete when libcrux-kem >= 0.0.10.
+        crate::inbox_v2::check_hpke_public_key(keypkg.hpke_init_key().as_slice())?;
         // SECURITY: validate() only proves the package is well-formed and self-signed
         // — NOT that it belongs to the signer we asked the registry for. Bind the
         // fetched leaf's signature_key to the requested id (a signer id is

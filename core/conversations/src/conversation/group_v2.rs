@@ -154,6 +154,9 @@ fn fetch_key_packages<S: ExternalServices>(
                 .ok_or_else(|| ChatError::generic("No key package"))?;
             let validated = KeyPackageIn::tls_deserialize(&mut key_package.as_slice())?
                 .validate(service_ctx.mls_provider.crypto(), ProtocolVersion::Mls10)?;
+            // RUSTSEC-2026-0331: a short init_key panics libcrux-kem once openmls
+            // encrypts the Welcome to it. Delete when libcrux-kem >= 0.0.10.
+            crate::inbox_v2::check_hpke_public_key(validated.hpke_init_key().as_slice())?;
             // SECURITY: a valid KeyPackage proves only that it is well-formed and
             // self-signed, not that it belongs to the signer we requested — a
             // compromised registry could hand back an attacker's package under a
