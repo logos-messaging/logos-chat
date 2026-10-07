@@ -310,7 +310,7 @@ mod tests {
     #[test]
     fn an_imported_key_extends_its_published_log() {
         let key = Ed25519SigningKey::generate();
-        let exported = *key.as_bytes();
+        let exported = *key.seed();
         let mut account = Account::from_signing_key(key, FakeProvider::default());
         let addr = account.addr();
 
@@ -321,7 +321,7 @@ mod tests {
             .unwrap();
 
         let mut imported =
-            Account::from_signing_key(Ed25519SigningKey::from_bytes(&exported), account.provider);
+            Account::from_signing_key(Ed25519SigningKey::from_seed(&exported), account.provider);
         assert_eq!(imported.addr(), addr);
 
         let second = imported

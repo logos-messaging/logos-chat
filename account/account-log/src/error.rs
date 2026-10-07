@@ -35,3 +35,15 @@ pub enum AccountLogError {
     #[error("account signature verification failed")]
     SignatureInvalid,
 }
+
+/// A key `crypto` refuses is a malformed log, and a signature it refuses is a
+/// failed verification: the distinction is already drawn, so it is carried over
+/// rather than collapsed into one variant.
+impl From<crypto::Ed25519Error> for AccountLogError {
+    fn from(error: crypto::Ed25519Error) -> Self {
+        match error {
+            crypto::Ed25519Error::MalformedKey(what) => Self::Malformed(what.into()),
+            crypto::Ed25519Error::SignatureInvalid => Self::SignatureInvalid,
+        }
+    }
+}
