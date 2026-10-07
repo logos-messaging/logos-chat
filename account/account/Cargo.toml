@@ -5,6 +5,11 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Authoring, publishing, and resolving account logs."
 
+
+[features]
+# Enable export of test implementations for using accounts in your own tests.
+test-support = []
+
 [dependencies]
 account-log = { path = "../account-log" }
 thiserror = "2"
