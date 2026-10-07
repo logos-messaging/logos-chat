@@ -2,8 +2,8 @@ use crate::identity::SignerKey;
 use chat_proto::logoschat::encryption::EncryptedPayload;
 
 use crate::{
-    ChatError, ExternalServices, MessageId, Signer,
-    conversation::{ConversationIdRef, Convo, GroupConvo, GroupV1Convo, Identified},
+    ChatError, ConvoMetadata, ExternalServices, MessageId, Signer,
+    conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, GroupV1Convo, Identified},
     service_context::ServiceContext,
 };
 
@@ -61,13 +61,25 @@ where
     ) -> Result<crate::ConvoOutcome, ChatError> {
         self.inner_group.wakeup(service_ctx)
     }
+}
 
+impl ConvoBase for DirectV1Convo {
     fn signers(&self) -> Result<Vec<Signer>, ChatError> {
-        Convo::<S>::signers(&self.inner_group)
+        self.inner_group.signers()
+    }
+
+    /// Always empty: a DM's membership is fixed at creation.
+    fn pending_signers(&self) -> Result<Vec<Signer>, ChatError> {
+        Ok(Vec::new())
     }
 
     fn can_send(&self) -> bool {
         // A DM is a pairwise GroupV1; defer to the inner group's membership.
-        Convo::<S>::can_send(&self.inner_group)
+        self.inner_group.can_send()
+    }
+
+    /// A DM carries no name or description.
+    fn metadata(&self) -> Option<ConvoMetadata> {
+        None
     }
 }

@@ -2,7 +2,9 @@
 name = "crypto"
 version = "0.1.0"
 edition = "2024"
-license.workspace = true
+# Spelled out rather than inherited: `account-log` depends on this crate and
+# must resolve without a workspace root above it.
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 # External dependencies (sorted)
@@ -15,3 +17,7 @@ thiserror = "2"
 x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
 xeddsa = "=1.0.2"
 zeroize = { version = "1.8.2", features = ["derive"] }
+
+[dev-dependencies]
+# External dependencies (sorted)
+hex = "0.4.3"

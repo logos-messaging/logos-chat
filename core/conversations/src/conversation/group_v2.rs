@@ -35,7 +35,7 @@ use crate::IdentityProvider;
 use crate::conversation::{ConversationIdRef, ExternalServices, MessageId, ServiceContext};
 use crate::{
     ConvoOutcome, DeliveryService, RegistrationService,
-    conversation::{ChatError, Convo, GroupConvo, Identified},
+    conversation::{ChatError, Convo, ConvoBase, GroupConvo, Identified},
 };
 
 /// The de-mls time source: every conversation deadline (freeze windows,
@@ -154,6 +154,9 @@ fn fetch_key_packages<S: ExternalServices>(
                 .ok_or_else(|| ChatError::generic("No key package"))?;
             let validated = KeyPackageIn::tls_deserialize(&mut key_package.as_slice())?
                 .validate(service_ctx.mls_provider.crypto(), ProtocolVersion::Mls10)?;
+            // RUSTSEC-2026-0331: a short init_key panics libcrux-kem once openmls
+            // encrypts the Welcome to it. Delete when libcrux-kem >= 0.0.10.
+            crate::inbox_v2::check_hpke_public_key(validated.hpke_init_key().as_slice())?;
             // SECURITY: a valid KeyPackage proves only that it is well-formed and
             // self-signed, not that it belongs to the signer we requested — a
             // compromised registry could hand back an attacker's package under a
@@ -421,19 +424,6 @@ where
         let events = self.after_op(ctx)?; // publish what poll produced + re-arm alarm
         self.outcome_from_events(ctx, &events)
     }
-
-    fn signers(&self) -> Result<Vec<Signer>, ChatError> {
-        Ok(self
-            .conversation
-            .members_view()
-            .into_iter()
-            .map(|m| Signer::from_leaf(&m.signature_key, m.credential.serialized_content()))
-            .collect())
-    }
-
-    fn can_send(&self) -> bool {
-        self.is_member()
-    }
 }
 
 impl<S> GroupConvo<S> for GroupV2Convo
@@ -533,27 +523,6 @@ where
         }
         let flushed = self.after_op(service_ctx).map(drop);
         result.and(flushed)
-    }
-
-    fn pending_signers(&self) -> Result<Vec<Signer>, ChatError> {
-        Ok(self
-            .pending_invites
-            .iter()
-            .map(|(signature_key, credential)| Signer::from_leaf(signature_key, credential))
-            .collect())
-    }
-
-    fn metadata(&self) -> Option<ConvoMetadata> {
-        let res = self.conversation.extensions().iter().find_map(|ext| {
-            if let Extension::Unknown(ext_type, UnknownExtension(bytes)) = ext
-                && *ext_type == GROUP_METADATA_EXTENSION_TYPE
-            {
-                return ConvoMetaInfo::from_extension_bytes(bytes).ok();
-            };
-            None
-        });
-
-        res.map(Into::into)
     }
 
     // fn conversation_state(&self) -> Result<ConversationState, ChatError> {
@@ -711,4 +680,40 @@ pub enum GroupV2Payload {
     DeMlsWrapper(Bytes),
     #[prost(message, tag = "3")]
     MlsCommitMessage(Bytes),
+}
+
+impl ConvoBase for GroupV2Convo {
+    fn signers(&self) -> Result<Vec<Signer>, ChatError> {
+        Ok(self
+            .conversation
+            .members_view()
+            .into_iter()
+            .map(|m| Signer::from_leaf(&m.signature_key, m.credential.serialized_content()))
+            .collect())
+    }
+
+    fn pending_signers(&self) -> Result<Vec<Signer>, ChatError> {
+        Ok(self
+            .pending_invites
+            .iter()
+            .map(|(signature_key, credential)| Signer::from_leaf(signature_key, credential))
+            .collect())
+    }
+
+    fn can_send(&self) -> bool {
+        self.is_member()
+    }
+
+    fn metadata(&self) -> Option<ConvoMetadata> {
+        let res = self.conversation.extensions().iter().find_map(|ext| {
+            if let Extension::Unknown(ext_type, UnknownExtension(bytes)) = ext
+                && *ext_type == GROUP_METADATA_EXTENSION_TYPE
+            {
+                return ConvoMetaInfo::from_extension_bytes(bytes).ok();
+            };
+            None
+        });
+
+        res.map(Into::into)
+    }
 }

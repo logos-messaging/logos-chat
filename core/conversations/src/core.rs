@@ -12,7 +12,7 @@ use crate::{
     WakeupService,
 };
 use crate::{
-    conversation::{Convo, GroupConvo},
+    conversation::{Convo, ConvoBase, GroupConvo},
     errors::ChatError,
     inbox_v2::{InboxV2, MlsEphemeralPqProvider, MlsIdentityProvider},
     outcomes::{ConversationClass, ConvoOutcome, InboxOutcome, PayloadOutcome},
@@ -626,7 +626,9 @@ impl<S: ExternalServices> Convo<S> for ConvoTypeOwned<S> {
             ConvoTypeOwned::Direct(convo) => convo.wakeup(service_ctx),
         }
     }
+}
 
+impl<S: ExternalServices> ConvoBase for ConvoTypeOwned<S> {
     fn signers(&self) -> Result<Vec<Signer>, ChatError> {
         match self {
             ConvoTypeOwned::Group(group_convo) => group_convo.signers(),
@@ -634,10 +636,24 @@ impl<S: ExternalServices> Convo<S> for ConvoTypeOwned<S> {
         }
     }
 
+    fn pending_signers(&self) -> Result<Vec<Signer>, ChatError> {
+        match self {
+            ConvoTypeOwned::Group(group_convo) => group_convo.pending_signers(),
+            ConvoTypeOwned::Direct(convo) => convo.pending_signers(),
+        }
+    }
+
     fn can_send(&self) -> bool {
         match self {
             ConvoTypeOwned::Group(group_convo) => group_convo.can_send(),
             ConvoTypeOwned::Direct(convo) => convo.can_send(),
+        }
+    }
+
+    fn metadata(&self) -> Option<ConvoMetadata> {
+        match self {
+            ConvoTypeOwned::Group(group_convo) => group_convo.metadata(),
+            ConvoTypeOwned::Direct(convo) => convo.metadata(),
         }
     }
 }
