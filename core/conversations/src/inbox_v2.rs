@@ -17,11 +17,11 @@ pub(crate) use mls_provider::MlsEphemeralPqProvider;
 use crate::ChatError;
 use crate::DeliveryService;
 use crate::RegistrationService;
-use crate::conversation::GroupConvo;
 use crate::conversation::GroupV1Convo;
 use crate::conversation::GroupV2Convo;
 use crate::conversation::Identified as _;
 use crate::conversation::mls_extensions::GROUP_METADATA_EXTENSION_TYPE;
+use crate::conversation::{GroupConvo, GroupV3Convo};
 use crate::outcomes::ConversationClass;
 use crate::service_context::{ExternalServices, ServiceContext};
 use crate::utils::{blake2b_hex, hash_size};
@@ -175,9 +175,11 @@ impl InboxV2 {
                 let convo = GroupV2Convo::new_from_welcome(service_ctx, &mw)?;
                 Ok(Some((Box::new(convo), ConversationClass::Group)))
             }
-            InviteType::GroupV3(_welcome_bytes) => {
+            InviteType::GroupV3(welcome_bytes) => {
                 info!("Process V3 WelcomeMessage");
-                todo!();
+                let welcome = self.parse_heavy_welcome(service_ctx, &welcome_bytes)?;
+                let convo = GroupV3Convo::new_from_welcome(service_ctx, &welcome)?;
+                Ok(Some((Box::new(convo), ConversationClass::Group)))
             }
         }
     }
@@ -215,6 +217,23 @@ impl InboxV2 {
         self.persist_convo(&convo, cx)?;
 
         Ok(convo)
+    }
+
+    fn parse_heavy_welcome<S: ExternalServices>(
+        &self,
+        cx: &mut ServiceContext<S>,
+        welcome_bytes: &[u8],
+    ) -> Result<Welcome, ChatError> {
+        let (msg_in, _rest) = MlsMessageIn::tls_deserialize_bytes(welcome_bytes)?;
+
+        let MlsMessageBodyIn::Welcome(welcome) = msg_in.extract() else {
+            return Err(ChatError::ProtocolExpectation(
+                "something else",
+                "Welcome".into(),
+            ));
+        };
+
+        Ok(welcome)
     }
 
     fn create_keypackage<S: ExternalServices>(
