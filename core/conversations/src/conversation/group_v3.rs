@@ -10,8 +10,10 @@ mod payloads;
 
 use openmls::extensions::{Extension, Extensions, UnknownExtension};
 use openmls::framing::MlsMessageOut;
-use openmls::group::{MlsGroup, MlsGroupCreateConfig};
+use openmls::group::{MlsGroup, MlsGroupCreateConfig, MlsGroupJoinConfig, StagedWelcome};
 use openmls::key_packages::KeyPackage;
+use openmls::messages::Welcome;
+use openmls::prelude::SenderRatchetConfiguration;
 
 use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified};
 use crate::errors::{SendError, TypeConversionError};
@@ -51,6 +53,23 @@ fn group_create_config(name: &str, desc: &str) -> MlsGroupCreateConfig {
         .use_ratchet_tree_extension(true) // Embed the ratchet tree in the Welcome so joiners can build the group
         .with_group_context_extensions(extensions)
         .build()
+}
+
+const OUTBOUND_HASH_CACHE_SIZE: usize = 25;
+// A message stays readable until one this many newer from its sender is
+// decrypted. Covers logos-delivery's reconnect backfill: up to 20 missed
+// messages, handed over after newer live ones.
+const OUT_OF_ORDER_TOLERANCE: u32 = 32;
+
+fn mls_join_config() -> MlsGroupJoinConfig {
+    MlsGroupJoinConfig::builder()
+        .sender_ratchet_configuration(sender_ratchet_config())
+        .build()
+}
+
+fn sender_ratchet_config() -> SenderRatchetConfiguration {
+    let default = SenderRatchetConfiguration::default();
+    SenderRatchetConfiguration::new(OUT_OF_ORDER_TOLERANCE, default.maximum_forward_distance())
 }
 
 fn create_group<S: ExternalServices>(
@@ -96,6 +115,28 @@ impl GroupV3Convo {
 
         convo.init(cx)?;
         convo.add_signer(cx, signers)?;
+        Ok(convo)
+    }
+
+    pub fn new_from_welcome<S: ExternalServices>(
+        cx: &mut ServiceContext<S>,
+        welcome: Welcome,
+    ) -> Result<Self, ChatError> {
+        let mls_group =
+            StagedWelcome::build_from_welcome(&cx.mls_provider, &mls_join_config(), welcome)
+                .map_err(ChatError::generic)?
+                .build()
+                .map_err(ChatError::generic)?
+                .into_group(&cx.mls_provider)
+                .map_err(ChatError::generic)?;
+
+        // let convo_id = hex::encode(mls_group.group_id().as_slice());
+        let mut convo = Self {
+            convo_id,
+            mls_group,
+        };
+
+        convo.init(cx)?;
         Ok(convo)
     }
 
