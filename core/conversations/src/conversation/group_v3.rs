@@ -13,7 +13,7 @@ use openmls::framing::MlsMessageOut;
 use openmls::group::{MlsGroup, MlsGroupCreateConfig};
 use openmls::key_packages::KeyPackage;
 
-use crate::conversation::{ConversationIdRef, Convo, GroupConvo, Identified};
+use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified};
 use crate::errors::{SendError, TypeConversionError};
 use crate::service_context::ServiceContext;
 use crate::utils::{blake2b_hex, hash_size};
@@ -164,6 +164,30 @@ impl GroupV3Convo {
     }
 }
 
+impl ConvoBase for GroupV3Convo {
+    fn signers(&self) -> Result<Vec<crate::Signer>, ChatError> {
+        let signers: Result<Vec<Signer>, TypeConversionError> = self
+            .mls_group
+            .members()
+            .map(|m| Signer::from_member(&m))
+            .collect();
+
+        Ok(signers?)
+    }
+
+    fn pending_signers(&self) -> Result<Vec<Signer>, ChatError> {
+        todo!()
+    }
+
+    fn can_send(&self) -> bool {
+        todo!()
+    }
+
+    fn metadata(&self) -> Option<crate::ConvoMetadata> {
+        todo!()
+    }
+}
+
 impl Identified for GroupV3Convo {
     fn id(&self) -> ConversationIdRef<'_> {
         &self.convo_id
@@ -180,7 +204,7 @@ where
         signers: &[SignerKey],
     ) -> Result<(), ChatError> {
         // filter for duplicates and existing signers
-        let existing = <GroupV3Convo as Convo<S>>::signers(self)?.into_iter();
+        let existing = self.signers()?.into_iter();
         let signers = unique(member_diff(signers, existing));
 
         let key_packages: Vec<KeyPackage> = fetch_key_packages(cx, signers)?;
@@ -204,14 +228,6 @@ where
         _cx: &mut ServiceContext<S>,
         _signer: &[crate::SignerRef],
     ) -> Result<(), ChatError> {
-        todo!()
-    }
-
-    fn pending_signers(&self) -> Result<Vec<crate::Signer>, ChatError> {
-        todo!()
-    }
-
-    fn metadata(&self) -> Option<crate::ConvoMetadata> {
         todo!()
     }
 }
@@ -238,20 +254,6 @@ where
     }
 
     fn wakeup(&mut self, _cx: &mut ServiceContext<S>) -> Result<crate::ConvoOutcome, ChatError> {
-        todo!()
-    }
-
-    fn signers(&self) -> Result<Vec<crate::Signer>, ChatError> {
-        let signers: Result<Vec<Signer>, TypeConversionError> = self
-            .mls_group
-            .members()
-            .map(|m| Signer::from_member(&m))
-            .collect();
-
-        Ok(signers?)
-    }
-
-    fn can_send(&self) -> bool {
         todo!()
     }
 }
