@@ -50,7 +50,7 @@ pub fn default_delivery_config() -> DeliveryConfig {
 /// the same background node.
 #[derive(Clone)]
 pub struct EmbeddedLogosDelivery {
-    node: BlockingDeliveryNode,
+    inner: BlockingDeliveryNode,
     inbound: Receiver<Vec<u8>>,
 }
 
@@ -65,23 +65,23 @@ impl EmbeddedLogosDelivery {
     /// Start the embedded logos-delivery node. Only chat payloads (on a
     /// `/logos-chat/1/…` content topic) reach the inbound queue.
     pub fn start(config: DeliveryConfig) -> Result<Self, DeliveryError> {
-        let node = BlockingDeliveryNode::start(config)?;
-        let inbound = node.inbound_queue(|m| {
+        let inner = BlockingDeliveryNode::start(config)?;
+        let inbound = inner.inbound_queue(|m| {
             m.content_topic
                 .starts_with(CHAT_TOPIC_PREFIX)
                 .then_some(m.payload)
         });
-        Ok(Self { node, inbound })
+        Ok(Self { inner, inbound })
     }
 
     /// Stops the node. Clones share it, so this ends delivery for all of them.
     pub fn shutdown(&self) -> Result<(), DeliveryError> {
-        self.node.shutdown()
+        self.inner.shutdown()
     }
 
     /// Stop delivering messages addressed to `delivery_address`.
     pub fn unsubscribe(&self, delivery_address: &str) -> Result<(), DeliveryError> {
-        self.node.unsubscribe(&content_topic_for(delivery_address))
+        self.inner.unsubscribe(&content_topic_for(delivery_address))
     }
 }
 
@@ -91,11 +91,12 @@ impl DeliveryService for EmbeddedLogosDelivery {
     fn publish(&mut self, envelope: AddressedEnvelope) -> Result<(), DeliveryError> {
         let topic = content_topic_for(&envelope.delivery_address);
         debug!(topic = &topic, "Publish");
-        self.node.publish(&topic, &envelope.data).map(|_| ())
+        self.inner.publish(&topic, &envelope.data)?;
+        Ok(())
     }
 
     fn subscribe(&mut self, delivery_address: &str) -> Result<(), DeliveryError> {
-        self.node.subscribe(&content_topic_for(delivery_address))
+        self.inner.subscribe(&content_topic_for(delivery_address))
     }
 }
 
