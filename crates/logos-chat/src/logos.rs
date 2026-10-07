@@ -21,9 +21,9 @@ use embedded_logos_delivery::{EmbeddedLogosDelivery, P2pConfig};
 use logos_account::AccountError;
 use logos_account::AccountProvider;
 use logos_account::AccountPublisher;
+use logos_account::ChatWrite;
 use logos_account::Ed25519VerifyingKey;
 
-use logos_account::CHATSIGNER_CONTEXT;
 use logos_generic_chat::SqliteStore;
 use logos_generic_chat::StorageConfig;
 use logos_generic_chat::{
@@ -242,10 +242,7 @@ fn register_account<A: AccountPublisher + AccountProvider>(
     let mut account = logos_account::Account::new(auth_client);
     let key = Ed25519VerifyingKey::from_canonical_slice(&pending.endorsement_request())?;
 
-    let _ = account
-        .update()
-        .endorse_ed25519_key(CHATSIGNER_CONTEXT, &key)
-        .publish()?;
+    let _ = account.update().endorse_chat_signer(&key).publish()?;
 
     Ok(pending.complete(account.addr()))
 }
