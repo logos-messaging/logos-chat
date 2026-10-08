@@ -211,21 +211,18 @@ where
     Installation::load_or_create(store, || Ok(register_account(auth)?))
 }
 
+// The fully qualified Client Type
+type ClientType = ChatClient<
+    EmbeddedLogosDelivery,
+    ContactRegistry<EmbeddedLogosDelivery>,
+    HttpAuthClient,
+    SqliteStore,
+>;
+
 pub fn client_with(
     installation: Installation,
     config: LogosConfig,
-) -> Result<
-    (
-        ChatClient<
-            EmbeddedLogosDelivery,
-            ContactRegistry<EmbeddedLogosDelivery>,
-            HttpAuthClient,
-            SqliteStore,
-        >,
-        Receiver<Event>,
-    ),
-    ClientError,
-> {
+) -> Result<(ClientType, Receiver<Event>), ClientError> {
     let transport = EmbeddedLogosDelivery::start(config.p2p_config.clone())
         .map_err(|e| ClientError::Transport(e.to_string()))?;
 
