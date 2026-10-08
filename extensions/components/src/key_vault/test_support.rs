@@ -17,7 +17,9 @@ pub struct TestFileKeyVault {
 }
 
 impl TestFileKeyVault {
-    pub fn new(dir: impl Into<PathBuf>) -> Self {
+    /// A vault in a fresh temp directory, removed on drop. Vaults given clones
+    /// of one `registry` see each other's publishes.
+    pub fn new(provider: TestAccountProvider) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
             "keyvault-{}-{}",
@@ -27,7 +29,7 @@ impl TestFileKeyVault {
         let _ = fs::remove_dir_all(&dir);
 
         Self {
-            vault: FileKeyVault::new(dir.clone()),
+            vault: FileKeyVault::new(dir.clone(), provider),
             dir,
         }
     }

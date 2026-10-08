@@ -12,7 +12,6 @@
 
 use std::fs;
 use std::io;
-use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
 use crypto::Ed25519SigningKey;
@@ -86,7 +85,7 @@ pub struct BasicFileKeyVault(FileKeyVault<HttpAuthClient>);
 
 impl BasicFileKeyVault {
     pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self(FileKeyVault::new(dir))
+        Self(FileKeyVault::new(dir, HttpAuthClient::default()))
     }
 
     /// The installation `alias` names, creating whatever part of it is missing.
@@ -107,19 +106,18 @@ impl BasicFileKeyVault {
 
 /// The vault itself, generic over how accounts publish.
 ///
-/// `Account` owns its provider, so each account loaded gets its own
-/// `AP::default()`. A provider can't be configured per vault, and providers
-/// holding state (like `TestAccountProvider`) don't share it across accounts.
+/// `Account` owns its provider, so each account loaded gets a clone of
+/// `provider`. Clones must share state, or an account can't see its own log.
 pub(crate) struct FileKeyVault<AP> {
     dir: PathBuf,
-    provider: PhantomData<fn() -> AP>,
+    provider: AP,
 }
 
-impl<AP: AccountProvider + AccountPublisher + Default> FileKeyVault<AP> {
-    pub(crate) fn new(dir: impl Into<PathBuf>) -> Self {
+impl<AP: AccountProvider + AccountPublisher + Clone> FileKeyVault<AP> {
+    pub(crate) fn new(dir: impl Into<PathBuf>, provider: AP) -> Self {
         Self {
             dir: dir.into(),
-            provider: PhantomData,
+            provider,
         }
     }
 
@@ -154,7 +152,7 @@ impl<AP: AccountProvider + AccountPublisher + Default> FileKeyVault<AP> {
     /// The account `alias` names, generated and written on first use.
     fn account(&self, alias: &str) -> Result<Account<AP>, KeyVaultError> {
         let path = self.account_dir(alias).join(ACCOUNT_FILE);
-        let auth = AP::default();
+        let auth = self.provider.clone();
         let account = match seed_at(&path)? {
             Some(seed) => Account::from_signing_key(Ed25519SigningKey::from_seed(&seed), auth),
             None => {
@@ -272,12 +270,15 @@ fn parse_alias(text: &str) -> Result<(String, u32), KeyVaultError> {
 
 #[cfg(test)]
 mod tests {
+    use logos_account::AccountProvider;
+    use logos_account::test_support::TestAccountProvider;
+
     use crate::key_vault::test_support::TestFileKeyVault;
 
     /// The key on disk is the account: reading it back must not mint a new one.
     #[test]
     fn an_account_key_is_written_once_and_read_back() {
-        let vault = TestFileKeyVault::temp();
+        let vault = TestFileKeyVault::new(TestAccountProvider::default());
 
         let first = vault.inner().account("saro").expect("create saro").addr();
         let again = vault.inner().account("saro").expect("reuse saro").addr();
@@ -292,7 +293,7 @@ mod tests {
 
     #[test]
     fn a_new_installation_is_endorsed_once_and_then_reused() {
-        let vault = TestFileKeyVault::temp();
+        let vault = TestFileKeyVault::new(TestAccountProvider::default());
 
         let minted = vault.install("saro").expect("mint saro:1");
         // A second call finds the key on disk, so it must not publish again —
@@ -302,5 +303,18 @@ mod tests {
         assert_eq!(minted.account(), reused.account());
         assert_eq!(vault.accounts().expect("list"), vec!["saro"]);
         assert_eq!(vault.installations("saro").expect("list"), vec![1]);
+    }
+
+    #[test]
+    fn vaults_sharing_a_registry_see_each_others_logs() {
+        let registry = TestAccountProvider::default();
+        let alice = TestFileKeyVault::new(registry.clone());
+        let bob = TestFileKeyVault::new(registry.clone());
+
+        let alice_addr = alice.install("alice").expect("mint alice").account;
+        let bob_addr = bob.install("bob").expect("mint bob").account;
+
+        assert!(registry.fetch(&alice_addr).expect("fetch").is_some());
+        assert!(registry.fetch(&bob_addr).expect("fetch").is_some());
     }
 }
