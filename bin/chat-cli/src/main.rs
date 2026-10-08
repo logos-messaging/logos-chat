@@ -8,10 +8,12 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
+use components::HttpAuthClient;
+use components::basic_file_key_vault::BasicFileKeyVault;
 use crossbeam_channel::Receiver;
 use logos_chat::{
-    AuthService, ChatClient, ConversationStore, DbKey, Event, GroupV2Config, LogosConfig,
-    P2pConfig, RegistrationService, RegistryPublishMode, Transport,
+    AuthService, ChatClient, ConversationStore, DbKey, Event, GroupV2Config, Installation,
+    LogosConfig, P2pConfig, REGISTRY_ENDPOINT, RegistrationService, RegistryPublishMode, Transport,
 };
 
 use app::ChatApp;
@@ -70,7 +72,7 @@ struct Cli {
     name: String,
 
     /// Which delivery transport to use.
-    #[arg(long, value_enum, default_value_t = TransportKind::File)]
+    #[arg(long, value_enum, default_value_t = TransportKind::LogosDelivery)]
     transport: TransportKind,
 
     /// How quickly group membership changes commit. `fast` makes `/add` and
@@ -84,6 +86,11 @@ struct Cli {
     /// Data directory (used for UI state and the default SQLite path).
     #[arg(long, default_value = "tmp/chat-cli-data")]
     data: PathBuf,
+
+    /// Where account and installation keys are kept, unencrypted. Separate from
+    /// `--data`, so clearing chat state keeps your identities.
+    #[arg(long, default_value = "chat-cli-keys")]
+    keys: PathBuf,
 
     /// Override the SQLite database path (defaults to `<data>/<name>.db`).
     #[arg(long)]
@@ -105,7 +112,8 @@ struct Cli {
     log_file: Option<PathBuf>,
 
     /// Initialize and immediately exit without launching the TUI (for CI).
-    #[arg(long)]
+    /// Requires `--registry-url`, so a smoketest never publishes to devnet.
+    #[arg(long, requires = "registry_url")]
     smoketest: bool,
 
     /// Override the Logos registry endpoint (account + keypackage store). When
@@ -161,10 +169,9 @@ fn main() -> Result<()> {
             );
             println!("This may take a few seconds while connecting to the network.");
 
+            let registry_url = cli.registry_url.as_deref().unwrap_or(REGISTRY_ENDPOINT);
             let mut config = LogosConfig::new(db_str, db_key());
-            if let Some(registry_url) = cli.registry_url.as_deref() {
-                config.set_registry_url(registry_url);
-            }
+            config.set_registry_url(registry_url);
             config.set_registry_publish_mode(cli.registry_publish.into());
             config.set_p2p_config(p2p_config);
             if let Some(group_v2) = group_v2_override(cli.group_commit, cli.transport) {
@@ -173,9 +180,19 @@ fn main() -> Result<()> {
                 #[allow(deprecated)]
                 config.set_group_v2_config(group_v2);
             }
-            let (client, events) = logos_chat::open(config)
-                .map_err(|e| anyhow::anyhow!("{e:?}"))
-                .context("failed to open chat client")?;
+
+            // A smoketest's keys are throwaway, so each run starts a fresh identity.
+            let vault_dir = if cli.smoketest {
+                std::env::temp_dir().join(format!("chat-cli-smoketest-{}", std::process::id()))
+            } else {
+                cli.keys.clone()
+            };
+            let installation_key =
+                BasicFileKeyVault::new(vault_dir, HttpAuthClient::new(registry_url))
+                    .install(cli.name.as_str())?;
+            let installation =
+                Installation::make(installation_key.signing_key, installation_key.account);
+            let (client, events) = logos_chat::client_with(installation, config)?;
 
             println!("Node connected.");
             launch_tui(client, events, &cli)
