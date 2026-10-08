@@ -87,6 +87,11 @@ struct Cli {
     #[arg(long, default_value = "tmp/chat-cli-data")]
     data: PathBuf,
 
+    /// Where account and installation keys are kept, unencrypted. Separate from
+    /// `--data`, so clearing chat state keeps your identities.
+    #[arg(long, default_value = "chat-cli-keys")]
+    keys: PathBuf,
+
     /// Override the SQLite database path (defaults to `<data>/<name>.db`).
     #[arg(long)]
     db: Option<PathBuf>,
@@ -180,7 +185,7 @@ fn main() -> Result<()> {
             let vault_dir = if cli.smoketest {
                 std::env::temp_dir().join(format!("chat-cli-smoketest-{}", std::process::id()))
             } else {
-                PathBuf::from("tmp")
+                cli.keys.clone()
             };
             let installation_key =
                 BasicFileKeyVault::new(vault_dir, HttpAuthClient::new(registry_url))
