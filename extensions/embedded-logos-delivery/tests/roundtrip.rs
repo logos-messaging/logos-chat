@@ -32,3 +32,17 @@ fn two_embedded_nodes_exchange_a_message() {
     }
     panic!("no message received");
 }
+
+#[test]
+#[ignore = "needs network access and a linked liblogosdelivery"]
+fn dropping_a_started_node_returns_promptly() {
+    let service = EmbeddedLogosDelivery::start(P2pConfig::default()).expect("start");
+    let started = std::time::Instant::now();
+    drop(service);
+    // A node that hangs on teardown shows up as the library's 15 s timeout.
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "drop took {:?}",
+        started.elapsed()
+    );
+}

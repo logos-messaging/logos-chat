@@ -23,7 +23,7 @@ use libchat::{AddressedEnvelope, DeliveryService};
 use logos_delivery::DeliveryConfig;
 use logos_delivery::blocking::BlockingDeliveryNode;
 use tokio::runtime::Runtime;
-use tracing::debug;
+use tracing::{debug, warn};
 
 pub use logos_delivery::DeliveryError;
 
@@ -55,15 +55,33 @@ impl Default for P2pConfig {
     }
 }
 
+/// The node and the runtime it runs on, shared by all clones of the service.
+struct Shared {
+    // Declared before `_runtime`: the node is destroyed while the runtime exists.
+    inner: BlockingDeliveryNode,
+    _runtime: Runtime,
+}
+
+impl Drop for Shared {
+    // The old wrapper stopped the node before destroying it; destroying a node
+    // that is still connected makes the library wait out its teardown timeout.
+    fn drop(&mut self) {
+        // Blocking is not allowed on a runtime thread; destroy then does the stopping.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            return;
+        }
+        if let Err(e) = self.inner.shutdown() {
+            warn!("stopping the delivery node failed: {e}");
+        }
+    }
+}
+
 /// logos-delivery backed delivery service. Cheap to clone — all clones share
-/// the same background node.
+/// the same background node, which is stopped once the last clone is dropped.
 #[derive(Clone)]
 pub struct EmbeddedLogosDelivery {
-    // Declared before `_runtime`: the node is torn down while the runtime exists.
-    inner: BlockingDeliveryNode,
+    shared: Arc<Shared>,
     inbound: Receiver<Vec<u8>>,
-    // The node runs on this runtime, which only needs to outlive it.
-    _runtime: Arc<Runtime>,
 }
 
 impl std::fmt::Debug for EmbeddedLogosDelivery {
@@ -77,6 +95,15 @@ impl EmbeddedLogosDelivery {
     /// Start the embedded logos-delivery node. Only chat payloads (on a
     /// `/logos-chat/1/…` content topic) reach the inbound queue.
     pub fn start(cfg: P2pConfig) -> Result<Self, DeliveryError> {
+        // Blocking on our own runtime from a runtime thread panics, and unwinding
+        // then drops that runtime in the async context: a second panic, so abort.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            return Err(DeliveryError::Startup(
+                "start blocks the calling thread: call it outside a tokio runtime, \
+                 e.g. from tokio::task::spawn_blocking"
+                    .into(),
+            ));
+        }
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -97,20 +124,24 @@ impl EmbeddedLogosDelivery {
                 .then_some(m.payload)
         });
         Ok(Self {
-            inner,
+            shared: Arc::new(Shared {
+                inner,
+                _runtime: runtime,
+            }),
             inbound,
-            _runtime: Arc::new(runtime),
         })
     }
 
     /// Stops the node. Clones share it, so this ends delivery for all of them.
     pub fn shutdown(&self) -> Result<(), DeliveryError> {
-        self.inner.shutdown()
+        self.shared.inner.shutdown()
     }
 
     /// Stop delivering messages addressed to `delivery_address`.
     pub fn unsubscribe(&self, delivery_address: &str) -> Result<(), DeliveryError> {
-        self.inner.unsubscribe(&content_topic_for(delivery_address))
+        self.shared
+            .inner
+            .unsubscribe(&content_topic_for(delivery_address))
     }
 }
 
@@ -120,12 +151,14 @@ impl DeliveryService for EmbeddedLogosDelivery {
     fn publish(&mut self, envelope: AddressedEnvelope) -> Result<(), DeliveryError> {
         let topic = content_topic_for(&envelope.delivery_address);
         debug!(topic = &topic, "Publish");
-        self.inner.publish(&topic, &envelope.data)?;
+        self.shared.inner.publish(&topic, &envelope.data)?;
         Ok(())
     }
 
     fn subscribe(&mut self, delivery_address: &str) -> Result<(), DeliveryError> {
-        self.inner.subscribe(&content_topic_for(delivery_address))
+        self.shared
+            .inner
+            .subscribe(&content_topic_for(delivery_address))
     }
 }
 
