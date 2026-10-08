@@ -8,11 +8,12 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
-use components::basic_file_key_vault as keyvault;
+use components::HttpAuthClient;
+use components::basic_file_key_vault::BasicFileKeyVault;
 use crossbeam_channel::Receiver;
 use logos_chat::{
     AuthService, ChatClient, ConversationStore, DbKey, Event, GroupV2Config, Installation,
-    LogosConfig, P2pConfig, RegistrationService, RegistryPublishMode, Transport,
+    LogosConfig, P2pConfig, REGISTRY_ENDPOINT, RegistrationService, RegistryPublishMode, Transport,
 };
 
 use app::ChatApp;
@@ -106,7 +107,8 @@ struct Cli {
     log_file: Option<PathBuf>,
 
     /// Initialize and immediately exit without launching the TUI (for CI).
-    #[arg(long)]
+    /// Requires `--registry-url`, so a smoketest never publishes to devnet.
+    #[arg(long, requires = "registry_url")]
     smoketest: bool,
 
     /// Override the Logos registry endpoint (account + keypackage store). When
@@ -162,10 +164,9 @@ fn main() -> Result<()> {
             );
             println!("This may take a few seconds while connecting to the network.");
 
+            let registry_url = cli.registry_url.as_deref().unwrap_or(REGISTRY_ENDPOINT);
             let mut config = LogosConfig::new(db_str, db_key());
-            if let Some(registry_url) = cli.registry_url.as_deref() {
-                config.set_registry_url(registry_url);
-            }
+            config.set_registry_url(registry_url);
             config.set_registry_publish_mode(cli.registry_publish.into());
             config.set_p2p_config(p2p_config);
             if let Some(group_v2) = group_v2_override(cli.group_commit, cli.transport) {
@@ -175,8 +176,15 @@ fn main() -> Result<()> {
                 config.set_group_v2_config(group_v2);
             }
 
+            // A smoketest's keys are throwaway, so each run starts a fresh identity.
+            let vault_dir = if cli.smoketest {
+                std::env::temp_dir().join(format!("chat-cli-smoketest-{}", std::process::id()))
+            } else {
+                PathBuf::from("tmp")
+            };
             let installation_key =
-                keyvault::BasicFileKeyVault::new("tmp").install(cli.name.as_str())?;
+                BasicFileKeyVault::new(vault_dir, HttpAuthClient::new(registry_url))
+                    .install(cli.name.as_str())?;
             let installation =
                 Installation::make(installation_key.signing_key, installation_key.account);
             let (client, events) = logos_chat::client_with(installation, config)?;

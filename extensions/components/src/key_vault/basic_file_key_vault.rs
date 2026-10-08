@@ -84,8 +84,10 @@ impl InstallationKey {
 pub struct BasicFileKeyVault(FileKeyVault<HttpAuthClient>);
 
 impl BasicFileKeyVault {
-    pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self(FileKeyVault::new(dir, HttpAuthClient::default()))
+    /// Accounts are published through `client`, so endorse on the server the
+    /// chat client validates against.
+    pub fn new(dir: impl Into<PathBuf>, client: HttpAuthClient) -> Self {
+        Self(FileKeyVault::new(dir, client))
     }
 
     /// The installation `alias` names, creating whatever part of it is missing.
