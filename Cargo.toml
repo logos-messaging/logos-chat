@@ -45,7 +45,7 @@ libchat = { path = "core/conversations" }
 logos-chat = { path = "crates/logos-chat" }
 # TODO: pin to the merged logos-delivery-rust-bindings commit (and the flake input to the
 # merged logos-delivery revision) before merging; both now point at open PR commits.
-logos-delivery = { git = "https://github.com/logos-messaging/logos-delivery-rust-bindings", rev = "e6edd051d56d84c95edadde0a3903010bf383bd5" }
+logos-delivery = { git = "https://github.com/logos-messaging/logos-delivery-rust-bindings", rev = "0df9eddc0672a4cdda2fe4647498fa01f49b7e78" }
 logos-generic-chat = { path = "crates/generic-chat" }
 message-types = { path = "extensions/message-types" }
 chat-proto = { git = "https://github.com/logos-messaging/chat_proto", rev = "948f4ad6dedb01b44e279204d8eb30a1eda5a330" }
