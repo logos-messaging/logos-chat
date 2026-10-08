@@ -1,5 +1,4 @@
 mod app;
-mod keystore;
 mod transport;
 mod ui;
 mod utils;
@@ -9,10 +8,11 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
+use components::basic_file_key_vault as keyvault;
 use crossbeam_channel::Receiver;
 use logos_chat::{
-    AuthService, ChatClient, ConversationStore, DbKey, Event, GroupV2Config, LogosConfig,
-    P2pConfig, RegistrationService, RegistryPublishMode, Transport,
+    AuthService, ChatClient, ConversationStore, DbKey, Event, GroupV2Config, Installation,
+    LogosConfig, P2pConfig, RegistrationService, RegistryPublishMode, Transport,
 };
 
 use app::ChatApp;
@@ -175,7 +175,10 @@ fn main() -> Result<()> {
                 config.set_group_v2_config(group_v2);
             }
 
-            let installation = keystore::Keystore::new("tmp").install(cli.name.as_str())?;
+            let installation_key =
+                keyvault::BasicFileKeyVault::new("tmp").install(cli.name.as_str())?;
+            let installation =
+                Installation::make(installation_key.signing_key, installation_key.account);
             let (client, events) = logos_chat::client_with(installation, config)?;
 
             println!("Node connected.");
