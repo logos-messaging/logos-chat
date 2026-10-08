@@ -2192,6 +2192,7 @@ dependencies = [
  "libchat",
  "logos-delivery",
  "logos-generic-chat",
+ "tokio",
  "tracing",
 ]
 
@@ -3733,7 +3734,7 @@ dependencies = [
 [[package]]
 name = "logos-delivery"
 version = "0.1.0"
-source = "git+https://github.com/logos-messaging/logos-delivery-rust-bindings?rev=6fb203b87f3dd343d3acc4cdac9027471140b4cd#6fb203b87f3dd343d3acc4cdac9027471140b4cd"
+source = "git+https://github.com/logos-messaging/logos-delivery-rust-bindings?rev=e6edd051d56d84c95edadde0a3903010bf383bd5#e6edd051d56d84c95edadde0a3903010bf383bd5"
 dependencies = [
  "base64",
  "ciborium",

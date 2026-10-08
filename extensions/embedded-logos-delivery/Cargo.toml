@@ -12,4 +12,5 @@ logos-delivery = { workspace = true }
 logos-generic-chat = { workspace = true }
 
 # External dependencies (sorted)
+tokio = { version = "1", features = ["rt-multi-thread"] }
 tracing = "0.1"

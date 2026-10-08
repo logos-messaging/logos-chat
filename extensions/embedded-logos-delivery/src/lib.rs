@@ -15,12 +15,14 @@
 //!
 //! The synchronous methods must not be called from inside a tokio runtime.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use crossbeam_channel::Receiver;
 use libchat::{AddressedEnvelope, DeliveryService};
 use logos_delivery::DeliveryConfig;
 use logos_delivery::blocking::BlockingDeliveryNode;
+use tokio::runtime::Runtime;
 use tracing::debug;
 
 pub use logos_delivery::DeliveryError;
@@ -57,8 +59,11 @@ impl Default for P2pConfig {
 /// the same background node.
 #[derive(Clone)]
 pub struct EmbeddedLogosDelivery {
+    // Declared before `_runtime`: the node is torn down while the runtime exists.
     inner: BlockingDeliveryNode,
     inbound: Receiver<Vec<u8>>,
+    // The node runs on this runtime, which only needs to outlive it.
+    _runtime: Arc<Runtime>,
 }
 
 impl std::fmt::Debug for EmbeddedLogosDelivery {
@@ -72,6 +77,11 @@ impl EmbeddedLogosDelivery {
     /// Start the embedded logos-delivery node. Only chat payloads (on a
     /// `/logos-chat/1/…` content topic) reach the inbound queue.
     pub fn start(cfg: P2pConfig) -> Result<Self, DeliveryError> {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .map_err(|e| DeliveryError::Startup(e.to_string()))?;
         let inner = BlockingDeliveryNode::start(
             DeliveryConfig::default()
                 .preset(cfg.preset)
@@ -79,13 +89,18 @@ impl EmbeddedLogosDelivery {
                 .discv5_udp_port(0)
                 .log_level(cfg.log_level)
                 .wait_for_connection(CONNECT_WAIT),
+            runtime.handle().clone(),
         )?;
         let inbound = inner.inbound_queue(|m| {
             m.content_topic
                 .starts_with(CHAT_TOPIC_PREFIX)
                 .then_some(m.payload)
         });
-        Ok(Self { inner, inbound })
+        Ok(Self {
+            inner,
+            inbound,
+            _runtime: Arc::new(runtime),
+        })
     }
 
     /// Stops the node. Clones share it, so this ends delivery for all of them.
