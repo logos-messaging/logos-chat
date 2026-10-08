@@ -270,15 +270,15 @@ fn parse_alias(text: &str) -> Result<(String, u32), KeyVaultError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::TestAuthClient;
     use logos_account::AccountProvider;
-    use logos_account::test_support::TestAccountProvider;
 
     use crate::key_vault::test_support::TestFileKeyVault;
 
     /// The key on disk is the account: reading it back must not mint a new one.
     #[test]
     fn an_account_key_is_written_once_and_read_back() {
-        let vault = TestFileKeyVault::new(TestAccountProvider::default());
+        let vault = TestFileKeyVault::new(TestAuthClient::default());
 
         let first = vault.inner().account("saro").expect("create saro").addr();
         let again = vault.inner().account("saro").expect("reuse saro").addr();
@@ -293,7 +293,7 @@ mod tests {
 
     #[test]
     fn a_new_installation_is_endorsed_once_and_then_reused() {
-        let vault = TestFileKeyVault::new(TestAccountProvider::default());
+        let vault = TestFileKeyVault::new(TestAuthClient::default());
 
         let minted = vault.install("saro").expect("mint saro:1");
         // A second call finds the key on disk, so it must not publish again —
@@ -306,15 +306,15 @@ mod tests {
     }
 
     #[test]
-    fn vaults_sharing_a_registry_see_each_others_logs() {
-        let registry = TestAccountProvider::default();
-        let alice = TestFileKeyVault::new(registry.clone());
-        let bob = TestFileKeyVault::new(registry.clone());
+    fn vaults_sharing_a_provider_see_each_others_logs() {
+        let provider = TestAuthClient::default();
+        let alice = TestFileKeyVault::new(provider.clone());
+        let bob = TestFileKeyVault::new(provider.clone());
 
         let alice_addr = alice.install("alice").expect("mint alice").account;
         let bob_addr = bob.install("bob").expect("mint bob").account;
 
-        assert!(registry.fetch(&alice_addr).expect("fetch").is_some());
-        assert!(registry.fetch(&bob_addr).expect("fetch").is_some());
+        assert!(provider.fetch(&alice_addr).expect("fetch").is_some());
+        assert!(provider.fetch(&bob_addr).expect("fetch").is_some());
     }
 }

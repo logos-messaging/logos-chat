@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use logos_account::test_support::TestAccountProvider;
+use crate::TestAuthClient;
 
 use super::basic_file_key_vault::{FileKeyVault, InstallationKey, KeyVaultError};
 
@@ -10,16 +10,16 @@ pub struct EphemeralKeyVault {}
 
 impl EphemeralKeyVault {}
 
-/// A file vault that publishes to an in-memory registry, never the network.
+/// A [`FileKeyVault`] publishing through a [`TestAuthClient`], never the network.
 pub struct TestFileKeyVault {
-    vault: FileKeyVault<TestAccountProvider>,
+    vault: FileKeyVault<TestAuthClient>,
     dir: PathBuf,
 }
 
 impl TestFileKeyVault {
-    /// A vault in a fresh temp directory, removed on drop. Vaults given clones
-    /// of one `registry` see each other's publishes.
-    pub fn new(provider: TestAccountProvider) -> Self {
+    /// A vault in a fresh temp directory, removed on drop. Vaults and clients
+    /// given clones of one `client` see each other's publishes.
+    pub fn new(client: TestAuthClient) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
             "keyvault-{}-{}",
@@ -29,7 +29,7 @@ impl TestFileKeyVault {
         let _ = fs::remove_dir_all(&dir);
 
         Self {
-            vault: FileKeyVault::new(dir.clone(), provider),
+            vault: FileKeyVault::new(dir.clone(), client),
             dir,
         }
     }
@@ -47,7 +47,7 @@ impl TestFileKeyVault {
     }
 
     #[cfg(test)]
-    pub(crate) fn inner(&self) -> &FileKeyVault<TestAccountProvider> {
+    pub(crate) fn inner(&self) -> &FileKeyVault<TestAuthClient> {
         &self.vault
     }
 }
