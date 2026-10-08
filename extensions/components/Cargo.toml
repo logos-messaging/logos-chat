@@ -5,7 +5,7 @@ edition = "2024"
 license.workspace = true
 
 [features]
-test-support = []
+test-support = ["logos-account/test-support"]
 
 [dependencies]
 # Workspace dependencies (sorted)
