@@ -4,9 +4,6 @@ version = "0.1.0"
 edition = "2024"
 license.workspace = true
 
-[features]
-test-support = ["logos-account/test-support"]
-
 [dependencies]
 # Workspace dependencies (sorted)
 account-log = { workspace = true }

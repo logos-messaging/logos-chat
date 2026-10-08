@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 
 use account_log::{AccountAddr, SignedAccountLog};
 
@@ -9,10 +8,10 @@ type ErrorType = String;
 
 /// A AccountProvide + AccountPublisher used for tests
 /// It does not rely on network, and can be used safely within a single test.
-/// Results are ephemeral. Clones share one registry.
-#[derive(Clone, Default)]
+/// Results are ephemeral
+#[derive(Default)]
 pub struct TestAccountProvider {
-    state: Arc<Mutex<HashMap<AccountAddr, SignedAccountLog>>>,
+    state: HashMap<AccountAddr, SignedAccountLog>,
 }
 
 impl TestAccountProvider {
@@ -21,10 +20,7 @@ impl TestAccountProvider {
         addr: &AccountAddr,
         log: &SignedAccountLog,
     ) -> Result<(), ErrorType> {
-        self.state
-            .lock()
-            .unwrap()
-            .insert(addr.to_owned(), log.to_owned());
+        self.state.insert(addr.to_owned(), log.to_owned());
         Ok(())
     }
 }
@@ -33,7 +29,7 @@ impl AccountProvider for TestAccountProvider {
     type Error = String;
 
     fn fetch(&self, addr: &AccountAddr) -> Result<Option<SignedAccountLog>, Self::Error> {
-        Ok(self.state.lock().unwrap().get(addr).cloned())
+        Ok(self.state.get(addr).cloned())
     }
 }
 
