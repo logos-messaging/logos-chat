@@ -15,7 +15,7 @@
 //!
 //! The synchronous methods must not be called from inside a tokio runtime.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crossbeam_channel::Receiver;
@@ -29,8 +29,9 @@ pub use logos_delivery::DeliveryError;
 
 /// The content-topic prefix carrying logos-chat traffic.
 const CHAT_TOPIC_PREFIX: &str = "/logos-chat/1/";
-/// How long startup waits for a first peer before carrying on regardless.
-const CONNECT_WAIT: Duration = Duration::from_secs(10);
+/// How long startup waits for a first peer before carrying on regardless: the
+/// same worst case as the fixed sleep it replaces, and less when peers connect sooner.
+const CONNECT_WAIT: Duration = Duration::from_secs(3);
 
 pub fn content_topic_for(delivery_address: &str) -> String {
     format!("{CHAT_TOPIC_PREFIX}{delivery_address}/proto")
@@ -81,7 +82,8 @@ impl Drop for Shared {
 #[derive(Clone)]
 pub struct EmbeddedLogosDelivery {
     shared: Arc<Shared>,
-    inbound: Receiver<Vec<u8>>,
+    // Taken by the first `Transport::inbound` call, shared by all clones.
+    inbound: Arc<Mutex<Option<Receiver<Vec<u8>>>>>,
 }
 
 impl std::fmt::Debug for EmbeddedLogosDelivery {
@@ -113,6 +115,7 @@ impl EmbeddedLogosDelivery {
             DeliveryConfig::default()
                 .preset(cfg.preset)
                 .tcp_port(cfg.port)
+                // QUIC listens on UDP at the TCP port number, so discv5 cannot share it.
                 .discv5_udp_port(0)
                 .log_level(cfg.log_level)
                 .wait_for_connection(CONNECT_WAIT),
@@ -128,7 +131,7 @@ impl EmbeddedLogosDelivery {
                 inner,
                 _runtime: runtime,
             }),
-            inbound,
+            inbound: Arc::new(Mutex::new(Some(inbound))),
         })
     }
 
@@ -165,7 +168,12 @@ impl DeliveryService for EmbeddedLogosDelivery {
 // The impl lives here (the crate owning the type) because the orphan rule bars
 // it from the `logos-chat` crate, which owns neither the trait nor the type.
 impl logos_generic_chat::Transport for EmbeddedLogosDelivery {
+    /// Callable once: a second receiver would split the messages with the first.
     fn inbound(&mut self) -> Receiver<Vec<u8>> {
-        self.inbound.clone()
+        self.inbound
+            .lock()
+            .expect("inbound lock is never held across a panic")
+            .take()
+            .expect("inbound called more than once")
     }
 }
