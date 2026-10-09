@@ -2,6 +2,8 @@
 // DeMLS and Libchat have different execution models, trait definitions and ownership/lifetimes of objects.
 // The easies path is to do a Spike to see what it would take, gather the friction points and then iterate.
 
+mod trace;
+
 use crate::conversation::mls_extensions::{
     ConvoMetaInfo, GROUP_METADATA_EXTENSION_TYPE, capabilities_with_group_metadata,
 };
@@ -37,6 +39,7 @@ use crate::{
     ConvoOutcome, DeliveryService, RegistrationService,
     conversation::{ChatError, Convo, ConvoBase, GroupConvo, Identified},
 };
+use trace::ConvoTrace;
 
 /// The de-mls time source: every conversation deadline (freeze windows,
 /// consensus timeouts, auto-votes) and consensus wire timestamp is measured
@@ -72,6 +75,14 @@ fn signer_of(member: &de_mls::Member) -> SignerKey {
     SignerKey::from(member.signature_key.as_slice())
 }
 
+/// Each member as the signer its leaf names.
+fn roster(members: &[de_mls::Member]) -> Vec<Signer> {
+    members
+        .iter()
+        .map(|m| Signer::from_leaf(&m.signature_key, m.credential.serialized_content()))
+        .collect()
+}
+
 /// Peer-scoring plug-in: the library default over in-memory storage.
 fn make_scoring() -> DefaultPeerScoring {
     PeerScoringService::new(
@@ -102,6 +113,7 @@ pub struct GroupV2Convo {
     /// Keeps track of current group members: maps de-mls `MemberId` handles to signer ids.
     /// We update this list when members are added or removed.
     member_directory: HashMap<MemberId, SignerKey>,
+    trace: ConvoTrace,
 }
 
 impl std::fmt::Debug for GroupV2Convo {
@@ -225,12 +237,14 @@ impl GroupV2Convo {
             .into_iter()
             .map(|m| (m.signature_key, m.credential))
             .collect();
+        let trace = ConvoTrace::new(service_ctx.mls_identity.signer_key(), &convo_id);
 
         let mut convo = GroupV2Convo {
             convo_id,
             conversation,
             pending_invites,
             member_directory: HashMap::new(),
+            trace,
         };
         // Genesis members are seeded inside `create` and never surface as a
         // `MembersChanged`, so read the initial set straight from the group.
@@ -264,12 +278,14 @@ impl GroupV2Convo {
         else {
             return Err(ChatError::generic("welcome not addressed to this member"));
         };
+        let trace = ConvoTrace::new(service_ctx.mls_identity.signer_key(), conv.id());
 
         let mut convo = GroupV2Convo {
             convo_id: conv.id().to_string(),
             conversation: conv,
             pending_invites: HashMap::new(),
             member_directory: HashMap::new(),
+            trace,
         };
         // The welcome already carries the full member set; the members present
         // before we joined never arrive as a `MembersChanged`, so seed from the
@@ -560,6 +576,9 @@ impl GroupV2Convo {
         let outbound = self.conversation.drain_outbound(); // Vec<de_mls::session::Outbound>
         let wakeup = self.conversation.next_wakeup_in();
 
+        // Ahead of the sends below: one that fails must not cost the record.
+        self.trace.after_op(&self.conversation, &events);
+
         // 1. Route welcomes for joiners WE invited: every member sees the
         //    WelcomeReady, and the welcome travels to the joiner's signer id —
         //    its InboxV2 transport address. In the same pass, keep the member
@@ -700,12 +719,7 @@ pub enum GroupV2Payload {
 
 impl ConvoBase for GroupV2Convo {
     fn signers(&self) -> Result<Vec<Signer>, ChatError> {
-        Ok(self
-            .conversation
-            .members_view()
-            .into_iter()
-            .map(|m| Signer::from_leaf(&m.signature_key, m.credential.serialized_content()))
-            .collect())
+        Ok(roster(&self.conversation.members_view()))
     }
 
     fn pending_signers(&self) -> Result<Vec<Signer>, ChatError> {
