@@ -9,16 +9,17 @@
         "zerokit": "zerokit"
       },
       "locked": {
-        "lastModified": 1791298922,
-        "narHash": "sha256-TWCRgHzbOjSW7d+DUZ8bgi3y+YeUGLnTO6UFaxcO2dk=",
+        "lastModified": 1791545395,
+        "narHash": "sha256-jVeESc6BtmEwdMYLDyClbr0fcKO5XQFFN6gtV0p2un0=",
         "owner": "logos-messaging",
         "repo": "logos-delivery",
-        "rev": "dbeb490c5bd029c02504beab763f9e09f59162ca",
+        "rev": "991d9dff74582b595ae3573aa50774e9db9a4249",
         "type": "github"
       },
       "original": {
         "owner": "logos-messaging",
         "repo": "logos-delivery",
+        "rev": "991d9dff74582b595ae3573aa50774e9db9a4249",
         "type": "github"
       }
     },
