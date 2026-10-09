@@ -2,6 +2,8 @@
 // DeMLS and Libchat have different execution models, trait definitions and ownership/lifetimes of objects.
 // The easies path is to do a Spike to see what it would take, gather the friction points and then iterate.
 
+mod trace;
+
 use crate::conversation::mls_extensions::{
     ConvoMetaInfo, GROUP_METADATA_EXTENSION_TYPE, capabilities_with_group_metadata,
 };
@@ -29,9 +31,11 @@ use prost::Message;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tracing::{info, instrument};
+use tracing::field::{Empty, display};
+use tracing::{Span, info, instrument};
 
 use crate::IdentityProvider;
+use crate::conversation::mls_trace::record::{ConvoId, Short};
 use crate::conversation::{ConversationIdRef, ExternalServices, MessageId, ServiceContext};
 use crate::{
     ConvoOutcome, DeliveryService, Observation, RegistrationService,
@@ -197,6 +201,8 @@ fn fetch_key_packages<S: ExternalServices>(
 }
 
 impl GroupV2Convo {
+    /// `convo` is known once its id is drawn, and recorded on the span then.
+    #[instrument(name = "groupv2.new", skip_all, fields(user_id = %service_ctx.mls_identity.display_name(), signer = %Short(service_ctx.mls_identity.signer_key().as_bytes()), convo = Empty))]
     pub fn new<S: ExternalServices>(
         service_ctx: &mut ServiceContext<S>,
         name: &str,
@@ -204,6 +210,7 @@ impl GroupV2Convo {
         signers: &[SignerKey],
     ) -> Result<Self, ChatError> {
         let convo_id = rand_string(5);
+        Span::current().record("convo", display(ConvoId(&convo_id)));
         let group_config = group_config(name, desc);
         let invites = fetch_key_packages(service_ctx, signers)?;
         let initial_members: Vec<&[u8]> =
@@ -237,15 +244,16 @@ impl GroupV2Convo {
         convo.rebuild_member_directory();
 
         convo.init(service_ctx)?;
-        convo.after_op(service_ctx)?;
+        convo.after_op(service_ctx, None)?;
         Ok(convo)
     }
 
     /// Joiner side: ingest a de-mls welcome handed over the InboxV2 1-1
     /// channel. `from_welcome` attaches MLS and applies the bundled
     /// `ConversationSync` in one call; we then subscribe to the
-    /// conversation address and flush the join broadcast.
-    #[instrument(name = "groupv2.new_from_welcome", skip_all, fields(user_id = %service_ctx.mls_identity.display_name()))]
+    /// conversation address and flush the join broadcast. `convo` is known
+    /// once the welcome is opened, and recorded on the span then.
+    #[instrument(name = "groupv2.new_from_welcome", skip_all, fields(user_id = %service_ctx.mls_identity.display_name(), signer = %Short(service_ctx.mls_identity.signer_key().as_bytes()), convo = Empty))]
     pub fn new_from_welcome<S: ExternalServices>(
         service_ctx: &mut ServiceContext<S>,
         welcome: &MemberWelcome,
@@ -271,13 +279,14 @@ impl GroupV2Convo {
             pending_invites: HashMap::new(),
             member_directory: HashMap::new(),
         };
+        Span::current().record("convo", display(ConvoId(&convo.convo_id)));
         // The welcome already carries the full member set; the members present
         // before we joined never arrive as a `MembersChanged`, so seed from the
         // group we just built.
         convo.rebuild_member_directory();
 
         convo.init(service_ctx)?; // subscribe
-        convo.after_op(service_ctx)?; // flush join broadcast + schedule wakeup
+        convo.after_op(service_ctx, None)?; // flush join broadcast + schedule wakeup
 
         Ok(convo)
     }
@@ -362,7 +371,7 @@ impl<S> Convo<S> for GroupV2Convo
 where
     S: ExternalServices,
 {
-    #[instrument(name = "groupv2.send_content", skip_all, fields(user_id = %service_ctx.mls_identity.display_name(), content))]
+    #[instrument(name = "groupv2.send_content", skip_all, fields(user_id = %service_ctx.mls_identity.display_name(), signer = %Short(service_ctx.mls_identity.signer_key().as_bytes()), convo = %ConvoId(&self.convo_id), epoch = trace::epoch(self), content))]
     fn send_content(
         &mut self,
         service_ctx: &mut super::ServiceContext<S>,
@@ -374,16 +383,17 @@ where
             content,
         );
 
+        let own_epoch = trace::own_epoch(self, service_ctx.mls_identity.signer_key());
         self.conversation.send_message(
             &service_ctx.mls_provider,
             &service_ctx.mls_identity,
             reliable.encode_to_vec(),
         )?;
-        self.after_op(service_ctx)?;
+        self.after_op(service_ctx, own_epoch)?;
         Ok(reliable.message_id)
     }
 
-    #[instrument(name = "groupv2.handle_frame", skip_all, fields(user_id = %service_ctx.mls_identity.display_name()))]
+    #[instrument(name = "groupv2.handle_frame", skip_all, fields(user_id = %service_ctx.mls_identity.display_name(), signer = %Short(service_ctx.mls_identity.signer_key().as_bytes()), convo = %ConvoId(&self.convo_id), epoch = trace::epoch(self)))]
     fn handle_payload(
         &mut self,
         service_ctx: &mut super::ServiceContext<S>,
@@ -408,6 +418,7 @@ where
             _ => return Ok(ConvoOutcome::empty(self.convo_id.clone())),
         };
 
+        let own_epoch = trace::own_epoch(self, service_ctx.mls_identity.signer_key());
         self.conversation.process_inbound(
             &service_ctx.mls_provider,
             &service_ctx.mls_identity,
@@ -416,21 +427,22 @@ where
         )?;
         self.conversation
             .poll(&service_ctx.mls_provider, &service_ctx.mls_identity);
-        let events = self.after_op(service_ctx)?; // route + publish + re-arm, returns events
+        let events = self.after_op(service_ctx, own_epoch)?; // route + publish + re-arm, returns events
         self.outcome_from_events(service_ctx, &events)
     }
 
-    #[instrument(name = "groupv2.wakeup", skip_all, fields(user_id = %ctx.mls_identity.display_name()))]
+    #[instrument(name = "groupv2.wakeup", skip_all, fields(user_id = %ctx.mls_identity.display_name(), signer = %Short(ctx.mls_identity.signer_key().as_bytes()), convo = %ConvoId(&self.convo_id), epoch = trace::epoch(self)))]
     fn wakeup(&mut self, ctx: &mut ServiceContext<S>) -> Result<ConvoOutcome, ChatError> {
         info!(convo = %self.convo_id, "Wakeup");
 
+        let own_epoch = trace::own_epoch(self, ctx.mls_identity.signer_key());
         let poll_outcome = self.conversation.poll(&ctx.mls_provider, &ctx.mls_identity);
         if poll_outcome.leave_requested {
             // Commit ejected us (or join expired). Real handling - drops
             // this convo from its map;
             tracing::warn!(convo = %self.convo_id, "conversation requested teardown");
         }
-        let events = self.after_op(ctx)?; // publish what poll produced + re-arm alarm
+        let events = self.after_op(ctx, own_epoch)?; // publish what poll produced + re-arm alarm
         self.outcome_from_events(ctx, &events)
     }
 }
@@ -439,7 +451,7 @@ impl<S> GroupConvo<S> for GroupV2Convo
 where
     S: ExternalServices,
 {
-    #[instrument(name = "groupv2.add_member", skip_all, fields(user_id = %service_ctx.mls_identity.display_name()))]
+    #[instrument(name = "groupv2.add_member", skip_all, fields(user_id = %service_ctx.mls_identity.display_name(), signer = %Short(service_ctx.mls_identity.signer_key().as_bytes()), convo = %ConvoId(&self.convo_id), epoch = trace::epoch(self)))]
     fn add_signer(
         &mut self,
         service_ctx: &mut ServiceContext<S>,
@@ -456,6 +468,7 @@ where
             .map(|m| m.signature_key.clone())
             .collect();
 
+        let own_epoch = trace::own_epoch(self, service_ctx.mls_identity.signer_key());
         let mut result = Ok(());
         let mut added = false;
         for FetchedMember {
@@ -498,14 +511,14 @@ where
         // Flush even on a mid-loop failure: proposals already opened must be
         // published and the wakeup re-armed, or they sit dormant until an
         // unrelated frame drives the conversation.
-        let flushed = self.after_op(service_ctx).map(drop);
+        let flushed = self.after_op(service_ctx, own_epoch).map(drop);
         result.and(flushed)
     }
 
     /// Opens one de-mls removal round per named member: the group votes, so a
     /// member is still seated when this returns and the commit ejecting them
     /// surfaces later as a `MembersChanged`.
-    #[instrument(name = "groupv2.remove_member", skip_all, fields(user_id = %service_ctx.mls_identity.display_name()))]
+    #[instrument(name = "groupv2.remove_member", skip_all, fields(user_id = %service_ctx.mls_identity.display_name(), signer = %Short(service_ctx.mls_identity.signer_key().as_bytes()), convo = %ConvoId(&self.convo_id), epoch = trace::epoch(self)))]
     fn remove_signer(
         &mut self,
         service_ctx: &mut ServiceContext<S>,
@@ -523,6 +536,7 @@ where
             return Err(ChatError::NotAGroupMember);
         }
 
+        let own_epoch = trace::own_epoch(self, service_ctx.mls_identity.signer_key());
         let mut result = Ok(());
         for target in &targets {
             match self.conversation.remove_member(
@@ -539,7 +553,7 @@ where
                 }
             }
         }
-        let flushed = self.after_op(service_ctx).map(drop);
+        let flushed = self.after_op(service_ctx, own_epoch).map(drop);
         result.and(flushed)
     }
 
@@ -553,14 +567,20 @@ where
 }
 
 impl GroupV2Convo {
+    /// `before` is the epoch [`trace::own_epoch`] read ahead of the op, `None`
+    /// for a conversation just created or joined.
     fn after_op<S: ExternalServices>(
         &mut self,
         service_ctx: &mut ServiceContext<S>,
+        before: Option<u64>,
     ) -> Result<Vec<ConversationEvent>, ChatError> {
         // Pull everything first (these are &self, take-all):
         let events = self.conversation.drain_events();
         let outbound = self.conversation.drain_outbound(); // Vec<de_mls::session::Outbound>
         let wakeup = self.conversation.next_wakeup_in();
+
+        // Ahead of the sends below: one that fails must not cost the record.
+        trace::after_op(self, service_ctx.mls_identity.signer_key(), before, &events);
 
         // 1. Route welcomes for joiners WE invited: every member sees the
         //    WelcomeReady, and the welcome travels to the joiner's signer id —
