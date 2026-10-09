@@ -12,7 +12,7 @@ use crate::{
     WakeupService,
 };
 use crate::{
-    conversation::{Convo, ConvoBase, GroupConvo},
+    conversation::{Convo, ConvoBase, GroupConvo, mls_trace::record},
     errors::ChatError,
     inbox_v2::{InboxV2, MlsEphemeralPqProvider, MlsIdentityProvider},
     outcomes::{ConversationClass, ConvoOutcome, InboxOutcome, PayloadOutcome},
@@ -103,6 +103,7 @@ where
         let mls_identity = MlsIdentityProvider::new(ident);
         let mls_provider = MlsEphemeralPqProvider::new().map_err(ChatError::generic)?;
         let causal = CausalHistoryStore::new();
+        record::run(mls_identity.signer_key(), &mls_identity.participant_id());
 
         Ok(Self {
             services: ServiceContext {

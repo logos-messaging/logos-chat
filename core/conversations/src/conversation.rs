@@ -2,6 +2,7 @@ mod direct_v1;
 pub mod group_v1;
 mod group_v2;
 pub mod mls_extensions;
+pub(crate) mod mls_trace;
 
 pub use crate::errors::ChatError;
 use crate::identity::{Signer, SignerKey, SignerRef};
