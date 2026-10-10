@@ -96,9 +96,11 @@ pub fn invite_user_v2<DS: DeliveryService>(
         salt: 0,
         payload: frame.encode_to_vec().into(),
     };
+    let data = envelope.encode_to_vec();
+    info!(bytes = data.len(), "Publish WelcomeMessage");
     ds.publish(AddressedEnvelope {
         delivery_address: delivery_address_for(signer),
-        data: envelope.encode_to_vec(),
+        data,
     })
     .map_err(ChatError::generic)
 }
