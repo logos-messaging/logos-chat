@@ -389,7 +389,8 @@ where
             &service_ctx.mls_identity,
             reliable.encode_to_vec(),
         )?;
-        self.after_op(service_ctx, own_epoch)?;
+        let (_, post) = self.after_op(service_ctx, own_epoch)?;
+        trace::sent(own_epoch, post.as_deref());
         Ok(reliable.message_id)
     }
 
@@ -419,16 +420,20 @@ where
         };
 
         let own_epoch = trace::own_epoch(self, service_ctx.mls_identity.signer_key());
-        self.conversation.process_inbound(
+        let processed = self.conversation.process_inbound(
             &service_ctx.mls_provider,
             &service_ctx.mls_identity,
             &frame.sender_app_id,
             &inner,
-        )?;
+        );
+        let heard = trace::inbound(self, own_epoch, &bytes, &inner, &processed);
+        processed?;
         self.conversation
             .poll(&service_ctx.mls_provider, &service_ctx.mls_identity);
-        let events = self.after_op(service_ctx, own_epoch)?; // route + publish + re-arm, returns events
-        self.outcome_from_events(service_ctx, &events)
+        let (events, _) = self.after_op(service_ctx, own_epoch)?; // route + publish + re-arm, returns events
+        let outcome = self.outcome_from_events(service_ctx, &events)?;
+        trace::read(heard, &events, &outcome.observations);
+        Ok(outcome)
     }
 
     #[instrument(name = "groupv2.wakeup", skip_all, fields(user_id = %ctx.mls_identity.display_name(), signer = %Short(ctx.mls_identity.signer_key().as_bytes()), convo = %ConvoId(&self.convo_id), epoch = trace::epoch(self)))]
@@ -442,7 +447,7 @@ where
             // this convo from its map;
             tracing::warn!(convo = %self.convo_id, "conversation requested teardown");
         }
-        let events = self.after_op(ctx, own_epoch)?; // publish what poll produced + re-arm alarm
+        let (events, _) = self.after_op(ctx, own_epoch)?; // publish what poll produced + re-arm alarm
         self.outcome_from_events(ctx, &events)
     }
 }
@@ -567,13 +572,14 @@ where
 }
 
 impl GroupV2Convo {
-    /// `before` is the epoch [`trace::own_epoch`] read ahead of the op, `None`
-    /// for a conversation just created or joined.
+    /// Returns the op's events and `post`, the last frame it published: the
+    /// post, when the op sent one. `before` is the epoch [`trace::own_epoch`]
+    /// read ahead of the op, `None` for a conversation just created or joined.
     fn after_op<S: ExternalServices>(
         &mut self,
         service_ctx: &mut ServiceContext<S>,
         before: Option<u64>,
-    ) -> Result<Vec<ConversationEvent>, ChatError> {
+    ) -> Result<(Vec<ConversationEvent>, Option<Bytes>), ChatError> {
         // Pull everything first (these are &self, take-all):
         let events = self.conversation.drain_events();
         let outbound = self.conversation.drain_outbound(); // Vec<de_mls::session::Outbound>
@@ -611,17 +617,22 @@ impl GroupV2Convo {
             }
         }
 
-        // 2. Publish
+        // 2. Publish, keeping the last frame as `post`: de-mls queues a post
+        //    last and `send_message` hands back nothing. Hacky, but updating
+        //    de-mls for it does not make sense, as new group versions will
+        //    not use de-mls.
+        let mut post = None;
         for out in outbound {
             let frame = GroupV2Frame {
                 payload: Some(GroupV2Payload::DeMlsWrapper(out.payload.into())),
                 sender_app_id: out.sender, // was pkt.app_id
             };
+            let encoded = Bytes::from(frame.encode_to_vec());
             let payload = AddressedEncryptedPayload {
                 delivery_address: Self::delivery_address_from_id(&out.conversation_id),
                 data: EncryptedPayload {
                     encryption: Some(encrypted_payload::Encryption::Plaintext(Plaintext {
-                        payload: frame.encode_to_vec().into(),
+                        payload: encoded.clone(),
                     })),
                 },
             };
@@ -629,6 +640,7 @@ impl GroupV2Convo {
                 .ds
                 .publish(payload.into_envelope(out.conversation_id))
                 .map_err(ChatError::generic)?;
+            post = Some(encoded);
         }
 
         // 3. Re-arm the alarm with the conversation's earliest deadline.
@@ -637,7 +649,7 @@ impl GroupV2Convo {
                 .wakeup_service
                 .wakeup_in(d, self.convo_id.clone());
         }
-        Ok(events)
+        Ok((events, post))
     }
 
     /// Turn drained de-mls events into a [`ConvoOutcome`], unwrapping the

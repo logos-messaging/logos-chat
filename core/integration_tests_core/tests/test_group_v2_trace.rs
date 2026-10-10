@@ -138,6 +138,34 @@ fn members_record_each_epoch_they_enter_and_their_own_removal() {
         }
     }
     assert_eq!(states.len(), 4, "each epoch has a state of its own");
+    // Frames go on reaching the two that were removed, Pax in a seat Mira
+    // then held, and neither records anything of the conversation it left.
+    for gone in [&pax, &mira] {
+        let last = records
+            .iter()
+            .rfind(|r| r.fields["signer"] == gone.signer)
+            .expect("a record");
+        assert_eq!(last.name, "left");
+    }
+
+    let sent: Vec<&Record> = records.iter().filter(|r| r.name == "sent").collect();
+    let reads: Vec<&Record> = records.iter().filter(|r| r.name == "received").collect();
+    let ([post], [read]) = (&sent[..], &reads[..]) else {
+        panic!("one post sent and read: {sent:?} {reads:?}");
+    };
+    assert_eq!(post.fields["signer"], saro.signer);
+    assert_eq!(
+        post.epoch(),
+        removed,
+        "the post is sent at saro's own epoch"
+    );
+    assert_eq!(read.fields["signer"], raya.signer);
+    assert_eq!(read.fields["from"], saro.signer);
+    assert_eq!(
+        read.fields["frame"], post.fields["frame"],
+        "one frame at both ends"
+    );
+    assert_eq!(read.epoch(), post.epoch());
 
     assert!(
         records

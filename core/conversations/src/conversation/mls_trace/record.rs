@@ -1,4 +1,5 @@
-//! Trace records: each epoch this signer enters, one log event per fact.
+//! Trace records: each epoch this signer enters and what became of the
+//! frames it sent and was handed, one log event per fact.
 //!
 //! Each is one `TRACE` event on [`TARGET`]: the record's name as the message,
 //! what it says as fields. Names, fields and how a value is written are a
@@ -13,6 +14,7 @@ use std::fmt::{self, Write as _};
 
 use tracing::{Level, trace};
 
+use crate::conversation::frame_id;
 use crate::identity::{ParticipantId, Signer, SignerKey};
 use crate::utils::{blake2b_hex, hash_size};
 
@@ -52,6 +54,60 @@ pub(crate) fn epoch(epoch: u64, authenticator: &[u8], signers: &[Signer]) {
 /// conversation.
 pub(crate) fn left(epoch: u64) {
     trace!(target: TARGET, epoch, "left");
+}
+
+/// The signer published a post of its own as `frame`, sent at `epoch`.
+pub(crate) fn sent(frame: &[u8], epoch: u64) {
+    trace!(
+        target: TARGET,
+        frame = %frame_id(frame),
+        epoch,
+        "sent"
+    );
+}
+
+/// The signer read the post `frame` carries, which `from` sent at
+/// `epoch`.
+pub(crate) fn received(frame: &[u8], from: &SignerKey, epoch: u64) {
+    trace!(
+        target: TARGET,
+        frame = %frame_id(frame),
+        from = %Short(from.as_bytes()),
+        epoch,
+        "received"
+    );
+}
+
+/// `frame`, sent at `epoch`, reached the signer and could not be read.
+pub(crate) fn unreadable(frame: &[u8], epoch: u64, why: Why) {
+    trace!(
+        target: TARGET,
+        frame = %frame_id(frame),
+        epoch,
+        why = %why,
+        "unreadable"
+    );
+}
+
+/// Why a frame could not be read.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Why {
+    /// It is of another epoch than the signer's own.
+    Epoch,
+    /// It is of the signer's own epoch number and did not decrypt.
+    Decrypt,
+    /// Its post decrypted and its sender failed auth.
+    Sender,
+}
+
+impl fmt::Display for Why {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Why::Epoch => "epoch",
+            Why::Decrypt => "decrypt",
+            Why::Sender => "sender",
+        })
+    }
 }
 
 /// The epoch authenticator is a secret the members hold, so a record carries
@@ -167,5 +223,22 @@ mod tests {
             line,
             "TRACE op{signer=e09a3f52 convo=a%20b%3dc%0ad%25}: libchat::mls_trace: left epoch=8"
         );
+    }
+
+    #[test]
+    fn unreadable_line() {
+        let unreadable_for = |why| rendered(|| unreadable(b"an encoded frame", 7, why));
+        for (why, written) in [
+            (Why::Epoch, "epoch"),
+            (Why::Decrypt, "decrypt"),
+            (Why::Sender, "sender"),
+        ] {
+            assert_eq!(
+                unreadable_for(why),
+                format!(
+                    "TRACE libchat::mls_trace: unreadable frame=72135a47802cb5c9f9b4146d7a932b8e054b9b0624e9774a09652c637f68b62d epoch=7 why={written}"
+                )
+            );
+        }
     }
 }
