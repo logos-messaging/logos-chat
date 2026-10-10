@@ -5,7 +5,10 @@ pub use logos::{
 };
 // Facade re-exports so callers need no direct dependency on the transport
 // crate.
-pub use embedded_logos_delivery::{EmbeddedLogosDelivery, P2pConfig};
+pub use embedded_logos_delivery::{
+    ClusterId, EmbeddedLogosDelivery, LocalNetwork, Network, NodeAddress, NodeState,
+    NotANodeAddress, P2pConfig, PresetClusterId,
+};
 
 // Re-export the transport-generic client surface so callers depend on this
 // crate alone.

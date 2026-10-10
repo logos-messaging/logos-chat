@@ -13,7 +13,7 @@ use components::basic_file_key_vault::BasicFileKeyVault;
 use crossbeam_channel::Receiver;
 use logos_chat::{
     AuthService, ChatClient, ConversationStore, DbKey, EmbeddedLogosDelivery, Event, GroupV2Config,
-    Installation, LogosConfig, P2pConfig, REGISTRY_ENDPOINT, RegistrationService,
+    Installation, LogosConfig, Network, P2pConfig, REGISTRY_ENDPOINT, RegistrationService,
     RegistryPublishMode, Transport,
 };
 
@@ -161,13 +161,10 @@ fn main() -> Result<()> {
                 p2p_config.port = port;
             }
             if let Some(preset) = cli.preset.as_deref() {
-                p2p_config.preset = preset.to_string();
+                p2p_config.network = Network::Preset(preset.to_string());
             }
 
-            println!(
-                "Starting logos-delivery node (preset={})...",
-                p2p_config.preset
-            );
+            println!("Starting logos-delivery node ({})...", p2p_config.network);
             println!("This may take a few seconds while connecting to the network.");
 
             let registry_url = cli.registry_url.as_deref().unwrap_or(REGISTRY_ENDPOINT);

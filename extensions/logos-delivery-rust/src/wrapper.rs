@@ -193,6 +193,37 @@ impl LogosNodeCtx {
         result
     }
 
+    /// Returns what the node says of itself under `node_info_id`, one of the
+    /// ids the library lists: `MyPeerId`, `MyBoundPorts`, `Metrics` and others.
+    pub fn node_info(&self, node_info_id: &str) -> Result<String, String> {
+        let id_cstr = CString::new(node_info_id).map_err(|e| e.to_string())?;
+
+        let (tx, rx) = mpsc::sync_channel::<Result<String, String>>(1);
+        let closure = move |ret: i32, data: &str| {
+            let _ = tx.send(if ret == RET_OK {
+                Ok(data.to_string())
+            } else {
+                Err(data.to_string())
+            });
+        };
+        let raw = Box::into_raw(Box::new(closure));
+        let cb = get_trampoline(unsafe { &*raw });
+
+        let ret = unsafe {
+            ffi::logosdelivery_get_node_info(self.ctx, cb, raw as *const c_void, id_cstr.as_ptr())
+        };
+
+        if ret != RET_OK {
+            drop(unsafe { Box::from_raw(raw) });
+            return Err(format!("logosdelivery_get_node_info returned {ret}"));
+        }
+        let result = rx
+            .recv()
+            .unwrap_or(Err("callback channel disconnected".into()));
+        drop(unsafe { Box::from_raw(raw) });
+        result
+    }
+
     /// Stores the event callback inside the node so it is dropped *after*
     /// stop+destroy in Drop, keeping the pointer valid for the node's lifetime.
     pub fn set_event_callback<C>(&mut self, closure: C)

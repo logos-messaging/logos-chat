@@ -20,7 +20,10 @@ use libchat::{AddressedEnvelope, DeliveryService};
 
 use logos_delivery::{ThreadedDeliveryWrapper, WakuEvent};
 
-pub use logos_delivery::{DeliveryError, P2pConfig};
+pub use logos_delivery::{
+    ClusterId, DeliveryError, LocalNetwork, Network, NodeAddress, NodeState, NotANodeAddress,
+    P2pConfig, PresetClusterId,
+};
 use tracing::debug;
 
 /// The content-topic prefix carrying logos-chat traffic.
@@ -53,6 +56,11 @@ impl EmbeddedLogosDelivery {
         })?;
 
         Ok(Self { inner })
+    }
+
+    /// The node's address, its peers and what it lost.
+    pub fn node_state(&self) -> Result<NodeState, DeliveryError> {
+        self.inner.node_state()
     }
 
     /// Stop delivering messages addressed to `delivery_address`.

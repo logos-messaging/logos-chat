@@ -1,11 +1,16 @@
-use std::sync::{Arc, Mutex, mpsc};
+use std::collections::HashMap;
+use std::fmt;
+use std::num::NonZeroU32;
+use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::thread;
 use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use crossbeam_channel::{Receiver, Sender};
-use tracing::{debug, error, info};
+use crossbeam_channel::{Receiver, Sender, TrySendError};
+use tracing::{debug, error, info, warn};
 
 use crate::wrapper::LogosNodeCtx;
 
@@ -21,6 +26,8 @@ pub enum DeliveryError {
     SubscribeFailed(String),
     #[error("unsubscribe failed: {0}")]
     UnsubscribeFailed(String),
+    #[error("node info failed: {0}")]
+    NodeInfoFailed(String),
     #[error("send channel closed")]
     ChannelClosed,
 }
@@ -30,9 +37,11 @@ pub enum DeliveryError {
 /// A node operation to run on the serialized node thread.
 #[derive(Debug)]
 enum NodeOp {
-    Publish(String),     // message_json
-    Subscribe(String),   // content_topic
-    Unsubscribe(String), // content_topic
+    Publish(String, usize), // message_json, payload bytes
+    Subscribe(String),      // content_topic
+    Unsubscribe(String),    // content_topic
+    /// Answered on a channel of its own: the others answer with nothing.
+    State(mpsc::SyncSender<Result<NodeState, DeliveryError>>),
 }
 
 #[derive(Debug)]
@@ -47,9 +56,95 @@ type SubscriberList<T> = Arc<Mutex<Vec<Sender<T>>>>;
 
 #[derive(Debug, Clone)]
 pub struct P2pConfig {
-    pub preset: String,
+    pub network: Network,
     pub port: u16,
     pub log_level: String,
+}
+
+/// The network an embedded node joins.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Network {
+    /// One the library knows by name, with the nodes and limits it holds for it.
+    Preset(String),
+    /// One made of nodes on this machine alone.
+    Local(LocalNetwork),
+}
+
+impl fmt::Display for Network {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Network::Preset(preset) => write!(f, "preset={preset}"),
+            Network::Local(local) => write!(f, "cluster={}", local.cluster_id.0),
+        }
+    }
+}
+
+/// What differs between one local network and the next.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalNetwork {
+    pub cluster_id: ClusterId,
+    /// The nodes this one dials at its start.
+    pub static_nodes: Vec<NodeAddress>,
+    /// The largest message the node takes, in KiB.
+    pub max_message_kib: NonZeroU32,
+}
+
+/// The cluster id of a local network.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClusterId(u16);
+
+/// The cluster ids the library reads as a preset: a node handed one joins
+/// that preset's network.
+const PRESET_CLUSTER_IDS: [u16; 2] = [1, 2];
+
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error("cluster id {0} names a preset network")]
+pub struct PresetClusterId(u16);
+
+impl TryFrom<u16> for ClusterId {
+    type Error = PresetClusterId;
+
+    fn try_from(id: u16) -> Result<Self, Self::Error> {
+        if PRESET_CLUSTER_IDS.contains(&id) {
+            Err(PresetClusterId(id))
+        } else {
+            Ok(Self(id))
+        }
+    }
+}
+
+/// The multiaddress a node of a local network is dialed at:
+/// `/ip4/127.0.0.1/tcp/<port>/p2p/<peer id>`. The library leaves out a static
+/// node it cannot read and starts all the same, so one is read here.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct NodeAddress(String);
+
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{0:?} is not /ip4/127.0.0.1/tcp/<port>/p2p/<peer id>")]
+pub struct NotANodeAddress(String);
+
+/// The characters a peer id is written in.
+const BASE58: &str = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+impl FromStr for NodeAddress {
+    type Err = NotANodeAddress;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let parts: Vec<&str> = text.split('/').collect();
+        let dialed = match parts.as_slice() {
+            ["", "ip4", "127.0.0.1", "tcp", port, "p2p", peer_id] => {
+                port.parse().is_ok_and(|port: u16| port != 0)
+                    && !peer_id.is_empty()
+                    && peer_id.chars().all(|c| BASE58.contains(c))
+            }
+            _ => false,
+        };
+        if dialed {
+            Ok(Self(text.to_string()))
+        } else {
+            Err(NotANodeAddress(text.to_string()))
+        }
+    }
 }
 
 impl Default for P2pConfig {
@@ -62,11 +157,295 @@ impl Default for P2pConfig {
         /// Default to an OS assigned port, that is available
         const DEFAULT_PORT: u16 = 0;
         Self {
-            preset: DEFAULT_NETWORK_PRESET.into(),
+            network: Network::Preset(DEFAULT_NETWORK_PRESET.into()),
             port: DEFAULT_PORT,
             log_level: "ERROR".into(),
         }
     }
+}
+
+/// The configuration the library is handed for `cfg`, as JSON.
+fn node_config(cfg: &P2pConfig) -> String {
+    // discv5UdpPort defaults to 9000 in libwaku, so a second instance with
+    // a distinct --port still collides on UDP. Bind it to tcp_port so a
+    // single --port knob keeps both ports distinct across instances.
+    match &cfg.network {
+        Network::Preset(preset) => serde_json::json!({
+            "logLevel": cfg.log_level,
+            "mode": "Core",
+            "preset": preset,
+            "tcpPort": cfg.port,
+            "discv5UdpPort": cfg.port,
+        }),
+        Network::Local(local) => serde_json::json!({
+            "logLevel": cfg.log_level,
+            "mode": "Core",
+            "tcpPort": cfg.port,
+            "discv5UdpPort": cfg.port,
+            "clusterId": local.cluster_id.0,
+            "staticnodes": local.static_nodes,
+            // The library reads a size in B, KB or KiB and no larger unit.
+            "maxMessageSize": format!("{}KiB", local.max_message_kib),
+            // A content topic needs shards the library assigns, and with one
+            // shard every node of the network is in the one mesh.
+            "numShardsInNetwork": 1,
+            // Every node of the network shares this machine's address, and the
+            // library keeps five peers to an address unless told otherwise.
+            "colocationLimit": 0,
+            // On loopback alone nothing outside the machine can dial the node.
+            "listenAddress": "127.0.0.1",
+            // Naming the address keeps the library from asking the router for
+            // one, and `none` it refuses. The node announces another address
+            // all the same, so `NodeState::address` is built from its port.
+            "nat": "extip:127.0.0.1",
+            // The network has no store node, and a node waiting for one to
+            // confirm keeps every message it published.
+            "reliabilityEnabled": false,
+            // A node without a peer asks a name server whether the machine
+            // is online: Cloudflare's, also when it is handed an empty list.
+            // Asked on loopback, the question does not leave this machine.
+            "dnsAddrsNameServers": ["127.0.0.1"],
+        }),
+    }
+    .to_string()
+}
+
+// ── Node state ──────────────────────────────────────────────────────────────
+
+/// What an embedded node says of itself when asked.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct NodeState {
+    /// The multiaddress another node dials this one at. On a preset it is
+    /// the first the node announces, which on a machine without a network
+    /// is no address to dial.
+    pub address: String,
+    /// Peers the node holds a connection to. `None` when the library's
+    /// metrics do not hold the count.
+    pub peers: Option<u64>,
+    /// Peers in the node's gossip mesh at its last heartbeat, over every
+    /// shard it is on. `None` when the library's metrics do not hold the
+    /// count.
+    pub mesh_peers: Option<u64>,
+    /// Publishes the node refused, since it started.
+    pub publish_refused: u64,
+    /// Received frames the full inbound queue dropped, since the node started.
+    pub inbound_dropped: u64,
+}
+
+const PEERS_GAUGE: &str = "libp2p_peers";
+const MESH_PEERS_GAUGE: &str = "libp2p_gossipsub_peers_per_topic_mesh";
+
+impl NodeState {
+    fn new(address: String, metrics: &str, losses: &Losses) -> Self {
+        Self {
+            address,
+            peers: gauge(metrics, PEERS_GAUGE),
+            mesh_peers: gauge(metrics, MESH_PEERS_GAUGE),
+            publish_refused: losses.publish_refused.load(Ordering::Relaxed),
+            inbound_dropped: losses.inbound_dropped.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Ask a node for its state. `info` answers one of the library's node
+    /// info ids. A node that does not give its metrics still has an address.
+    fn ask(
+        info: impl Fn(&str) -> Result<String, String>,
+        network: &Network,
+        losses: &Losses,
+    ) -> Result<Self, DeliveryError> {
+        let needed = |id: &str| info(id).map_err(DeliveryError::NodeInfoFailed);
+        let address = match network {
+            Network::Preset(_) => announced_address(&needed("MyMultiaddresses")?),
+            Network::Local(_) => loopback_address(&needed("MyBoundPorts")?, &needed("MyPeerId")?),
+        }
+        .map_err(DeliveryError::NodeInfoFailed)?;
+        let metrics = info("Metrics").unwrap_or_else(|error| {
+            warn!(error, "the node did not give its metrics");
+            String::new()
+        });
+        Ok(Self::new(address, &metrics, losses))
+    }
+}
+
+/// The first address in a node's answer for `MyMultiaddresses`.
+fn announced_address(multiaddresses: &str) -> Result<String, String> {
+    multiaddresses
+        .split(',')
+        .map(str::trim)
+        .find(|address| !address.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| "the node announces no address".to_string())
+}
+
+/// The loopback multiaddress of a node, from its answers for `MyBoundPorts`
+/// and `MyPeerId`.
+fn loopback_address(bound_ports: &str, peer_id: &str) -> Result<String, String> {
+    #[derive(serde::Deserialize)]
+    struct BoundPorts {
+        tcp: u16,
+    }
+
+    let ports: BoundPorts = serde_json::from_str(bound_ports)
+        .map_err(|e| format!("unreadable bound ports ({e}): {bound_ports}"))?;
+    Ok(format!("/ip4/127.0.0.1/tcp/{}/p2p/{peer_id}", ports.tcp))
+}
+
+/// Gauge `name` in the library's metrics text, summed over its label sets.
+fn gauge(metrics: &str, name: &str) -> Option<u64> {
+    let mut values = metrics
+        .lines()
+        .filter_map(|line| line.strip_prefix(name))
+        .filter(|rest| rest.starts_with([' ', '{']))
+        .filter_map(|rest| rest.rsplit(' ').next()?.parse::<f64>().ok())
+        .peekable();
+    values.peek()?;
+    Some(values.sum::<f64>() as u64)
+}
+
+// ── Losses ──────────────────────────────────────────────────────────────────
+
+/// Frames lost without anyone choosing to lose them, counted from the node's
+/// start. The node thread and the event callback share one.
+#[derive(Debug, Default)]
+struct Losses {
+    publish_refused: AtomicU64,
+    inbound_dropped: AtomicU64,
+    publishes: Mutex<Publishes>,
+}
+
+/// Publishes the node has not reported the outcome of.
+#[derive(Debug, Default)]
+struct Publishes {
+    /// Payload bytes of each, by the request id the node gave it.
+    open: HashMap<String, usize>,
+    /// Outcomes reported while a publish waits for its request id: the node
+    /// reports a refusal it can tell at once before it answers the call.
+    /// `None` while no publish waits.
+    early: Option<Vec<(String, PublishOutcome)>>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum PublishOutcome {
+    Propagated,
+    Refused(String),
+}
+
+impl Losses {
+    fn publishes(&self) -> std::sync::MutexGuard<'_, Publishes> {
+        self.publishes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// A publish is on its way to the node.
+    fn publish_begins(&self) {
+        self.publishes().early = Some(Vec::new());
+    }
+
+    /// The node answered the call that handed it a publish of `bytes`: with
+    /// a request id, or with why it did not take the publish. One it took is
+    /// `Ok` whatever an event says of it.
+    fn publish_answered(
+        &self,
+        answer: Result<String, String>,
+        bytes: usize,
+    ) -> Result<(), DeliveryError> {
+        let refused = {
+            let mut publishes = self.publishes();
+            let early = publishes.early.take().unwrap_or_default();
+            match &answer {
+                Ok(request_id) => match early.into_iter().find(|(id, _)| id == request_id) {
+                    Some((_, PublishOutcome::Refused(reason))) => Some(reason),
+                    Some((_, PublishOutcome::Propagated)) => None,
+                    None => {
+                        publishes.open.insert(request_id.clone(), bytes);
+                        None
+                    }
+                },
+                Err(reason) => Some(reason.clone()),
+            }
+        };
+        if let Some(reason) = refused {
+            self.publish_refused(bytes, &reason);
+        }
+        answer.map(drop).map_err(DeliveryError::PublishFailed)
+    }
+
+    /// The node reported `outcome` for a request. A request it reported
+    /// propagated is closed, so an error that follows is no refusal.
+    fn publish_settled(&self, request_id: &str, outcome: PublishOutcome) {
+        let bytes = {
+            let mut publishes = self.publishes();
+            let bytes = publishes.open.remove(request_id);
+            if bytes.is_none()
+                && let Some(early) = publishes.early.as_mut()
+            {
+                early.push((request_id.to_string(), outcome));
+                return;
+            }
+            bytes
+        };
+        if let (Some(bytes), PublishOutcome::Refused(reason)) = (bytes, outcome) {
+            self.publish_refused(bytes, &reason);
+        }
+    }
+
+    /// The node refused a publish of `bytes`, at the call or in an event.
+    fn publish_refused(&self, bytes: usize, reason: &str) {
+        self.publish_refused.fetch_add(1, Ordering::Relaxed);
+        warn!(bytes, reason, "the node refused a publish");
+    }
+
+    /// A received frame of `bytes` found the inbound queue full.
+    fn inbound_dropped(&self, bytes: usize) {
+        self.inbound_dropped.fetch_add(1, Ordering::Relaxed);
+        warn!(
+            bytes,
+            reason = "the inbound queue is full",
+            "dropped a received frame"
+        );
+    }
+}
+
+/// Hand `item`, a frame of `bytes`, to every subscriber still listening. One
+/// whose queue is full loses it.
+fn deliver<T: Clone>(subscribers: &mut Vec<Sender<T>>, item: &T, bytes: usize, losses: &Losses) {
+    subscribers.retain(|tx| match tx.try_send(item.clone()) {
+        Ok(()) => true,
+        Err(TrySendError::Full(_)) => {
+            losses.inbound_dropped(bytes);
+            true
+        }
+        Err(TrySendError::Disconnected(_)) => false,
+    });
+}
+
+/// One event the node wrote: the outcome of a publish is settled, and what
+/// `map` keeps of the event goes to the subscribers.
+fn on_event<T: Clone>(
+    data: &str,
+    map: &mut impl FnMut(WakuEvent) -> Option<T>,
+    subscribers: &SubscriberList<T>,
+    losses: &Losses,
+) {
+    let Ok(event) = serde_json::from_str::<WakuEvent>(data) else {
+        return;
+    };
+    if let Some((request_id, outcome)) = event.publish_outcome() {
+        losses.publish_settled(request_id, outcome);
+    }
+    let bytes = event.payload_len();
+    let Some(item) = map(event) else {
+        return;
+    };
+    let mut guard = match subscribers.lock() {
+        Ok(g) => g,
+        Err(e) => {
+            error!("subscriber mutex poisoned: {e}");
+            return;
+        }
+    };
+    deliver(&mut guard, &item, bytes, losses);
 }
 
 // ── Wire types ──────────────────────────────────────────────────────────────
@@ -87,9 +466,31 @@ pub struct WakuEvent {
     #[serde(rename = "eventType")]
     event_type: String,
     message: Option<ReceivedMessage>,
+    /// The publish an event reports on, as the node answered its call.
+    #[serde(rename = "requestId")]
+    request_id: Option<String>,
+    error: Option<String>,
 }
 
 impl WakuEvent {
+    /// The request an event closes and what became of it, iff it closes one.
+    fn publish_outcome(&self) -> Option<(&str, PublishOutcome)> {
+        let request_id = self.request_id.as_deref()?;
+        match self.event_type.as_str() {
+            "message_propagated" => Some((request_id, PublishOutcome::Propagated)),
+            "message_error" => {
+                let reason = self.error.clone().unwrap_or_default();
+                Some((request_id, PublishOutcome::Refused(reason)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Bytes of the payload of the message this event carries, if any.
+    fn payload_len(&self) -> usize {
+        self.message.as_ref().map_or(0, |msg| msg.payload.len())
+    }
+
     /// The received message iff this is a `message_received` event.
     pub fn into_received(self) -> Option<ReceivedMessage> {
         (self.event_type == "message_received")
@@ -128,6 +529,16 @@ enum WakuPayload {
 }
 
 impl WakuPayload {
+    fn len(&self) -> usize {
+        match self {
+            WakuPayload::Base64(s) => {
+                let padding = s.bytes().rev().take_while(|b| *b == b'=').count();
+                (s.len() / 4 * 3).saturating_sub(padding)
+            }
+            WakuPayload::Bytes(b) => b.len(),
+        }
+    }
+
     fn decode(self) -> Option<Vec<u8>> {
         match self {
             WakuPayload::Base64(s) => BASE64.decode(s).ok(),
@@ -248,6 +659,8 @@ impl<T> ThreadedDeliveryWrapper<T> {
     }
 
     /// Publish `payload` on `content_topic`. Blocks until the node acknowledges.
+    /// `Ok` says the node took the publish: one it refuses in an event is
+    /// counted in [`NodeState`] and logged, and is no error here.
     pub fn publish(&self, content_topic: &str, payload: &[u8]) -> Result<(), DeliveryError> {
         let msg = WakuMessage {
             content_topic: content_topic.to_string(),
@@ -259,7 +672,15 @@ impl<T> ThreadedDeliveryWrapper<T> {
 
         let message_json =
             serde_json::to_string(&msg).map_err(|e| DeliveryError::PublishFailed(e.to_string()))?;
-        self.send_cmd(NodeOp::Publish(message_json))
+        self.send_cmd(NodeOp::Publish(message_json, payload.len()))
+    }
+
+    /// Ask the node its address, its peers and what it lost. Blocks until it
+    /// answers.
+    pub fn node_state(&self) -> Result<NodeState, DeliveryError> {
+        let (state_tx, state_rx) = mpsc::sync_channel(1);
+        self.send_cmd(NodeOp::State(state_tx))?;
+        state_rx.recv().map_err(|_| DeliveryError::ChannelClosed)?
     }
 
     /// Take the inbound queue of mapped items. Callable once.
@@ -280,19 +701,7 @@ impl<T> ThreadedDeliveryWrapper<T> {
         T: Clone + Send + 'static,
         F: FnMut(WakuEvent) -> Option<T> + Send + 'static,
     {
-        // discv5UdpPort defaults to 9000 in libwaku, so a second instance with
-        // a distinct --port still collides on UDP. Bind it to tcp_port so a
-        // single --port knob keeps both ports distinct across instances.
-        let config_json = serde_json::json!({
-            "logLevel": cfg.log_level,
-            "mode": "Core",
-            "preset": cfg.preset,
-            "tcpPort": cfg.port,
-            "discv5UdpPort": cfg.port,
-        })
-        .to_string();
-
-        let mut node = match LogosNodeCtx::new(&config_json) {
+        let mut node = match LogosNodeCtx::new(&node_config(&cfg)) {
             Ok(n) => n,
             Err(e) => {
                 let _ = ready_tx.send(Err(DeliveryError::StartupFailed(e)));
@@ -305,26 +714,12 @@ impl<T> ThreadedDeliveryWrapper<T> {
         // yet in the subscriber list.
         subscribers.lock().unwrap().push(inbound_tx);
 
+        let losses = Arc::new(Losses::default());
+
         let subs_for_cb = subscribers.clone();
+        let losses_for_cb = losses.clone();
         let event_closure = move |_ret: i32, data: &str| {
-            let Ok(event) = serde_json::from_str::<WakuEvent>(data) else {
-                return;
-            };
-            let Some(item) = map(event) else {
-                return;
-            };
-            let mut guard = match subs_for_cb.lock() {
-                Ok(g) => g,
-                Err(e) => {
-                    error!("subscriber mutex poisoned: {e}");
-                    return;
-                }
-            };
-            guard.retain(|tx| match tx.try_send(item.clone()) {
-                Ok(()) => true,
-                Err(crossbeam_channel::TrySendError::Full(_)) => true,
-                Err(crossbeam_channel::TrySendError::Disconnected(_)) => false,
-            });
+            on_event(data, &mut map, &subs_for_cb, &losses_for_cb);
         };
         node.set_event_callback(event_closure);
 
@@ -332,7 +727,7 @@ impl<T> ThreadedDeliveryWrapper<T> {
             let _ = ready_tx.send(Err(DeliveryError::StartupFailed(e)));
             return;
         }
-        info!("logos-delivery node started (preset={})", cfg.preset);
+        info!("logos-delivery node started ({})", cfg.network);
 
         // FIXME: This unconditional sleep is a stand-in for proper
         // peer-connectivity detection. The right approach is to listen for a
@@ -346,20 +741,545 @@ impl<T> ThreadedDeliveryWrapper<T> {
 
         while let Ok(cmd) = out_rx.recv() {
             let result = match cmd.op {
-                NodeOp::Publish(msg) => node
-                    .send(&msg)
-                    .map(|_| ())
-                    .map_err(DeliveryError::PublishFailed),
+                NodeOp::Publish(msg, bytes) => {
+                    losses.publish_begins();
+                    losses.publish_answered(node.send(&msg), bytes)
+                }
                 NodeOp::Subscribe(topic) => node
                     .subscribe(&topic)
                     .map_err(DeliveryError::SubscribeFailed),
                 NodeOp::Unsubscribe(topic) => node
                     .unsubscribe(&topic)
                     .map_err(DeliveryError::UnsubscribeFailed),
+                NodeOp::State(reply) => {
+                    let state = NodeState::ask(|id| node.node_info(id), &cfg.network, &losses);
+                    let _ = reply.try_send(state);
+                    Ok(())
+                }
             };
             let _ = cmd.reply.try_send(result);
         }
 
         info!("logos-node command loop finished");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What liblogosdelivery v0.38.1 answered for each node info id: a node
+    /// of a ten-node local network where every node dials each one before it.
+    const BOUND_PORTS: &str = include_str!("../tests/fixtures/node_info/MyBoundPorts");
+    const PEER_ID: &str = include_str!("../tests/fixtures/node_info/MyPeerId");
+    const MULTIADDRESSES: &str = include_str!("../tests/fixtures/node_info/MyMultiaddresses");
+    const METRICS: &str = include_str!("../tests/fixtures/node_info/Metrics");
+
+    /// Events as liblogosdelivery v0.38.1 wrote them.
+    const MESSAGE_ERROR: &str = r#"{"eventType":"message_error","requestId":"d1a02e86c98a1b9fed64","messageHash":"0xdac61e419007efe2a3031c7690f8881ab42f27693259c42e70987bfbc4ca65cf","error":"Message size exceeded maximum of 1024 bytes"}"#;
+    const MESSAGE_PROPAGATED: &str = r#"{"eventType":"message_propagated","requestId":"2a7e6e651fb015c24722","messageHash":"0x31850dd9041edd6bd05ed33120d121bfd4529b4a437fe301b9a30bd6ef4c60c0"}"#;
+    const MESSAGE_RECEIVED: &str = r#"{"eventType":"message_received","messageHash":"0x9d54f09f4041095a7a88fa44189052744e852846a190bdd1825bb4e9a5725fa0","message":{"payload":[120,120,120,120,120,120,120,120,120,120],"contentTopic":"/logos-chat/1/x/proto","meta":[],"version":0,"timestamp":1791610056187380992,"ephemeral":false,"proof":[]}}"#;
+
+    const RAYA: &str =
+        "/ip4/127.0.0.1/tcp/4001/p2p/16Uiu2HAm65ah8ABpi9PiX79T6PthDwhmknXi3161ZKT1ZbeeX1Rd";
+    const PAX: &str =
+        "/ip4/127.0.0.1/tcp/4002/p2p/16Uiu2HAkwVXqMJzJLxhpLL2QtZrdU9theKgbjMcyBKCzxV1dyjUM";
+
+    #[derive(Clone, Default)]
+    struct Buffer(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Buffer {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// What `write` logs, as the default formatter renders it.
+    fn rendered(write: impl FnOnce()) -> String {
+        let buffer = Buffer::default();
+        let writer = buffer.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .without_time()
+            .finish();
+        tracing::subscriber::with_default(subscriber, write);
+        let bytes = buffer.0.lock().unwrap().clone();
+        String::from_utf8(bytes).unwrap().trim().to_string()
+    }
+
+    fn event(json: &str) -> WakuEvent {
+        serde_json::from_str(json).expect("an event the library wrote")
+    }
+
+    /// A node that answers each node info id as the recorded one did, but for
+    /// the ids in `failing`.
+    fn recorded(failing: &'static [&'static str]) -> impl Fn(&str) -> Result<String, String> {
+        move |id| {
+            if failing.contains(&id) {
+                return Err(format!("no {id}"));
+            }
+            Ok(match id {
+                "MyBoundPorts" => BOUND_PORTS,
+                "MyPeerId" => PEER_ID,
+                "MyMultiaddresses" => MULTIADDRESSES,
+                "Metrics" => METRICS,
+                _ => return Err(format!("Invalid node info id: {id}")),
+            }
+            .to_string())
+        }
+    }
+
+    fn local_network() -> Network {
+        Network::Local(LocalNetwork {
+            cluster_id: ClusterId::try_from(77).unwrap(),
+            static_nodes: Vec::new(),
+            max_message_kib: NonZeroU32::new(512).unwrap(),
+        })
+    }
+
+    fn refused(losses: &Losses) -> u64 {
+        losses.publish_refused.load(Ordering::Relaxed)
+    }
+
+    #[test]
+    fn a_preset_hands_the_node_its_name_and_its_ports() {
+        assert_eq!(
+            node_config(&P2pConfig::default()),
+            r#"{"discv5UdpPort":0,"logLevel":"ERROR","mode":"Core","preset":"logos.test","tcpPort":0}"#
+        );
+
+        let cfg = P2pConfig {
+            network: Network::Preset("logos.dev".into()),
+            port: 4001,
+            log_level: "DEBUG".into(),
+        };
+        assert_eq!(
+            node_config(&cfg),
+            r#"{"discv5UdpPort":4001,"logLevel":"DEBUG","mode":"Core","preset":"logos.dev","tcpPort":4001}"#
+        );
+    }
+
+    #[test]
+    fn a_local_network_hands_the_node_each_of_its_keys() {
+        let cfg = P2pConfig {
+            network: Network::Local(LocalNetwork {
+                cluster_id: ClusterId::try_from(77).unwrap(),
+                static_nodes: vec![RAYA.parse().unwrap(), PAX.parse().unwrap()],
+                max_message_kib: NonZeroU32::new(512).unwrap(),
+            }),
+            port: 4003,
+            log_level: "ERROR".into(),
+        };
+        let config: serde_json::Value = serde_json::from_str(&node_config(&cfg)).unwrap();
+        let config = config.as_object().expect("an object");
+
+        let expected = serde_json::json!({
+            "logLevel": "ERROR",
+            "mode": "Core",
+            "tcpPort": 4003,
+            "discv5UdpPort": 4003,
+            "clusterId": 77,
+            "staticnodes": [RAYA, PAX],
+            "maxMessageSize": "512KiB",
+            "numShardsInNetwork": 1,
+            "colocationLimit": 0,
+            "listenAddress": "127.0.0.1",
+            "nat": "extip:127.0.0.1",
+            "reliabilityEnabled": false,
+            "dnsAddrsNameServers": ["127.0.0.1"],
+        });
+        let expected = expected.as_object().expect("an object");
+
+        for (key, value) in expected {
+            assert_eq!(config.get(key), Some(value), "{key}");
+        }
+        let unexpected: Vec<_> = config
+            .keys()
+            .filter(|key| !expected.contains_key(*key))
+            .collect();
+        assert!(unexpected.is_empty(), "{unexpected:?}");
+    }
+
+    #[test]
+    fn a_cluster_id_the_library_reads_as_a_preset_is_refused() {
+        assert_eq!(ClusterId::try_from(1), Err(PresetClusterId(1)));
+        assert_eq!(ClusterId::try_from(2), Err(PresetClusterId(2)));
+        for id in [0, 3, 77, u16::MAX] {
+            assert_eq!(ClusterId::try_from(id), Ok(ClusterId(id)));
+        }
+    }
+
+    #[test]
+    fn a_node_address_is_the_loopback_address_a_port_and_a_peer_id() {
+        for address in [RAYA, PAX, "/ip4/127.0.0.1/tcp/65535/p2p/Qm"] {
+            assert_eq!(address.parse(), Ok(NodeAddress(address.to_string())));
+        }
+        let peer_id = RAYA.rsplit('/').next().unwrap();
+        for text in [
+            String::new(),
+            "notanaddress".to_string(),
+            "/ip4/127.0.0.1/tcp/4001".to_string(),
+            "/ip4/127.0.0.1/tcp/4001/p2p/".to_string(),
+            format!("/ip4/127.0.0.1/tcp/4001/p2p/{peer_id}/"),
+            format!("/ip4/127.0.0.1/tcp/4001/p2p/{peer_id}0"),
+            format!("/ip4/127.0.0.1/tcp/0/p2p/{peer_id}"),
+            format!("/ip4/127.0.0.1/tcp/65536/p2p/{peer_id}"),
+            format!("/ip4/127.0.0.1/udp/4001/p2p/{peer_id}"),
+            format!("/ip4/localhost/tcp/4001/p2p/{peer_id}"),
+            format!("/ip4/127.0.0.2/tcp/4001/p2p/{peer_id}"),
+            format!("/ip4/192.168.1.7/tcp/4001/p2p/{peer_id}"),
+            format!("/ip4/0.0.0.0/tcp/4001/p2p/{peer_id}"),
+            format!("/ip6/::1/tcp/4001/p2p/{peer_id}"),
+            format!("ip4/127.0.0.1/tcp/4001/p2p/{peer_id}"),
+            format!(" {RAYA}"),
+            "a\"b".to_string(),
+            "]".to_string(),
+        ] {
+            assert_eq!(
+                text.parse::<NodeAddress>(),
+                Err(NotANodeAddress(text.clone())),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_node_of_a_local_network_is_asked_its_port_and_its_peer_id() {
+        let state = NodeState::ask(recorded(&[]), &local_network(), &Losses::default()).unwrap();
+        assert_eq!(
+            state.address,
+            "/ip4/127.0.0.1/tcp/34739/p2p/16Uiu2HAkwVXqMJzJLxhpLL2QtZrdU9theKgbjMcyBKCzxV1dyjUM"
+        );
+        assert_eq!((state.peers, state.mesh_peers), (Some(9), Some(8)));
+
+        // What the node announces is not asked for.
+        let unasked = recorded(&["MyMultiaddresses"]);
+        assert!(NodeState::ask(unasked, &local_network(), &Losses::default()).is_ok());
+        for needed in [&["MyBoundPorts"], &["MyPeerId"]] {
+            let asked = NodeState::ask(recorded(needed), &local_network(), &Losses::default());
+            assert!(
+                matches!(asked, Err(DeliveryError::NodeInfoFailed(_))),
+                "{needed:?}: {asked:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_node_of_a_preset_is_asked_the_address_it_announces() {
+        let preset = Network::Preset("logos.test".into());
+        let state = NodeState::ask(recorded(&[]), &preset, &Losses::default()).unwrap();
+        assert_eq!(
+            state.address,
+            "/ip4/0.0.0.0/tcp/34739/p2p/16Uiu2HAkwVXqMJzJLxhpLL2QtZrdU9theKgbjMcyBKCzxV1dyjUM"
+        );
+
+        let unasked = recorded(&["MyBoundPorts", "MyPeerId"]);
+        assert!(NodeState::ask(unasked, &preset, &Losses::default()).is_ok());
+        let asked = NodeState::ask(recorded(&["MyMultiaddresses"]), &preset, &Losses::default());
+        assert!(
+            matches!(asked, Err(DeliveryError::NodeInfoFailed(_))),
+            "{asked:?}"
+        );
+    }
+
+    #[test]
+    fn a_node_that_does_not_give_its_metrics_has_an_address_and_unknown_peers() {
+        let mut state = None;
+        let warning = rendered(|| {
+            state = Some(NodeState::ask(
+                recorded(&["Metrics"]),
+                &local_network(),
+                &Losses::default(),
+            ));
+        });
+        assert_eq!(
+            state.unwrap().unwrap(),
+            NodeState {
+                address:
+                    "/ip4/127.0.0.1/tcp/34739/p2p/16Uiu2HAkwVXqMJzJLxhpLL2QtZrdU9theKgbjMcyBKCzxV1dyjUM"
+                        .into(),
+                peers: None,
+                mesh_peers: None,
+                publish_refused: 0,
+                inbound_dropped: 0,
+            }
+        );
+        assert_eq!(
+            warning,
+            "WARN logos_delivery::threaded: the node did not give its metrics error=\"no Metrics\""
+        );
+    }
+
+    #[test]
+    fn a_recorded_node_info_answer_reads_as_the_nodes_state() {
+        let address = loopback_address(BOUND_PORTS, PEER_ID).unwrap();
+        assert_eq!(
+            NodeState::new(address, METRICS, &Losses::default()),
+            NodeState {
+                address:
+                    "/ip4/127.0.0.1/tcp/34739/p2p/16Uiu2HAkwVXqMJzJLxhpLL2QtZrdU9theKgbjMcyBKCzxV1dyjUM"
+                        .into(),
+                peers: Some(9),
+                mesh_peers: Some(8),
+                publish_refused: 0,
+                inbound_dropped: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn the_announced_address_is_the_first_the_node_lists() {
+        assert_eq!(
+            announced_address(MULTIADDRESSES).unwrap(),
+            "/ip4/0.0.0.0/tcp/34739/p2p/16Uiu2HAkwVXqMJzJLxhpLL2QtZrdU9theKgbjMcyBKCzxV1dyjUM"
+        );
+        assert_eq!(announced_address(&format!("{RAYA},{PAX}")).unwrap(), RAYA);
+        assert!(announced_address("").is_err());
+    }
+
+    #[test]
+    fn bound_ports_that_are_not_the_librarys_json_are_an_error() {
+        assert!(loopback_address("tcp=4001", PEER_ID).is_err());
+    }
+
+    #[test]
+    fn a_gauge_the_metrics_do_not_hold_is_unknown() {
+        assert_eq!(gauge("", PEERS_GAUGE), None);
+        assert_eq!(gauge("libp2p_peers_seen 4.0\n", PEERS_GAUGE), None);
+        assert_eq!(gauge("# TYPE libp2p_peers gauge\n", PEERS_GAUGE), None);
+    }
+
+    #[test]
+    fn a_gauge_is_summed_over_its_label_sets() {
+        let metrics = "libp2p_gossipsub_peers_per_topic_mesh{topic=\"a\"} 6.0\n\
+                       libp2p_gossipsub_peers_per_topic_mesh{topic=\"b\"} 4.0\n";
+        assert_eq!(gauge(metrics, MESH_PEERS_GAUGE), Some(10));
+    }
+
+    #[test]
+    fn the_librarys_events_say_what_became_of_a_publish() {
+        assert_eq!(
+            event(MESSAGE_ERROR).publish_outcome(),
+            Some((
+                "d1a02e86c98a1b9fed64",
+                PublishOutcome::Refused("Message size exceeded maximum of 1024 bytes".into())
+            ))
+        );
+        assert_eq!(
+            event(MESSAGE_PROPAGATED).publish_outcome(),
+            Some(("2a7e6e651fb015c24722", PublishOutcome::Propagated))
+        );
+        assert_eq!(event(MESSAGE_RECEIVED).publish_outcome(), None);
+    }
+
+    #[test]
+    fn a_received_message_knows_the_bytes_of_its_payload() {
+        assert_eq!(event(MESSAGE_RECEIVED).payload_len(), 10);
+        assert_eq!(event(MESSAGE_ERROR).payload_len(), 0);
+        for bytes in 0..7 {
+            let payload = WakuPayload::Base64(BASE64.encode(vec![0u8; bytes]));
+            assert_eq!(payload.len(), bytes);
+        }
+    }
+
+    #[test]
+    fn a_refusal_reported_after_the_request_id_is_counted() {
+        let losses = Losses::default();
+        losses.publish_begins();
+        assert!(losses.publish_answered(Ok("a".into()), 5000).is_ok());
+        assert_eq!(refused(&losses), 0);
+
+        let warning = rendered(|| {
+            losses.publish_settled("a", PublishOutcome::Refused("too large".into()));
+        });
+        assert_eq!(refused(&losses), 1);
+        assert!(losses.publishes().open.is_empty());
+        assert_eq!(
+            warning,
+            "WARN logos_delivery::threaded: the node refused a publish bytes=5000 reason=\"too large\""
+        );
+    }
+
+    /// The order the library keeps for a publish over its size limit. The
+    /// call that handed it over is answered as taken all the same.
+    #[test]
+    fn a_refusal_reported_before_the_request_id_is_counted() {
+        let losses = Losses::default();
+        losses.publish_begins();
+        losses.publish_settled("a", PublishOutcome::Refused("too large".into()));
+        assert_eq!(refused(&losses), 0);
+
+        let mut answered = None;
+        let warning = rendered(|| answered = Some(losses.publish_answered(Ok("a".into()), 5000)));
+        assert!(answered.unwrap().is_ok());
+        assert_eq!(refused(&losses), 1);
+        assert!(losses.publishes().open.is_empty());
+        assert_eq!(
+            warning,
+            "WARN logos_delivery::threaded: the node refused a publish bytes=5000 reason=\"too large\""
+        );
+    }
+
+    #[test]
+    fn a_publish_the_node_does_not_take_is_an_error_and_counted() {
+        let losses = Losses::default();
+        losses.publish_begins();
+
+        let mut answered = None;
+        let warning = rendered(|| {
+            answered = Some(losses.publish_answered(Err("Send failed: no node".into()), 5000));
+        });
+        assert!(
+            matches!(answered, Some(Err(DeliveryError::PublishFailed(ref why))) if why == "Send failed: no node"),
+            "{answered:?}"
+        );
+        assert_eq!(refused(&losses), 1);
+        assert_eq!(losses.publishes().early, None);
+        assert!(losses.publishes().open.is_empty());
+        assert_eq!(
+            warning,
+            "WARN logos_delivery::threaded: the node refused a publish bytes=5000 reason=\"Send failed: no node\""
+        );
+    }
+
+    #[test]
+    fn a_propagated_publish_is_not_a_refusal_and_stays_none() {
+        let losses = Losses::default();
+        losses.publish_begins();
+        assert!(losses.publish_answered(Ok("a".into()), 5000).is_ok());
+        losses.publish_settled("a", PublishOutcome::Propagated);
+        losses.publish_settled("a", PublishOutcome::Refused("not stored".into()));
+
+        losses.publish_begins();
+        losses.publish_settled("b", PublishOutcome::Propagated);
+        assert!(losses.publish_answered(Ok("b".into()), 5000).is_ok());
+
+        assert_eq!(refused(&losses), 0);
+        assert!(losses.publishes().open.is_empty());
+    }
+
+    #[test]
+    fn an_outcome_for_no_open_publish_is_not_kept() {
+        let losses = Losses::default();
+        losses.publish_settled("a", PublishOutcome::Refused("too large".into()));
+        assert_eq!(losses.publishes().early, None);
+
+        losses.publish_begins();
+        losses.publish_settled("a", PublishOutcome::Refused("too large".into()));
+        assert!(losses.publish_answered(Ok("b".into()), 5000).is_ok());
+        assert_eq!(refused(&losses), 0);
+        assert_eq!(losses.publishes().early, None);
+        assert_eq!(losses.publishes().open.len(), 1);
+    }
+
+    #[test]
+    fn a_publish_is_handed_to_the_node_with_the_bytes_of_its_payload() {
+        let (outbound, node) = mpsc::sync_channel(1);
+        let wrapper = ThreadedDeliveryWrapper::<Vec<u8>> {
+            outbound,
+            subscribers: Arc::new(Mutex::new(Vec::new())),
+            inbound_rx: None,
+        };
+        let node = thread::spawn(move || {
+            let command: NodeCmd = node.recv().unwrap();
+            command.reply.send(Ok(())).unwrap();
+            command.op
+        });
+
+        wrapper
+            .publish("/logos-chat/1/x/proto", &[7u8; 1000])
+            .unwrap();
+        let NodeOp::Publish(message, bytes) = node.join().unwrap() else {
+            panic!("not a publish");
+        };
+        assert_eq!(bytes, 1000);
+        let message: WakuMessage = serde_json::from_str(&message).unwrap();
+        assert_eq!(message.content_topic, "/logos-chat/1/x/proto");
+        assert_eq!(BASE64.decode(message.payload).unwrap(), [7u8; 1000]);
+    }
+
+    #[test]
+    fn an_event_that_settles_a_publish_reaches_the_count() {
+        let losses = Losses::default();
+        let subscribers: SubscriberList<Vec<u8>> = Arc::default();
+        let mut map = |event: WakuEvent| event.into_received()?.into_payload();
+        losses.publish_begins();
+        assert!(
+            losses
+                .publish_answered(Ok("d1a02e86c98a1b9fed64".into()), 2000)
+                .is_ok()
+        );
+
+        on_event(MESSAGE_ERROR, &mut map, &subscribers, &losses);
+        assert_eq!(refused(&losses), 1);
+
+        on_event("not the library's JSON", &mut map, &subscribers, &losses);
+        assert_eq!(refused(&losses), 1);
+    }
+
+    #[test]
+    fn a_received_message_goes_to_the_queue_with_what_the_map_keeps_of_it() {
+        let losses = Losses::default();
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let subscribers: SubscriberList<Vec<u8>> = Arc::new(Mutex::new(vec![tx]));
+        let mut map = |event: WakuEvent| event.into_received()?.into_payload();
+
+        on_event(MESSAGE_PROPAGATED, &mut map, &subscribers, &losses);
+        assert!(rx.try_recv().is_err());
+
+        on_event(MESSAGE_RECEIVED, &mut map, &subscribers, &losses);
+        assert_eq!(rx.try_recv(), Ok(vec![b'x'; 10]));
+        assert_eq!(losses.inbound_dropped.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn a_frame_the_full_inbound_queue_drops_is_counted() {
+        let losses = Losses::default();
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let mut subscribers = vec![tx];
+
+        deliver(&mut subscribers, &vec![1u8], 1, &losses);
+        assert_eq!(losses.inbound_dropped.load(Ordering::Relaxed), 0);
+
+        deliver(&mut subscribers, &vec![2u8, 2], 2, &losses);
+        assert_eq!(losses.inbound_dropped.load(Ordering::Relaxed), 1);
+        assert_eq!(subscribers.len(), 1);
+        assert_eq!(rx.try_recv(), Ok(vec![1u8]));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_received_message_the_full_queue_drops_is_logged_with_the_bytes_of_its_payload() {
+        let losses = Losses::default();
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        tx.send(vec![1u8]).unwrap();
+        let subscribers: SubscriberList<Vec<u8>> = Arc::new(Mutex::new(vec![tx]));
+        let mut map = |event: WakuEvent| event.into_received()?.into_payload();
+
+        let warning = rendered(|| on_event(MESSAGE_RECEIVED, &mut map, &subscribers, &losses));
+        assert_eq!(losses.inbound_dropped.load(Ordering::Relaxed), 1);
+        assert_eq!(rx.try_recv(), Ok(vec![1u8]));
+        assert_eq!(
+            warning,
+            "WARN logos_delivery::threaded: dropped a received frame bytes=10 reason=\"the inbound queue is full\""
+        );
+    }
+
+    #[test]
+    fn a_subscriber_that_went_away_is_dropped_without_a_count() {
+        let losses = Losses::default();
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        drop(rx);
+        let mut subscribers = vec![tx];
+
+        deliver(&mut subscribers, &vec![1u8], 1, &losses);
+        assert!(subscribers.is_empty());
+        assert_eq!(losses.inbound_dropped.load(Ordering::Relaxed), 0);
     }
 }
