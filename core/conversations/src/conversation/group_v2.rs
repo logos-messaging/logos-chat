@@ -34,6 +34,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::{info, instrument};
 
 use crate::IdentityProvider;
+use crate::conversation::mls_trace::Heard;
 use crate::conversation::{ConversationIdRef, ExternalServices, MessageId, ServiceContext};
 use crate::{
     ConvoOutcome, DeliveryService, RegistrationService,
@@ -396,6 +397,7 @@ where
             reliable.encode_to_vec(),
         )?;
         self.after_op(service_ctx)?;
+        self.trace.sent();
         Ok(reliable.message_id)
     }
 
@@ -422,16 +424,18 @@ where
             _ => return Ok(ConvoOutcome::empty(self.convo_id.clone())),
         };
 
-        self.conversation.process_inbound(
+        let processed = self.conversation.process_inbound(
             &service_ctx.mls_provider,
             &service_ctx.mls_identity,
             &frame.sender_app_id,
             &inner,
-        )?;
+        );
+        let heard = self.trace.inbound(&bytes, &inner, &processed);
+        processed?;
         self.conversation
             .poll(&service_ctx.mls_provider, &service_ctx.mls_identity);
         let events = self.after_op(service_ctx)?; // route + publish + re-arm, returns events
-        self.outcome_from_events(service_ctx, &events)
+        self.outcome_from_events(service_ctx, &events, heard)
     }
 
     #[instrument(name = "groupv2.wakeup", skip_all, fields(user_id = %ctx.mls_identity.display_name()))]
@@ -445,7 +449,7 @@ where
             tracing::warn!(convo = %self.convo_id, "conversation requested teardown");
         }
         let events = self.after_op(ctx)?; // publish what poll produced + re-arm alarm
-        self.outcome_from_events(ctx, &events)
+        self.outcome_from_events(ctx, &events, None)
     }
 }
 
@@ -614,11 +618,12 @@ impl GroupV2Convo {
                 payload: Some(GroupV2Payload::DeMlsWrapper(out.payload.into())),
                 sender_app_id: out.sender, // was pkt.app_id
             };
+            let encoded = Bytes::from(frame.encode_to_vec());
             let payload = AddressedEncryptedPayload {
                 delivery_address: Self::delivery_address_from_id(&out.conversation_id),
                 data: EncryptedPayload {
                     encryption: Some(encrypted_payload::Encryption::Plaintext(Plaintext {
-                        payload: frame.encode_to_vec().into(),
+                        payload: encoded.clone(),
                     })),
                 },
             };
@@ -626,6 +631,7 @@ impl GroupV2Convo {
                 .ds
                 .publish(payload.into_envelope(out.conversation_id))
                 .map_err(ChatError::generic)?;
+            self.trace.published(encoded);
         }
 
         // 3. Re-arm the alarm with the conversation's earliest deadline.
@@ -643,10 +649,13 @@ impl GroupV2Convo {
     /// An outcome holds one message and de-mls emits at most one per frame, so
     /// the first wins. A second would be dropped without being recorded as
     /// seen, leaving a later reference to report it missing.
+    ///
+    /// The post is recorded against `heard`, the frame the events came of.
     fn outcome_from_events<S: ExternalServices>(
         &self,
         service_ctx: &ServiceContext<S>,
         events: &[ConversationEvent],
+        heard: Option<Heard<'_>>,
     ) -> Result<ConvoOutcome, ChatError> {
         let content = events
             .iter()
@@ -669,13 +678,15 @@ impl GroupV2Convo {
                     &sender.signature_key,
                     sender.credential.serialized_content(),
                 );
-                Ok(member
+                let content = member
                     .require_valid(&service_ctx.auth)
                     .map(|sender| Content {
                         bytes: reliable.content.to_vec(),
                         sender,
                         message_id: reliable.message_id.clone(),
-                    }))
+                    });
+                self.trace.read(heard, content.as_ref());
+                Ok(content)
             })
             .transpose()?
             .flatten();
