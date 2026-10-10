@@ -35,6 +35,8 @@ pub mod hash_size {
         MessageId => U32,
         /// Epoch state fingerprint length in a trace record
         EpochState => U8,
+        /// Frame id length in a trace record
+        FrameId => U8,
     }
 }
 

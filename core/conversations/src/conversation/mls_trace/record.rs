@@ -1,4 +1,5 @@
-//! Trace records: what this installation holds, one log event per fact.
+//! Trace records: what this installation holds and what became of the
+//! frames it sent and was handed, one log event per fact.
 //!
 //! Each is one `TRACE` event on [`TARGET`]: the record's name as the message,
 //! what it says as fields. Names, fields and how a value is written are a
@@ -62,6 +63,79 @@ pub(super) fn left(installation: &SignerKey, convo: &str, epoch: u64) {
     );
 }
 
+/// `installation` published a post of its own to `convo` as `frame`, sent at
+/// `epoch`.
+pub(super) fn sent(installation: &SignerKey, convo: &str, frame: &[u8], epoch: u64) {
+    trace!(
+        target: TARGET,
+        installation = %Short(installation.as_bytes()),
+        convo = %ConvoId(convo),
+        frame = %frame_id(frame),
+        epoch,
+        "sent"
+    );
+}
+
+/// `installation` read the post `frame` carries, which `from` sent at
+/// `epoch`.
+pub(super) fn received(
+    installation: &SignerKey,
+    convo: &str,
+    frame: &[u8],
+    from: &SignerKey,
+    epoch: u64,
+) {
+    trace!(
+        target: TARGET,
+        installation = %Short(installation.as_bytes()),
+        convo = %ConvoId(convo),
+        frame = %frame_id(frame),
+        from = %Short(from.as_bytes()),
+        epoch,
+        "received"
+    );
+}
+
+/// `frame`, sent at `epoch`, reached `installation` and could not be read.
+pub(super) fn unreadable(
+    installation: &SignerKey,
+    convo: &str,
+    frame: &[u8],
+    epoch: u64,
+    why: Why,
+) {
+    trace!(
+        target: TARGET,
+        installation = %Short(installation.as_bytes()),
+        convo = %ConvoId(convo),
+        frame = %frame_id(frame),
+        epoch,
+        why = %why,
+        "unreadable"
+    );
+}
+
+/// Why a frame could not be read.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Why {
+    /// It is of another epoch than the installation holds.
+    Epoch,
+    /// It is of the epoch number the installation holds and did not decrypt.
+    Decrypt,
+    /// Its post decrypted and the sender's account could not be checked.
+    Sender,
+}
+
+impl fmt::Display for Why {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Why::Epoch => "epoch",
+            Why::Decrypt => "decrypt",
+            Why::Sender => "sender",
+        })
+    }
+}
+
 /// The epoch authenticator is a secret the members hold, so a record carries
 /// a hash of it.
 fn state(authenticator: &[u8]) -> String {
@@ -70,6 +144,12 @@ fn state(authenticator: &[u8]) -> String {
         b"state|".as_slice(),
         authenticator,
     ])
+}
+
+/// An encoded frame reaches each receiver as its sender wrote it, so a hash
+/// of the bytes names the frame at both ends.
+fn frame_id(encoded: &[u8]) -> String {
+    blake2b_hex::<hash_size::FrameId>(&[b"report|".as_slice(), b"frame|".as_slice(), encoded])
 }
 
 /// An id cut to its first four bytes, in hex.
@@ -216,5 +296,68 @@ mod tests {
             line,
             "TRACE libchat::mls_trace: left installation=e09a3f52 convo=2a30d6a2c1 epoch=8"
         );
+    }
+
+    #[test]
+    fn sent_line() {
+        let line = rendered(|| {
+            sent(
+                &installation("e09a3f5201020304"),
+                "2a30d6a2c1",
+                b"an encoded frame",
+                7,
+            )
+        });
+        assert_eq!(
+            line,
+            "TRACE libchat::mls_trace: sent installation=e09a3f52 convo=2a30d6a2c1 \
+             frame=7aca96962fbe257f epoch=7"
+        );
+    }
+
+    #[test]
+    fn received_line() {
+        let line = rendered(|| {
+            received(
+                &installation("a3f91c0705060708"),
+                "2a30d6a2c1",
+                b"an encoded frame",
+                &installation("e09a3f5201020304"),
+                7,
+            )
+        });
+        assert_eq!(
+            line,
+            "TRACE libchat::mls_trace: received installation=a3f91c07 convo=2a30d6a2c1 \
+             frame=7aca96962fbe257f from=e09a3f52 epoch=7"
+        );
+    }
+
+    #[test]
+    fn unreadable_line() {
+        let unreadable_for = |why| {
+            rendered(|| {
+                unreadable(
+                    &installation("a3f91c0705060708"),
+                    "2a30d6a2c1",
+                    b"an encoded frame",
+                    7,
+                    why,
+                )
+            })
+        };
+        for (why, written) in [
+            (Why::Epoch, "epoch"),
+            (Why::Decrypt, "decrypt"),
+            (Why::Sender, "sender"),
+        ] {
+            assert_eq!(
+                unreadable_for(why),
+                format!(
+                    "TRACE libchat::mls_trace: unreadable installation=a3f91c07 \
+                     convo=2a30d6a2c1 frame=7aca96962fbe257f epoch=7 why={written}"
+                )
+            );
+        }
     }
 }
