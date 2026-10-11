@@ -1,11 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::num::NonZeroU32;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -300,6 +300,43 @@ fn gauge(metrics: &str, name: &str) -> Option<u64> {
         .peekable();
     values.peek()?;
     Some(values.sum::<f64>() as u64)
+}
+
+/// The longest a node that has started waits for its peers before it is ready.
+const CONNECT_WAIT: Duration = Duration::from_secs(3);
+
+/// Between two looks at the links of a local node that waits for them.
+const DIAL_POLL: Duration = Duration::from_millis(50);
+
+/// Waits until a node that has started is ready to be used.
+///
+/// A node of a local network is given out to nobody before it is ready, so
+/// the links it holds until then are its own dials: it is ready once it holds
+/// one for each node it was told to dial, and when the wait has lasted
+/// `CONNECT_WAIT` and they have not come up. `peers` answers how many links
+/// the node holds, and `waited` how long the wait has lasted.
+fn await_connected(
+    network: &Network,
+    mut peers: impl FnMut() -> Option<u64>,
+    mut waited: impl FnMut() -> Duration,
+    mut sleep: impl FnMut(Duration),
+) {
+    let Network::Local(local) = network else {
+        // FIXME: This unconditional sleep is a stand-in for proper
+        // peer-connectivity detection. The right approach is to listen for a
+        // `peer_connected` (or equivalent status-change) event from the node
+        // callback and only proceed once at least one peer is reachable,
+        // falling back to a configurable timeout. logos-delivery would need to
+        // surface such an event via its callback mechanism for this to work.
+        sleep(CONNECT_WAIT);
+        return;
+    };
+    // A node holds one link to a node, however often it was told to dial it.
+    let dialed: HashSet<&str> = local.static_nodes.iter().map(|node| &*node.0).collect();
+    let dialed = dialed.len() as u64;
+    while waited() < CONNECT_WAIT && peers().unwrap_or(0) < dialed {
+        sleep(DIAL_POLL.min(CONNECT_WAIT.saturating_sub(waited())));
+    }
 }
 
 // ── Losses ──────────────────────────────────────────────────────────────────
@@ -729,13 +766,13 @@ impl<T> ThreadedDeliveryWrapper<T> {
         }
         info!("logos-delivery node started ({})", cfg.network);
 
-        // FIXME: This unconditional sleep is a stand-in for proper
-        // peer-connectivity detection. The right approach is to listen for a
-        // `peer_connected` (or equivalent status-change) event from the node
-        // callback and only proceed once at least one peer is reachable,
-        // falling back to a configurable timeout. logos-delivery would need to
-        // surface such an event via its callback mechanism for this to work.
-        thread::sleep(Duration::from_secs(3));
+        let started = Instant::now();
+        await_connected(
+            &cfg.network,
+            || gauge(&node.node_info("Metrics").ok()?, PEERS_GAUGE),
+            || started.elapsed(),
+            thread::sleep,
+        );
 
         let _ = ready_tx.send(Ok(()));
 
@@ -766,6 +803,8 @@ impl<T> ThreadedDeliveryWrapper<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::{Cell, RefCell};
+
     use super::*;
 
     /// What liblogosdelivery v0.38.1 answered for each node info id: a node
@@ -1046,6 +1085,113 @@ mod tests {
     #[test]
     fn bound_ports_that_are_not_the_librarys_json_are_an_error() {
         assert!(loopback_address("tcp=4001", PEER_ID).is_err());
+    }
+
+    /// What a wait for a node's peers does when the node answers `links` for
+    /// its links, the last of them from then on, and takes `asking` to answer:
+    /// each sleep it takes, and how often it asks.
+    fn connecting_slowly(
+        network: &Network,
+        links: &[Option<u64>],
+        asking: Duration,
+    ) -> (Vec<Duration>, usize) {
+        let clock = Cell::new(Duration::ZERO);
+        let sleeps = RefCell::new(Vec::new());
+        let mut asked = 0;
+        await_connected(
+            network,
+            || {
+                asked += 1;
+                clock.set(clock.get() + asking);
+                links[(asked - 1).min(links.len() - 1)]
+            },
+            || clock.get(),
+            |duration| {
+                clock.set(clock.get() + duration);
+                sleeps.borrow_mut().push(duration);
+            },
+        );
+        (sleeps.into_inner(), asked)
+    }
+
+    /// [`connecting_slowly`], with a node that answers at once.
+    fn connecting(network: &Network, links: &[Option<u64>]) -> (Vec<Duration>, usize) {
+        connecting_slowly(network, links, Duration::ZERO)
+    }
+
+    fn dialing(static_nodes: &[&str]) -> Network {
+        Network::Local(LocalNetwork {
+            cluster_id: ClusterId::try_from(77).unwrap(),
+            static_nodes: static_nodes
+                .iter()
+                .map(|node| node.parse().unwrap())
+                .collect(),
+            max_message_kib: NonZeroU32::new(512).unwrap(),
+        })
+    }
+
+    #[test]
+    fn a_node_of_a_preset_is_ready_three_seconds_after_its_start() {
+        let preset = Network::Preset("logos.test".into());
+
+        assert_eq!(
+            connecting(&preset, &[Some(40)]),
+            (vec![Duration::from_secs(3)], 0)
+        );
+    }
+
+    #[test]
+    fn a_local_node_that_dials_nobody_is_ready_at_once() {
+        let (sleeps, _) = connecting(&dialing(&[]), &[None]);
+
+        assert_eq!(sleeps, []);
+    }
+
+    #[test]
+    fn a_local_node_is_ready_once_it_holds_a_link_for_each_node_it_dials() {
+        let links = [None, Some(0), Some(1), Some(2)];
+
+        assert_eq!(
+            connecting(&dialing(&[RAYA, PAX]), &links),
+            (vec![DIAL_POLL; 3], 4)
+        );
+        assert_eq!(connecting(&dialing(&[RAYA, PAX]), &[Some(2)]), (vec![], 1));
+        assert_eq!(connecting(&dialing(&[RAYA]), &[Some(4)]), (vec![], 1));
+    }
+
+    #[test]
+    fn a_local_node_told_to_dial_one_node_twice_is_ready_once_it_holds_its_link() {
+        assert_eq!(connecting(&dialing(&[RAYA, RAYA]), &[Some(1)]), (vec![], 1));
+        assert_eq!(
+            connecting(&dialing(&[RAYA, PAX, RAYA]), &[Some(1), Some(2)]),
+            (vec![DIAL_POLL], 2)
+        );
+    }
+
+    #[test]
+    fn a_local_node_whose_dials_stay_down_is_ready_after_three_seconds() {
+        for links in [Some(1), None] {
+            let (sleeps, asked) = connecting(&dialing(&[RAYA, PAX]), &[links]);
+
+            assert_eq!(sleeps.iter().sum::<Duration>(), Duration::from_secs(3));
+            // It asks twenty times a second.
+            assert_eq!(asked, 60);
+        }
+    }
+
+    #[test]
+    fn the_time_a_node_takes_to_answer_is_part_of_the_three_seconds() {
+        let answer = Duration::from_millis(30);
+        let (sleeps, asked) = connecting_slowly(&dialing(&[RAYA]), &[Some(0)], answer);
+
+        let waited = sleeps.iter().sum::<Duration>() + answer * asked as u32;
+        assert_eq!(waited, Duration::from_secs(3));
+        // An answer that comes after the three seconds is the last one asked for.
+        let answer = Duration::from_millis(1700);
+        let (sleeps, asked) = connecting_slowly(&dialing(&[RAYA]), &[Some(0)], answer);
+
+        assert_eq!(asked, 2);
+        assert_eq!(sleeps.iter().sum::<Duration>(), DIAL_POLL);
     }
 
     #[test]
