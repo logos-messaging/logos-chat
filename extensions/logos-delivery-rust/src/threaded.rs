@@ -226,6 +226,12 @@ pub struct NodeState {
     /// shard it is on. `None` when the library's metrics do not hold the
     /// count.
     pub mesh_peers: Option<u64>,
+    /// Connections the node opened, since it started. `None` when the
+    /// library's metrics do not hold the count.
+    pub dials_ok: Option<u64>,
+    /// Connections the node could not open, since it started. `None` when
+    /// the library's metrics do not hold the count.
+    pub dials_failed: Option<u64>,
     /// Publishes the node refused, since it started.
     pub publish_refused: u64,
     /// Received frames the full inbound queue dropped, since the node started.
@@ -234,6 +240,8 @@ pub struct NodeState {
 
 const PEERS_GAUGE: &str = "libp2p_peers";
 const MESH_PEERS_GAUGE: &str = "libp2p_gossipsub_peers_per_topic_mesh";
+const DIALS_OK_COUNTER: &str = "libp2p_successful_dials_total";
+const DIALS_FAILED_COUNTER: &str = "libp2p_failed_dials_total";
 
 impl NodeState {
     fn new(address: String, metrics: &str, losses: &Losses) -> Self {
@@ -241,6 +249,8 @@ impl NodeState {
             address,
             peers: gauge(metrics, PEERS_GAUGE),
             mesh_peers: gauge(metrics, MESH_PEERS_GAUGE),
+            dials_ok: gauge(metrics, DIALS_OK_COUNTER),
+            dials_failed: gauge(metrics, DIALS_FAILED_COUNTER),
             publish_refused: losses.publish_refused.load(Ordering::Relaxed),
             inbound_dropped: losses.inbound_dropped.load(Ordering::Relaxed),
         }
@@ -290,7 +300,8 @@ fn loopback_address(bound_ports: &str, peer_id: &str) -> Result<String, String> 
     Ok(format!("/ip4/127.0.0.1/tcp/{}/p2p/{peer_id}", ports.tcp))
 }
 
-/// Gauge `name` in the library's metrics text, summed over its label sets.
+/// Gauge or counter `name` in the library's metrics text, summed over its
+/// label sets.
 fn gauge(metrics: &str, name: &str) -> Option<u64> {
     let mut values = metrics
         .lines()
@@ -813,6 +824,9 @@ mod tests {
     const PEER_ID: &str = include_str!("../tests/fixtures/node_info/MyPeerId");
     const MULTIADDRESSES: &str = include_str!("../tests/fixtures/node_info/MyMultiaddresses");
     const METRICS: &str = include_str!("../tests/fixtures/node_info/Metrics");
+    /// What a node told to dial a port nobody listens on answered for `Metrics`.
+    const METRICS_OF_A_FAILED_DIAL: &str =
+        include_str!("../tests/fixtures/node_info/Metrics.failed_dial");
 
     /// Events as liblogosdelivery v0.38.1 wrote them.
     const MESSAGE_ERROR: &str = r#"{"eventType":"message_error","requestId":"d1a02e86c98a1b9fed64","messageHash":"0xdac61e419007efe2a3031c7690f8881ab42f27693259c42e70987bfbc4ca65cf","error":"Message size exceeded maximum of 1024 bytes"}"#;
@@ -1045,6 +1059,8 @@ mod tests {
                         .into(),
                 peers: None,
                 mesh_peers: None,
+                dials_ok: None,
+                dials_failed: None,
                 publish_refused: 0,
                 inbound_dropped: 0,
             }
@@ -1066,9 +1082,34 @@ mod tests {
                         .into(),
                 peers: Some(9),
                 mesh_peers: Some(8),
+                dials_ok: Some(5),
+                dials_failed: Some(0),
                 publish_refused: 0,
                 inbound_dropped: 0,
             }
+        );
+    }
+
+    #[test]
+    fn a_dial_that_did_not_come_up_is_counted_as_failed() {
+        let state = NodeState::new(String::new(), METRICS_OF_A_FAILED_DIAL, &Losses::default());
+        assert_eq!(
+            (state.peers, state.dials_ok, state.dials_failed),
+            (Some(0), Some(0), Some(1))
+        );
+    }
+
+    #[test]
+    fn dials_the_metrics_do_not_count_are_unknown() {
+        let metrics: String = METRICS
+            .lines()
+            .filter(|line| !line.contains("_dials"))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        let state = NodeState::new(String::new(), &metrics, &Losses::default());
+        assert_eq!(
+            (state.peers, state.dials_ok, state.dials_failed),
+            (Some(9), None, None)
         );
     }
 

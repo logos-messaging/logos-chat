@@ -1,0 +1,753 @@
+# HELP process_info CPU and memory usage
+# TYPE process_info gauge
+process_virtual_memory_bytes 427294720.0
+process_resident_memory_bytes 34861056.0
+process_start_time_seconds 1791824480.95
+process_cpu_seconds_total 0.03
+process_max_fds 524288.0
+process_open_fds 14.0
+
+# HELP nim_runtime_info Nim runtime info
+# TYPE nim_runtime_info gauge
+nim_gc_heap_instance_occupied_bytes{type_name="seq[byte]"} 202050.0
+nim_gc_heap_instance_occupied_bytes{type_name="string"} 94283.0
+nim_gc_heap_instance_occupied_bytes{type_name="KeyValuePairSeq[system.int32, SelectorKey[asyncengine.SelectorData]]"} 22592.0
+nim_gc_heap_instance_occupied_bytes{type_name="OrderedKeyValuePairSeq[metrics.Collector]"} 18496.0
+nim_gc_heap_instance_occupied_bytes{type_name="Counter"} 13528.0
+nim_gc_heap_instance_occupied_bytes{type_name="Gauge"} 11552.0
+nim_gc_heap_instance_occupied_bytes{type_name="seq[string]"} 10576.0
+nim_gc_heap_instance_occupied_bytes{type_name="KeyValuePairSeq[system.string, types.TopicParams]"} 9760.0
+nim_gc_heap_instance_occupied_bytes{type_name="OrderedKeyValuePairSeq[connmanager.PeerEventHandler]"} 8256.0
+nim_gc_heap_instance_occupied_bytes{type_name="InternalRaisesFuture[system.void, (CancelledError,)]"} 6624.0
+nim_gc_heap_instance_occupied_summed_bytes 549296.0
+
+# HELP nim_gc_mem_bytes the number of bytes that are owned by a thread's GC
+# TYPE nim_gc_mem_bytes gauge
+
+# HELP nim_gc_mem_occupied_bytes the number of bytes that are owned by a thread's GC and hold data
+# TYPE nim_gc_mem_occupied_bytes gauge
+
+# HELP libp2p_open_streams open stream instances
+# TYPE libp2p_open_streams gauge
+
+# HELP libp2p_network_bytes total traffic
+# TYPE libp2p_network_bytes counter
+
+# HELP libp2p_peers total connected peers
+# TYPE libp2p_peers gauge
+libp2p_peers 0.0
+
+# HELP libp2p_failed_upgrades_incoming incoming connections failed upgrades
+# TYPE libp2p_failed_upgrades_incoming counter
+libp2p_failed_upgrades_incoming_total 0.0
+libp2p_failed_upgrades_incoming_created 1791824481.0
+
+# HELP libp2p_failed_upgrades_outgoing outgoing connections failed upgrades
+# TYPE libp2p_failed_upgrades_outgoing counter
+libp2p_failed_upgrades_outgoing_total 0.0
+libp2p_failed_upgrades_outgoing_created 1791824481.0
+
+# HELP libp2p_total_dial_attempts total attempted dials
+# TYPE libp2p_total_dial_attempts counter
+libp2p_total_dial_attempts_total 1.0
+libp2p_total_dial_attempts_created 1791824481.0
+
+# HELP libp2p_successful_dials dialed successful peers
+# TYPE libp2p_successful_dials counter
+libp2p_successful_dials_total 0.0
+libp2p_successful_dials_created 1791824481.0
+
+# HELP libp2p_failed_dials failed dials
+# TYPE libp2p_failed_dials counter
+libp2p_failed_dials_total 1.0
+libp2p_failed_dials_created 1791824481.0
+
+# HELP libp2p_pubsub_sig_verify_success pubsub successfully validated messages
+# TYPE libp2p_pubsub_sig_verify_success counter
+libp2p_pubsub_sig_verify_success_total 0.0
+libp2p_pubsub_sig_verify_success_created 1791824481.0
+
+# HELP libp2p_pubsub_sig_verify_failure pubsub failed validated messages
+# TYPE libp2p_pubsub_sig_verify_failure counter
+libp2p_pubsub_sig_verify_failure_total 0.0
+libp2p_pubsub_sig_verify_failure_created 1791824481.0
+
+# HELP libp2p_pubsub_disconnects_over_non_priority_queue_limit number of peers disconnected due to over non-prio queue capacity
+# TYPE libp2p_pubsub_disconnects_over_non_priority_queue_limit counter
+libp2p_pubsub_disconnects_over_non_priority_queue_limit_total 0.0
+libp2p_pubsub_disconnects_over_non_priority_queue_limit_created 1791824481.0
+
+# HELP libp2p_pubsub_peers pubsub peer instances
+# TYPE libp2p_pubsub_peers gauge
+libp2p_pubsub_peers 0.0
+
+# HELP libp2p_pubsub_topics pubsub subscribed topics
+# TYPE libp2p_pubsub_topics gauge
+libp2p_pubsub_topics 1.0
+
+# HELP libp2p_pubsub_subscriptions pubsub subscription operations
+# TYPE libp2p_pubsub_subscriptions counter
+libp2p_pubsub_subscriptions_total 1.0
+libp2p_pubsub_subscriptions_created 1791824481.0
+
+# HELP libp2p_pubsub_unsubscriptions pubsub unsubscription operations
+# TYPE libp2p_pubsub_unsubscriptions counter
+libp2p_pubsub_unsubscriptions_total 0.0
+libp2p_pubsub_unsubscriptions_created 1791824481.0
+
+# HELP libp2p_pubsub_topic_handlers pubsub subscribed topics handlers count
+# TYPE libp2p_pubsub_topic_handlers gauge
+libp2p_pubsub_topic_handlers{topic="other"} 1.0
+
+# HELP libp2p_pubsub_validation_success pubsub successfully validated messages
+# TYPE libp2p_pubsub_validation_success counter
+libp2p_pubsub_validation_success_total 0.0
+libp2p_pubsub_validation_success_created 1791824481.0
+
+# HELP libp2p_pubsub_validation_failure pubsub failed validated messages
+# TYPE libp2p_pubsub_validation_failure counter
+libp2p_pubsub_validation_failure_total 0.0
+libp2p_pubsub_validation_failure_created 1791824481.0
+
+# HELP libp2p_pubsub_validation_ignore pubsub ignore validated messages
+# TYPE libp2p_pubsub_validation_ignore counter
+libp2p_pubsub_validation_ignore_total 0.0
+libp2p_pubsub_validation_ignore_created 1791824481.0
+
+# HELP libp2p_pubsub_messages_published published messages
+# TYPE libp2p_pubsub_messages_published counter
+
+# HELP libp2p_pubsub_messages_published_partial published partial messages
+# TYPE libp2p_pubsub_messages_published_partial counter
+
+# HELP libp2p_pubsub_messages_rebroadcasted re-broadcasted messages
+# TYPE libp2p_pubsub_messages_rebroadcasted counter
+
+# HELP libp2p_pubsub_broadcast_subscriptions pubsub broadcast subscriptions
+# TYPE libp2p_pubsub_broadcast_subscriptions counter
+
+# HELP libp2p_pubsub_broadcast_unsubscriptions pubsub broadcast unsubscriptions
+# TYPE libp2p_pubsub_broadcast_unsubscriptions counter
+
+# HELP libp2p_pubsub_broadcast_messages pubsub broadcast messages
+# TYPE libp2p_pubsub_broadcast_messages counter
+
+# HELP libp2p_pubsub_received_subscriptions pubsub received subscriptions
+# TYPE libp2p_pubsub_received_subscriptions counter
+
+# HELP libp2p_pubsub_received_unsubscriptions pubsub received subscriptions
+# TYPE libp2p_pubsub_received_unsubscriptions counter
+
+# HELP libp2p_pubsub_received_messages pubsub received messages
+# TYPE libp2p_pubsub_received_messages counter
+
+# HELP libp2p_pubsub_broadcast_iwant pubsub broadcast iwant
+# TYPE libp2p_pubsub_broadcast_iwant counter
+libp2p_pubsub_broadcast_iwant_total 0.0
+libp2p_pubsub_broadcast_iwant_created 1791824481.0
+
+# HELP libp2p_pubsub_broadcast_ihave pubsub broadcast ihave
+# TYPE libp2p_pubsub_broadcast_ihave counter
+
+# HELP libp2p_pubsub_broadcast_graft pubsub broadcast graft
+# TYPE libp2p_pubsub_broadcast_graft counter
+
+# HELP libp2p_pubsub_broadcast_prune pubsub broadcast prune
+# TYPE libp2p_pubsub_broadcast_prune counter
+
+# HELP libp2p_pubsub_received_iwant pubsub broadcast iwant
+# TYPE libp2p_pubsub_received_iwant counter
+libp2p_pubsub_received_iwant_total 0.0
+libp2p_pubsub_received_iwant_created 1791824481.0
+
+# HELP libp2p_pubsub_received_ihave pubsub broadcast ihave
+# TYPE libp2p_pubsub_received_ihave counter
+
+# HELP libp2p_pubsub_received_graft pubsub broadcast graft
+# TYPE libp2p_pubsub_received_graft counter
+
+# HELP libp2p_pubsub_received_prune pubsub broadcast prune
+# TYPE libp2p_pubsub_received_prune counter
+
+# HELP libp2p_gossipsub_peers_scores the scores of the peers in gossipsub
+# TYPE libp2p_gossipsub_peers_scores gauge
+
+# HELP libp2p_gossipsub_bad_score_disconnection the number of peers disconnected by gossipsub
+# TYPE libp2p_gossipsub_bad_score_disconnection counter
+
+# HELP libp2p_gossipsub_peers_score_firstMessageDeliveries Detailed gossipsub scoring metric
+# TYPE libp2p_gossipsub_peers_score_firstMessageDeliveries gauge
+
+# HELP libp2p_gossipsub_peers_score_meshMessageDeliveries Detailed gossipsub scoring metric
+# TYPE libp2p_gossipsub_peers_score_meshMessageDeliveries gauge
+
+# HELP libp2p_gossipsub_peers_score_meshFailurePenalty Detailed gossipsub scoring metric
+# TYPE libp2p_gossipsub_peers_score_meshFailurePenalty gauge
+
+# HELP libp2p_gossipsub_peers_score_invalidMessageDeliveries Detailed gossipsub scoring metric
+# TYPE libp2p_gossipsub_peers_score_invalidMessageDeliveries gauge
+
+# HELP libp2p_gossipsub_peers_score_appScore Detailed gossipsub scoring metric
+# TYPE libp2p_gossipsub_peers_score_appScore gauge
+
+# HELP libp2p_gossipsub_peers_score_behaviourPenalty Detailed gossipsub scoring metric
+# TYPE libp2p_gossipsub_peers_score_behaviourPenalty gauge
+
+# HELP libp2p_gossipsub_peers_score_colocationFactor Detailed gossipsub scoring metric
+# TYPE libp2p_gossipsub_peers_score_colocationFactor gauge
+
+# HELP libp2p_gossipsub_peers_rate_limit_hits The number of times peers were above their rate limit
+# TYPE libp2p_gossipsub_peers_rate_limit_hits counter
+
+# HELP libp2p_gossipsub_cache_window_size the number of messages in the cache
+# TYPE libp2p_gossipsub_cache_window_size gauge
+libp2p_gossipsub_cache_window_size 0.0
+
+# HELP libp2p_gossipsub_peers_per_topic_mesh gossipsub peers per topic in mesh
+# TYPE libp2p_gossipsub_peers_per_topic_mesh gauge
+libp2p_gossipsub_peers_per_topic_mesh{topic="other"} 0.0
+
+# HELP libp2p_gossipsub_peers_per_topic_fanout gossipsub peers per topic in fanout
+# TYPE libp2p_gossipsub_peers_per_topic_fanout gauge
+libp2p_gossipsub_peers_per_topic_fanout{topic="other"} 0.0
+
+# HELP libp2p_gossipsub_peers_per_topic_gossipsub gossipsub peers per topic in gossipsub
+# TYPE libp2p_gossipsub_peers_per_topic_gossipsub gauge
+libp2p_gossipsub_peers_per_topic_gossipsub{topic="other"} 0.0
+
+# HELP libp2p_gossipsub_under_dout_topics number of topics below dout
+# TYPE libp2p_gossipsub_under_dout_topics gauge
+libp2p_gossipsub_under_dout_topics 1.0
+
+# HELP libp2p_gossipsub_no_peers_topics number of topics in mesh with no peers
+# TYPE libp2p_gossipsub_no_peers_topics gauge
+libp2p_gossipsub_no_peers_topics 1.0
+
+# HELP libp2p_gossipsub_low_peers_topics number of topics in mesh with at least one but below dlow peers
+# TYPE libp2p_gossipsub_low_peers_topics gauge
+libp2p_gossipsub_low_peers_topics 0.0
+
+# HELP libp2p_gossipsub_healthy_peers_topics number of topics in mesh with at least dlow peers (but below dhigh)
+# TYPE libp2p_gossipsub_healthy_peers_topics gauge
+libp2p_gossipsub_healthy_peers_topics 0.0
+
+# HELP libp2p_gossipsub_above_dhigh_condition number of above dhigh pruning branches ran
+# TYPE libp2p_gossipsub_above_dhigh_condition counter
+
+# HELP libp2p_gossipsub_received_iwants received iwants
+# TYPE libp2p_gossipsub_received_iwants gauge
+
+# HELP libp2p_gossipsub_preamble_saved_iwants number of iwant requests avoided by preamble
+# TYPE libp2p_gossipsub_preamble_saved_iwants counter
+
+# HELP libp2p_gossipsub_failed_publish number of failed publish
+# TYPE libp2p_gossipsub_failed_publish counter
+libp2p_gossipsub_failed_publish_total 0.0
+libp2p_gossipsub_failed_publish_created 1791824481.0
+
+# HELP libp2p_gossipsub_invalid_topic_subscription number of invalid topic subscriptions that happened
+# TYPE libp2p_gossipsub_invalid_topic_subscription counter
+libp2p_gossipsub_invalid_topic_subscription_total 0.0
+libp2p_gossipsub_invalid_topic_subscription_created 1791824481.0
+
+# HELP libp2p_gossipsub_duplicate_during_validation number of duplicates received during message validation
+# TYPE libp2p_gossipsub_duplicate_during_validation counter
+libp2p_gossipsub_duplicate_during_validation_total 0.0
+libp2p_gossipsub_duplicate_during_validation_created 1791824481.0
+
+# HELP libp2p_gossipsub_idontwant_saved_messages number of duplicates avoided by idontwant
+# TYPE libp2p_gossipsub_idontwant_saved_messages counter
+libp2p_gossipsub_idontwant_saved_messages_total 0.0
+libp2p_gossipsub_idontwant_saved_messages_created 1791824481.0
+
+# HELP libp2p_gossipsub_imreceiving_saved_messages number of duplicates avoided by imreceiving
+# TYPE libp2p_gossipsub_imreceiving_saved_messages counter
+libp2p_gossipsub_imreceiving_saved_messages_total 0.0
+libp2p_gossipsub_imreceiving_saved_messages_created 1791824481.0
+
+# HELP libp2p_gossipsub_saved_bytes bytes saved by gossipsub optimizations
+# TYPE libp2p_gossipsub_saved_bytes counter
+
+# HELP libp2p_gossipsub_duplicate number of duplicates received
+# TYPE libp2p_gossipsub_duplicate counter
+libp2p_gossipsub_duplicate_total 0.0
+libp2p_gossipsub_duplicate_created 1791824481.0
+
+# HELP libp2p_gossipsub_received number of messages received (deduplicated)
+# TYPE libp2p_gossipsub_received counter
+libp2p_gossipsub_received_total 0.0
+libp2p_gossipsub_received_created 1791824481.0
+
+# HELP libp2p_rendezvous_register number of advertise requests
+# TYPE libp2p_rendezvous_register counter
+libp2p_rendezvous_register_total 0.0
+libp2p_rendezvous_register_created 1791824481.0
+
+# HELP libp2p_rendezvous_discover number of discovery requests
+# TYPE libp2p_rendezvous_discover counter
+libp2p_rendezvous_discover_total 0.0
+libp2p_rendezvous_discover_created 1791824481.0
+
+# HELP libp2p_rendezvous_registered number of registered peers
+# TYPE libp2p_rendezvous_registered gauge
+libp2p_rendezvous_registered 0.0
+
+# HELP libp2p_rendezvous_namespaces number of registered namespaces
+# TYPE libp2p_rendezvous_namespaces gauge
+libp2p_rendezvous_namespaces 0.0
+
+# HELP libp2p_autonat_reachability_confidence autonat reachability confidence
+# TYPE libp2p_autonat_reachability_confidence gauge
+
+# HELP presto_server_response_status_count Number of HTTP server responses with specific status
+# TYPE presto_server_response_status_count gauge
+
+# HELP presto_server_processed_request_count Number of HTTP(s) processed requests
+# TYPE presto_server_processed_request_count gauge
+presto_server_processed_request_count 0.0
+
+# HELP presto_server_missing_requests_count Number of HTTP(s) requests to unrecognized API endpoints
+# TYPE presto_server_missing_requests_count gauge
+presto_server_missing_requests_count 0.0
+
+# HELP presto_server_invalid_requests_count Number of HTTP(s) requests invalid API endpoints
+# TYPE presto_server_invalid_requests_count gauge
+presto_server_invalid_requests_count 0.0
+
+# HELP presto_server_prepare_response_time Time taken to prepare response
+# TYPE presto_server_prepare_response_time gauge
+
+# HELP mix_messages_recvd number of mix messages received
+# TYPE mix_messages_recvd counter
+
+# HELP mix_messages_forwarded number of mix messages forwarded
+# TYPE mix_messages_forwarded counter
+
+# HELP mix_messages_error number of mix messages failed processing
+# TYPE mix_messages_error counter
+
+# HELP mix_pool_size number of nodes in the pool
+# TYPE mix_pool_size gauge
+mix_pool_size 0.0
+
+# HELP libp2p_autonat_v2_reachability_confidence autonat v2 reachability confidence
+# TYPE libp2p_autonat_v2_reachability_confidence gauge
+
+# HELP waku_relay_network_bytes total traffic per topic, distinct gross/net and direction
+# TYPE waku_relay_network_bytes counter
+
+# HELP waku_relay_total_msg_bytes_per_shard total length of messages seen per shard
+# TYPE waku_relay_total_msg_bytes_per_shard gauge
+
+# HELP waku_relay_max_msg_bytes_per_shard Maximum length of messages seen per shard
+# TYPE waku_relay_max_msg_bytes_per_shard gauge
+
+# HELP waku_relay_avg_msg_bytes_per_shard Average length of messages seen per shard
+# TYPE waku_relay_avg_msg_bytes_per_shard gauge
+
+# HELP waku_archive_messages number of historical messages
+# TYPE waku_archive_messages gauge
+
+# HELP waku_archive_messages_per_shard number of historical messages per shard 
+# TYPE waku_archive_messages_per_shard gauge
+
+# HELP waku_archive_errors number of store protocol errors
+# TYPE waku_archive_errors counter
+
+# HELP waku_archive_insert_duration_seconds message insertion duration
+# TYPE waku_archive_insert_duration_seconds histogram
+waku_archive_insert_duration_seconds_sum 0.0
+waku_archive_insert_duration_seconds_count 0.0
+waku_archive_insert_duration_seconds_created 1791824481.0
+waku_archive_insert_duration_seconds_bucket{le="0.005"} 0.0
+waku_archive_insert_duration_seconds_bucket{le="0.01"} 0.0
+waku_archive_insert_duration_seconds_bucket{le="0.025"} 0.0
+waku_archive_insert_duration_seconds_bucket{le="0.05"} 0.0
+waku_archive_insert_duration_seconds_bucket{le="0.075"} 0.0
+waku_archive_insert_duration_seconds_bucket{le="0.1"} 0.0
+waku_archive_insert_duration_seconds_bucket{le="0.25"} 0.0
+waku_archive_insert_duration_seconds_bucket{le="0.5"} 0.0
+waku_archive_insert_duration_seconds_bucket{le="0.75"} 0.0
+waku_archive_insert_duration_seconds_bucket{le="1.0"} 0.0
+waku_archive_insert_duration_seconds_bucket{le="2.5"} 0.0
+waku_archive_insert_duration_seconds_bucket{le="5.0"} 0.0
+waku_archive_insert_duration_seconds_bucket{le="7.5"} 0.0
+waku_archive_insert_duration_seconds_bucket{le="10.0"} 0.0
+waku_archive_insert_duration_seconds_bucket{le="+Inf"} 0.0
+
+# HELP waku_archive_query_duration_seconds history query duration
+# TYPE waku_archive_query_duration_seconds histogram
+waku_archive_query_duration_seconds_sum 0.0
+waku_archive_query_duration_seconds_count 0.0
+waku_archive_query_duration_seconds_created 1791824481.0
+waku_archive_query_duration_seconds_bucket{le="0.005"} 0.0
+waku_archive_query_duration_seconds_bucket{le="0.01"} 0.0
+waku_archive_query_duration_seconds_bucket{le="0.025"} 0.0
+waku_archive_query_duration_seconds_bucket{le="0.05"} 0.0
+waku_archive_query_duration_seconds_bucket{le="0.075"} 0.0
+waku_archive_query_duration_seconds_bucket{le="0.1"} 0.0
+waku_archive_query_duration_seconds_bucket{le="0.25"} 0.0
+waku_archive_query_duration_seconds_bucket{le="0.5"} 0.0
+waku_archive_query_duration_seconds_bucket{le="0.75"} 0.0
+waku_archive_query_duration_seconds_bucket{le="1.0"} 0.0
+waku_archive_query_duration_seconds_bucket{le="2.5"} 0.0
+waku_archive_query_duration_seconds_bucket{le="5.0"} 0.0
+waku_archive_query_duration_seconds_bucket{le="7.5"} 0.0
+waku_archive_query_duration_seconds_bucket{le="10.0"} 0.0
+waku_archive_query_duration_seconds_bucket{le="+Inf"} 0.0
+
+# HELP waku_peers_dials Number of peer dials
+# TYPE waku_peers_dials counter
+waku_peers_dials_total{outcome="Unable to establish outgoing link in internalConnect"} 1.0
+waku_peers_dials_created{outcome="Unable to establish outgoing link in internalConnect"} 1791824481.0
+
+# HELP waku_node_conns_initiated Number of connections initiated
+# TYPE waku_node_conns_initiated counter
+
+# HELP waku_peers_errors Number of peer manager errors
+# TYPE waku_peers_errors counter
+
+# HELP waku_connected_peers Number of physical connections per direction and protocol
+# TYPE waku_connected_peers gauge
+
+# HELP waku_connected_peers_per_shard Number of physical connections per shard
+# TYPE waku_connected_peers_per_shard gauge
+
+# HELP waku_connected_peers_per_agent Number of physical connections per agent
+# TYPE waku_connected_peers_per_agent gauge
+
+# HELP waku_streams_peers Number of streams per direction and protocol
+# TYPE waku_streams_peers gauge
+
+# HELP waku_peer_store_size Number of peers managed by the peer store
+# TYPE waku_peer_store_size gauge
+waku_peer_store_size 1.0
+
+# HELP waku_service_peers Service peer protocol and multiaddress 
+# TYPE waku_service_peers gauge
+
+# HELP waku_total_unique_peers total number of unique peers
+# TYPE waku_total_unique_peers gauge
+waku_total_unique_peers 1.0
+
+# HELP waku_store_errors number of store protocol errors
+# TYPE waku_store_errors counter
+
+# HELP waku_store_queries number of store queries received
+# TYPE waku_store_queries counter
+waku_store_queries_total 0.0
+waku_store_queries_created 1791824481.0
+
+# HELP waku_store_time_seconds Time in seconds spent by each store phase
+# TYPE waku_store_time_seconds gauge
+
+# HELP waku_relay_fleet_store_msg_size_bytes Total size of messages stored by fleet store nodes per shard
+# TYPE waku_relay_fleet_store_msg_size_bytes gauge
+
+# HELP waku_relay_fleet_store_msg_count Number of messages stored by fleet store nodes per shard
+# TYPE waku_relay_fleet_store_msg_count gauge
+
+# HELP waku_service_requests_limit Applied rate limit of non-relay service
+# TYPE waku_service_requests_limit gauge
+waku_service_requests_limit{service="/vac/waku/filter-subscribe/2.0.0-beta1"} 100.0
+waku_service_requests_limit{service="/vac/waku/lightpush/2.0.0-beta1"} 5.0
+waku_service_requests_limit{service="/vac/waku/lightpush/3.0.0"} 5.0
+waku_service_requests_limit{service="/vac/waku/peer-exchange/2.0.0-alpha1"} 5.0
+
+# HELP waku_service_requests number of non-relay service requests received
+# TYPE waku_service_requests counter
+
+# HELP waku_service_network_bytes total incoming traffic of specific waku services
+# TYPE waku_service_network_bytes counter
+
+# HELP waku_service_request_handling_duration_seconds duration of non-relay service handling
+# TYPE waku_service_request_handling_duration_seconds histogram
+
+# HELP reconciliation_roundtrips the nubmer of roundtrips for each reconciliation
+# TYPE reconciliation_roundtrips histogram
+reconciliation_roundtrips_sum 0.0
+reconciliation_roundtrips_count 0.0
+reconciliation_roundtrips_created 1791824481.0
+reconciliation_roundtrips_bucket{le="1.0"} 0.0
+reconciliation_roundtrips_bucket{le="2.0"} 0.0
+reconciliation_roundtrips_bucket{le="3.0"} 0.0
+reconciliation_roundtrips_bucket{le="5.0"} 0.0
+reconciliation_roundtrips_bucket{le="8.0"} 0.0
+reconciliation_roundtrips_bucket{le="13.0"} 0.0
+reconciliation_roundtrips_bucket{le="+Inf"} 0.0
+
+# HELP reconciliation_differences the nubmer of differences for each reconciliation
+# TYPE reconciliation_differences histogram
+reconciliation_differences_sum 0.0
+reconciliation_differences_count 0.0
+reconciliation_differences_created 1791824481.0
+reconciliation_differences_bucket{le="0.0"} 0.0
+reconciliation_differences_bucket{le="10.0"} 0.0
+reconciliation_differences_bucket{le="50.0"} 0.0
+reconciliation_differences_bucket{le="100.0"} 0.0
+reconciliation_differences_bucket{le="500.0"} 0.0
+reconciliation_differences_bucket{le="1000.0"} 0.0
+reconciliation_differences_bucket{le="5000.0"} 0.0
+reconciliation_differences_bucket{le="+Inf"} 0.0
+
+# HELP total_bytes_exchanged the number of bytes sent and received by the protocols
+# TYPE total_bytes_exchanged counter
+
+# HELP total_transfer_messages_exchanged the number of messages sent and received by the transfer protocol
+# TYPE total_transfer_messages_exchanged counter
+
+# HELP total_messages_cached the number of messages cached by the node after prunning
+# TYPE total_messages_cached gauge
+total_messages_cached 0.0
+
+# HELP waku_filter_errors number of filter protocol errors
+# TYPE waku_filter_errors counter
+
+# HELP waku_filter_requests number of filter subscribe requests received
+# TYPE waku_filter_requests counter
+
+# HELP waku_filter_subscriptions number of subscribed filter clients
+# TYPE waku_filter_subscriptions gauge
+waku_filter_subscriptions 0.0
+
+# HELP waku_filter_request_duration_seconds duration of filter subscribe requests
+# TYPE waku_filter_request_duration_seconds histogram
+
+# HELP waku_filter_handle_message_duration_seconds duration to push message to filter subscribers
+# TYPE waku_filter_handle_message_duration_seconds histogram
+waku_filter_handle_message_duration_seconds_sum 0.0
+waku_filter_handle_message_duration_seconds_count 0.0
+waku_filter_handle_message_duration_seconds_created 1791824481.0
+waku_filter_handle_message_duration_seconds_bucket{le="0.005"} 0.0
+waku_filter_handle_message_duration_seconds_bucket{le="0.01"} 0.0
+waku_filter_handle_message_duration_seconds_bucket{le="0.025"} 0.0
+waku_filter_handle_message_duration_seconds_bucket{le="0.05"} 0.0
+waku_filter_handle_message_duration_seconds_bucket{le="0.075"} 0.0
+waku_filter_handle_message_duration_seconds_bucket{le="0.1"} 0.0
+waku_filter_handle_message_duration_seconds_bucket{le="0.25"} 0.0
+waku_filter_handle_message_duration_seconds_bucket{le="0.5"} 0.0
+waku_filter_handle_message_duration_seconds_bucket{le="0.75"} 0.0
+waku_filter_handle_message_duration_seconds_bucket{le="1.0"} 0.0
+waku_filter_handle_message_duration_seconds_bucket{le="2.5"} 0.0
+waku_filter_handle_message_duration_seconds_bucket{le="5.0"} 0.0
+waku_filter_handle_message_duration_seconds_bucket{le="7.5"} 0.0
+waku_filter_handle_message_duration_seconds_bucket{le="10.0"} 0.0
+waku_filter_handle_message_duration_seconds_bucket{le="15.0"} 0.0
+waku_filter_handle_message_duration_seconds_bucket{le="20.0"} 0.0
+waku_filter_handle_message_duration_seconds_bucket{le="30.0"} 0.0
+waku_filter_handle_message_duration_seconds_bucket{le="+Inf"} 0.0
+
+# HELP rendezvousPeerFoundTotal total number of peers found via rendezvous
+# TYPE rendezvousPeerFoundTotal counter
+rendezvousPeerFoundTotal_total 0.0
+rendezvousPeerFoundTotal_created 1791824481.0
+
+# HELP waku_lightpush_errors number of lightpush protocol errors
+# TYPE waku_lightpush_errors counter
+
+# HELP waku_lightpush_messages number of lightpush messages received
+# TYPE waku_lightpush_messages counter
+
+# HELP waku_rln_messages_total number of messages seen by the rln relay
+# TYPE waku_rln_messages_total counter
+waku_rln_messages_total_total 0.0
+waku_rln_messages_total_created 1791824481.0
+
+# HELP waku_rln_spam_messages_total number of spam messages detected
+# TYPE waku_rln_spam_messages_total counter
+waku_rln_spam_messages_total_total 0.0
+waku_rln_spam_messages_total_created 1791824481.0
+
+# HELP waku_rln_invalid_messages_total number of invalid messages detected
+# TYPE waku_rln_invalid_messages_total counter
+
+# HELP waku_rln_valid_messages_total number of valid messages with their roots tracked
+# TYPE waku_rln_valid_messages_total counter
+
+# HELP waku_rln_errors_total number of errors detected while operating the rln relay
+# TYPE waku_rln_errors_total counter
+
+# HELP waku_rln_proof_verification_total number of times the rln proofs are verified
+# TYPE waku_rln_proof_verification_total counter
+waku_rln_proof_verification_total_total 0.0
+waku_rln_proof_verification_total_created 1791824481.0
+
+# HELP waku_rln_number_registered_memberships number of registered and active rln memberships
+# TYPE waku_rln_number_registered_memberships gauge
+waku_rln_number_registered_memberships 0.0
+
+# HELP waku_rln_proof_verification_duration_seconds time taken to verify a proof
+# TYPE waku_rln_proof_verification_duration_seconds gauge
+waku_rln_proof_verification_duration_seconds 0.0
+
+# HELP waku_rln_proof_generation_duration_seconds time taken to generate a proof
+# TYPE waku_rln_proof_generation_duration_seconds gauge
+waku_rln_proof_generation_duration_seconds 0.0
+
+# HELP waku_rln_instance_creation_duration_seconds time taken to create an rln instance
+# TYPE waku_rln_instance_creation_duration_seconds gauge
+waku_rln_instance_creation_duration_seconds 0.0
+
+# HELP waku_rln_membership_insertion_duration_seconds time taken to process a new membership registration
+# TYPE waku_rln_membership_insertion_duration_seconds gauge
+waku_rln_membership_insertion_duration_seconds 0.0
+
+# HELP waku_rln_membership_credentials_import_duration_seconds time taken to import membership credentials
+# TYPE waku_rln_membership_credentials_import_duration_seconds gauge
+waku_rln_membership_credentials_import_duration_seconds 0.0
+
+# HELP waku_rln_remaining_proofs_per_epoch number of proofs remaining to be generated for the current epoch
+# TYPE waku_rln_remaining_proofs_per_epoch gauge
+waku_rln_remaining_proofs_per_epoch 0.0
+
+# HELP waku_rln_total_generated_proofs total number of proofs generated since the node started
+# TYPE waku_rln_total_generated_proofs gauge
+waku_rln_total_generated_proofs 0.0
+
+# HELP waku_lightpush_v3_errors number of lightpush protocol errors
+# TYPE waku_lightpush_v3_errors counter
+
+# HELP waku_lightpush_v3_messages number of lightpush messages received
+# TYPE waku_lightpush_v3_messages counter
+
+# HELP discovery_session_lru_cache_hits Session LRU cache hits
+# TYPE discovery_session_lru_cache_hits counter
+discovery_session_lru_cache_hits_total 0.0
+discovery_session_lru_cache_hits_created 1791824481.0
+
+# HELP discovery_session_lru_cache_misses Session LRU cache misses
+# TYPE discovery_session_lru_cache_misses counter
+discovery_session_lru_cache_misses_total 0.0
+discovery_session_lru_cache_misses_created 1791824481.0
+
+# HELP discovery_session_decrypt_failures Session decrypt failures
+# TYPE discovery_session_decrypt_failures counter
+discovery_session_decrypt_failures_total 0.0
+discovery_session_decrypt_failures_created 1791824481.0
+
+# HELP routing_table_nodes Discovery routing table nodes
+# TYPE routing_table_nodes gauge
+
+# HELP discv5_network_bytes discv5 traffic
+# TYPE discv5_network_bytes counter
+
+# HELP discovery_message_requests_outgoing Discovery protocol outgoing message requests
+# TYPE discovery_message_requests_outgoing counter
+
+# HELP discovery_message_requests_incoming Discovery protocol incoming message requests
+# TYPE discovery_message_requests_incoming counter
+
+# HELP discovery_unsolicited_messages Discovery protocol unsolicited or timed-out messages
+# TYPE discovery_unsolicited_messages counter
+discovery_unsolicited_messages_total 0.0
+discovery_unsolicited_messages_created 1791824481.0
+
+# HELP discovery_enr_auto_update Amount of discovery IP:port address ENR auto updates
+# TYPE discovery_enr_auto_update counter
+discovery_enr_auto_update_total 0.0
+discovery_enr_auto_update_created 1791824481.0
+
+# HELP waku_discv5_discovered_per_shard number of nodes discovered by each shard
+# TYPE waku_discv5_discovered_per_shard gauge
+
+# HELP waku_discv5_errors number of waku discv5 errors
+# TYPE waku_discv5_errors counter
+
+# HELP waku_px_peers_received_unknown number of previously unknown ENRs received via peer exchange
+# TYPE waku_px_peers_received_unknown gauge
+waku_px_peers_received_unknown 0.0
+
+# HELP waku_px_errors number of peer exchange errors
+# TYPE waku_px_errors counter
+
+# HELP waku_px_peers_sent number of ENRs sent to peer exchange requesters
+# TYPE waku_px_peers_sent counter
+waku_px_peers_sent_total 0.0
+waku_px_peers_sent_created 1791824481.0
+
+# HELP waku_px_peers_received_total number of ENRs received via peer exchange
+# TYPE waku_px_peers_received_total gauge
+waku_px_peers_received_total 0.0
+
+# HELP waku_px_client_errors number of peer exchange errors
+# TYPE waku_px_client_errors counter
+
+# HELP waku_node_messages number of messages received
+# TYPE waku_node_messages counter
+
+# HELP waku_version Waku version info (in git describe format)
+# TYPE waku_version gauge
+waku_version{version="v0.38.1-g74057c"} 1.0
+
+# HELP waku_node_errors number of wakunode errors
+# TYPE waku_node_errors counter
+
+# HELP waku_lightpush_peers number of lightpush peers
+# TYPE waku_lightpush_peers gauge
+waku_lightpush_peers 0.0
+
+# HELP waku_filter_peers number of filter peers
+# TYPE waku_filter_peers gauge
+waku_filter_peers 0.0
+
+# HELP waku_store_peers number of store peers
+# TYPE waku_store_peers gauge
+waku_store_peers 0.0
+
+# HELP waku_px_peers number of peers (in the node's peerManager) supporting the peer exchange protocol
+# TYPE waku_px_peers gauge
+waku_px_peers 0.0
+
+# HELP waku_histogram_message_size message size histogram in kB
+# TYPE waku_histogram_message_size histogram
+waku_histogram_message_size_sum 0.0
+waku_histogram_message_size_count 0.0
+waku_histogram_message_size_created 1791824481.0
+waku_histogram_message_size_bucket{le="0.0"} 0.0
+waku_histogram_message_size_bucket{le="1.0"} 0.0
+waku_histogram_message_size_bucket{le="3.0"} 0.0
+waku_histogram_message_size_bucket{le="5.0"} 0.0
+waku_histogram_message_size_bucket{le="15.0"} 0.0
+waku_histogram_message_size_bucket{le="50.0"} 0.0
+waku_histogram_message_size_bucket{le="75.0"} 0.0
+waku_histogram_message_size_bucket{le="100.0"} 0.0
+waku_histogram_message_size_bucket{le="125.0"} 0.0
+waku_histogram_message_size_bucket{le="150.0"} 0.0
+waku_histogram_message_size_bucket{le="500.0"} 0.0
+waku_histogram_message_size_bucket{le="700.0"} 0.0
+waku_histogram_message_size_bucket{le="1000.0"} 0.0
+waku_histogram_message_size_bucket{le="+Inf"} 0.0
+
+# HELP event_loop_load chronos event loop load EWMA by window (1.0 = sustained lag at MaxAcceptedLag)
+# TYPE event_loop_load gauge
+
+# HELP event_loop_accumulated_lag_secs chronos event loop total accumulated lag in seconds since node start
+# TYPE event_loop_accumulated_lag_secs counter
+event_loop_accumulated_lag_secs_total 0.0
+event_loop_accumulated_lag_secs_created 1791824481.0
+
+# HELP presto_client_response_status_count Number of received client responses with specific status
+# TYPE presto_client_response_status_count gauge
+
+# HELP presto_client_connect_time Time taken to establish connection with remote host
+# TYPE presto_client_connect_time gauge
+
+# HELP presto_client_request_time Time taken to send request to remote host
+# TYPE presto_client_request_time gauge
+
+# HELP presto_client_response_time Time taken to receive response from remote host
+# TYPE presto_client_response_time gauge
+
+# HELP presto_client_dns_resolve_time Time taken to resolve remote hostname
+# TYPE presto_client_dns_resolve_time gauge
+
+# HELP waku_dnsdisc_discovered number of nodes discovered
+# TYPE waku_dnsdisc_discovered gauge
+waku_dnsdisc_discovered 0.0
+
+# HELP waku_dnsdisc_errors number of waku dnsdisc errors
+# TYPE waku_dnsdisc_errors counter
+
+# HELP waku_msg_validator_signed_outcome number of messages for each validation outcome
+# TYPE waku_msg_validator_signed_outcome counter
+
