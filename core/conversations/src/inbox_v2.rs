@@ -258,7 +258,7 @@ impl InboxV2 {
 
 #[derive(Clone, PartialEq, Message)]
 pub struct InboxV2Frame {
-    #[prost(oneof = "InviteType", tags = "1, 2, 3")]
+    #[prost(oneof = "InviteType", tags = "1, 2")]
     pub payload: Option<InviteType>,
 }
 
@@ -278,7 +278,8 @@ pub struct GroupV1HeavyInvite {
 
 #[cfg(test)]
 mod tests {
-    use super::{HPKE_PUBLIC_KEY_LEN, check_hpke_public_key};
+    use super::{HPKE_PUBLIC_KEY_LEN, InboxV2Frame, check_hpke_public_key};
+    use prost::Message as _;
 
     #[test]
     fn hpke_public_key_length_is_enforced() {
@@ -288,5 +289,13 @@ mod tests {
         assert!(check_hpke_public_key(&vec![0; 1183]).is_err());
         // Long enough to decode, still the wrong size.
         assert!(check_hpke_public_key(&vec![0; HPKE_PUBLIC_KEY_LEN + 1]).is_err());
+    }
+
+    #[test]
+    fn a_frame_whose_field_is_no_invite_decodes_with_no_payload() {
+        // Field 3, which holds no bytes.
+        let frame = InboxV2Frame::decode(&[0x1a, 0x00][..]).expect("the frame decodes");
+
+        assert_eq!(frame.payload, None);
     }
 }
