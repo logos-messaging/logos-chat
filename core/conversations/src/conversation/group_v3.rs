@@ -32,12 +32,6 @@ use self::payloads::frame_id;
 type Frame = payloads::GroupV3Frame;
 type FrameId = String;
 
-fn rand_string() -> String {
-    let n = 22;
-    let bytes: Vec<u8> = (0..n).map(|_| rand::random::<u8>()).collect();
-    hex::encode(bytes)
-}
-
 fn group_create_config(name: &str, desc: &str) -> MlsGroupCreateConfig {
     let meta = ConvoMetaInfo::new(name, desc);
 
@@ -103,13 +97,11 @@ impl GroupV3Convo {
         desc: &str,
         signers: &[SignerKey],
     ) -> Result<Self, ChatError> {
-        let convo_id = rand_string();
-
         // Create MlsGroup
         let mls_group = create_group(cx, name, desc)?;
 
         let mut convo = Self {
-            convo_id,
+            convo_id: hex::encode(mls_group.group_id().as_slice()),
             mls_group,
         };
 
@@ -131,8 +123,8 @@ impl GroupV3Convo {
                 .map_err(ChatError::generic)?;
 
         // let convo_id = hex::encode(mls_group.group_id().as_slice());
-        let mut convo = Self {
-            convo_id,
+        let convo = Self {
+            convo_id: hex::encode(mls_group.group_id().as_slice()),
             mls_group,
         };
 
