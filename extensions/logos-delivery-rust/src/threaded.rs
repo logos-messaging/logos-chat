@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::net::Ipv4Addr;
 use std::num::NonZeroU32;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -66,7 +67,8 @@ pub struct P2pConfig {
 pub enum Network {
     /// One the library knows by name, with the nodes and limits it holds for it.
     Preset(String),
-    /// One made of nodes on this machine alone.
+    /// One of nodes told each other's addresses, which no node of a preset is
+    /// on.
     Local(LocalNetwork),
 }
 
@@ -83,6 +85,9 @@ impl fmt::Display for Network {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalNetwork {
     pub cluster_id: ClusterId,
+    /// The address the node listens on and is dialed at: loopback, or one of
+    /// its own on a network of containers.
+    pub address: Ipv4Addr,
     /// The nodes this one dials at its start.
     pub static_nodes: Vec<NodeAddress>,
     /// The largest message the node takes, in KiB.
@@ -114,13 +119,13 @@ impl TryFrom<u16> for ClusterId {
 }
 
 /// The multiaddress a node of a local network is dialed at:
-/// `/ip4/127.0.0.1/tcp/<port>/p2p/<peer id>`. The library leaves out a static
+/// `/ip4/<address>/tcp/<port>/p2p/<peer id>`. The library leaves out a static
 /// node it cannot read and starts all the same, so one is read here.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct NodeAddress(String);
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
-#[error("{0:?} is not /ip4/127.0.0.1/tcp/<port>/p2p/<peer id>")]
+#[error("{0:?} is not /ip4/<address>/tcp/<port>/p2p/<peer id>")]
 pub struct NotANodeAddress(String);
 
 /// The characters a peer id is written in.
@@ -132,8 +137,11 @@ impl FromStr for NodeAddress {
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         let parts: Vec<&str> = text.split('/').collect();
         let dialed = match parts.as_slice() {
-            ["", "ip4", "127.0.0.1", "tcp", port, "p2p", peer_id] => {
-                port.parse().is_ok_and(|port: u16| port != 0)
+            ["", "ip4", address, "tcp", port, "p2p", peer_id] => {
+                address
+                    .parse()
+                    .is_ok_and(|address: Ipv4Addr| !address.is_unspecified())
+                    && port.parse().is_ok_and(|port: u16| port != 0)
                     && !peer_id.is_empty()
                     && peer_id.chars().all(|c| BASE58.contains(c))
             }
@@ -189,15 +197,16 @@ fn node_config(cfg: &P2pConfig) -> String {
             // A content topic needs shards the library assigns, and with one
             // shard every node of the network is in the one mesh.
             "numShardsInNetwork": 1,
-            // Every node of the network shares this machine's address, and the
+            // On loopback every node of the network shares one address, and the
             // library keeps five peers to an address unless told otherwise.
             "colocationLimit": 0,
-            // On loopback alone nothing outside the machine can dial the node.
-            "listenAddress": "127.0.0.1",
+            // The node listens on its own address alone: on loopback nothing
+            // outside the machine can dial it.
+            "listenAddress": local.address.to_string(),
             // Naming the address keeps the library from asking the router for
             // one, and `none` it refuses. The node announces another address
             // all the same, so `NodeState::address` is built from its port.
-            "nat": "extip:127.0.0.1",
+            "nat": format!("extip:{}", local.address),
             // The network has no store node, and a node waiting for one to
             // confirm keeps every message it published.
             "reliabilityEnabled": false,
@@ -266,7 +275,11 @@ impl NodeState {
         let needed = |id: &str| info(id).map_err(DeliveryError::NodeInfoFailed);
         let address = match network {
             Network::Preset(_) => announced_address(&needed("MyMultiaddresses")?),
-            Network::Local(_) => loopback_address(&needed("MyBoundPorts")?, &needed("MyPeerId")?),
+            Network::Local(local) => local_address(
+                local.address,
+                &needed("MyBoundPorts")?,
+                &needed("MyPeerId")?,
+            ),
         }
         .map_err(DeliveryError::NodeInfoFailed)?;
         let metrics = info("Metrics").unwrap_or_else(|error| {
@@ -287,9 +300,9 @@ fn announced_address(multiaddresses: &str) -> Result<String, String> {
         .ok_or_else(|| "the node announces no address".to_string())
 }
 
-/// The loopback multiaddress of a node, from its answers for `MyBoundPorts`
-/// and `MyPeerId`.
-fn loopback_address(bound_ports: &str, peer_id: &str) -> Result<String, String> {
+/// The multiaddress a node of a local network is dialed at, from its address
+/// and its answers for `MyBoundPorts` and `MyPeerId`.
+fn local_address(address: Ipv4Addr, bound_ports: &str, peer_id: &str) -> Result<String, String> {
     #[derive(serde::Deserialize)]
     struct BoundPorts {
         tcp: u16,
@@ -297,7 +310,7 @@ fn loopback_address(bound_ports: &str, peer_id: &str) -> Result<String, String> 
 
     let ports: BoundPorts = serde_json::from_str(bound_ports)
         .map_err(|e| format!("unreadable bound ports ({e}): {bound_ports}"))?;
-    Ok(format!("/ip4/127.0.0.1/tcp/{}/p2p/{peer_id}", ports.tcp))
+    Ok(format!("/ip4/{address}/tcp/{}/p2p/{peer_id}", ports.tcp))
 }
 
 /// Gauge or counter `name` in the library's metrics text, summed over its
@@ -888,12 +901,17 @@ mod tests {
         }
     }
 
-    fn local_network() -> Network {
-        Network::Local(LocalNetwork {
+    fn local() -> LocalNetwork {
+        LocalNetwork {
             cluster_id: ClusterId::try_from(77).unwrap(),
+            address: Ipv4Addr::LOCALHOST,
             static_nodes: Vec::new(),
             max_message_kib: NonZeroU32::new(512).unwrap(),
-        })
+        }
+    }
+
+    fn local_network() -> Network {
+        Network::Local(local())
     }
 
     fn refused(losses: &Losses) -> u64 {
@@ -923,6 +941,7 @@ mod tests {
         let cfg = P2pConfig {
             network: Network::Local(LocalNetwork {
                 cluster_id: ClusterId::try_from(77).unwrap(),
+                address: Ipv4Addr::LOCALHOST,
                 static_nodes: vec![RAYA.parse().unwrap(), PAX.parse().unwrap()],
                 max_message_kib: NonZeroU32::new(512).unwrap(),
             }),
@@ -960,6 +979,21 @@ mod tests {
     }
 
     #[test]
+    fn a_node_of_a_local_network_listens_on_its_address_and_names_it() {
+        let cfg = P2pConfig {
+            network: Network::Local(LocalNetwork {
+                address: Ipv4Addr::new(10, 89, 0, 7),
+                ..local()
+            }),
+            port: 0,
+            log_level: "ERROR".into(),
+        };
+        let config: serde_json::Value = serde_json::from_str(&node_config(&cfg)).unwrap();
+        assert_eq!(config["listenAddress"], "10.89.0.7");
+        assert_eq!(config["nat"], "extip:10.89.0.7");
+    }
+
+    #[test]
     fn a_cluster_id_the_library_reads_as_a_preset_is_refused() {
         assert_eq!(ClusterId::try_from(1), Err(PresetClusterId(1)));
         assert_eq!(ClusterId::try_from(2), Err(PresetClusterId(2)));
@@ -969,11 +1003,17 @@ mod tests {
     }
 
     #[test]
-    fn a_node_address_is_the_loopback_address_a_port_and_a_peer_id() {
-        for address in [RAYA, PAX, "/ip4/127.0.0.1/tcp/65535/p2p/Qm"] {
-            assert_eq!(address.parse(), Ok(NodeAddress(address.to_string())));
-        }
+    fn a_node_address_is_an_ipv4_address_a_port_and_a_peer_id() {
         let peer_id = RAYA.rsplit('/').next().unwrap();
+        for address in [
+            RAYA.to_string(),
+            PAX.to_string(),
+            "/ip4/127.0.0.1/tcp/65535/p2p/Qm".to_string(),
+            format!("/ip4/127.0.0.2/tcp/4001/p2p/{peer_id}"),
+            format!("/ip4/10.89.0.7/tcp/4001/p2p/{peer_id}"),
+        ] {
+            assert_eq!(address.parse(), Ok(NodeAddress(address.clone())));
+        }
         for text in [
             String::new(),
             "notanaddress".to_string(),
@@ -985,8 +1025,9 @@ mod tests {
             format!("/ip4/127.0.0.1/tcp/65536/p2p/{peer_id}"),
             format!("/ip4/127.0.0.1/udp/4001/p2p/{peer_id}"),
             format!("/ip4/localhost/tcp/4001/p2p/{peer_id}"),
-            format!("/ip4/127.0.0.2/tcp/4001/p2p/{peer_id}"),
-            format!("/ip4/192.168.1.7/tcp/4001/p2p/{peer_id}"),
+            format!("/ip4/127.0.0.01/tcp/4001/p2p/{peer_id}"),
+            format!("/ip4/10.89.0.256/tcp/4001/p2p/{peer_id}"),
+            format!("/ip4/10.89.0/tcp/4001/p2p/{peer_id}"),
             format!("/ip4/0.0.0.0/tcp/4001/p2p/{peer_id}"),
             format!("/ip6/::1/tcp/4001/p2p/{peer_id}"),
             format!("ip4/127.0.0.1/tcp/4001/p2p/{peer_id}"),
@@ -1010,6 +1051,16 @@ mod tests {
             "/ip4/127.0.0.1/tcp/34739/p2p/16Uiu2HAkwVXqMJzJLxhpLL2QtZrdU9theKgbjMcyBKCzxV1dyjUM"
         );
         assert_eq!((state.peers, state.mesh_peers), (Some(9), Some(8)));
+
+        let own = Network::Local(LocalNetwork {
+            address: Ipv4Addr::new(10, 89, 0, 7),
+            ..local()
+        });
+        let state = NodeState::ask(recorded(&[]), &own, &Losses::default()).unwrap();
+        assert_eq!(
+            state.address,
+            "/ip4/10.89.0.7/tcp/34739/p2p/16Uiu2HAkwVXqMJzJLxhpLL2QtZrdU9theKgbjMcyBKCzxV1dyjUM"
+        );
 
         // What the node announces is not asked for.
         let unasked = recorded(&["MyMultiaddresses"]);
@@ -1073,7 +1124,7 @@ mod tests {
 
     #[test]
     fn a_recorded_node_info_answer_reads_as_the_nodes_state() {
-        let address = loopback_address(BOUND_PORTS, PEER_ID).unwrap();
+        let address = local_address(Ipv4Addr::LOCALHOST, BOUND_PORTS, PEER_ID).unwrap();
         assert_eq!(
             NodeState::new(address, METRICS, &Losses::default()),
             NodeState {
@@ -1125,7 +1176,7 @@ mod tests {
 
     #[test]
     fn bound_ports_that_are_not_the_librarys_json_are_an_error() {
-        assert!(loopback_address("tcp=4001", PEER_ID).is_err());
+        assert!(local_address(Ipv4Addr::LOCALHOST, "tcp=4001", PEER_ID).is_err());
     }
 
     /// What a wait for a node's peers does when the node answers `links` for
@@ -1163,6 +1214,7 @@ mod tests {
     fn dialing(static_nodes: &[&str]) -> Network {
         Network::Local(LocalNetwork {
             cluster_id: ClusterId::try_from(77).unwrap(),
+            address: Ipv4Addr::LOCALHOST,
             static_nodes: static_nodes
                 .iter()
                 .map(|node| node.parse().unwrap())
