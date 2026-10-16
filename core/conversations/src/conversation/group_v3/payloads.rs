@@ -6,7 +6,10 @@ use super::{GroupV3Convo, delivery_address_from_id};
 
 use crate::{
     AddressedEnvelope,
-    conversation::{Identified, group_v3::FrameId},
+    conversation::{
+        Identified,
+        group_v3::{FrameId, consensus::CommitValidator},
+    },
     errors::SendError,
     types::AddressedEncryptedPayload,
     utils::{blake2b_hex, hash_size},
@@ -43,7 +46,10 @@ impl GroupV3Frame {
     }
 }
 
-impl GroupV3Convo {
+impl<V> GroupV3Convo<V>
+where
+    V: CommitValidator,
+{
     pub fn to_envelope(&self, msg: MlsMessageOut) -> Result<AddressedEnvelope, SendError> {
         let bytes = msg.to_bytes()?;
 
