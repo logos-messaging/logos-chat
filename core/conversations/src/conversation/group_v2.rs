@@ -96,7 +96,14 @@ fn make_scoring() -> DefaultPeerScoring {
 /// Consensus service: the library default over a fresh in-memory store and a
 /// random Ethereum consensus signer.
 fn make_consensus() -> DefaultConsensusPlugin {
-    DefaultConsensusPlugin::new(EthereumConsensusSigner::new(PrivateKeySigner::random()))
+    // Not `PrivateKeySigner::random`: on Linux its rand 0.8 seeds from a raw
+    // getrandom syscall, where `rand` calls the process's `getrandom`.
+    let signer = loop {
+        if let Ok(signer) = PrivateKeySigner::from_bytes(&rand::random::<[u8; 32]>().into()) {
+            break signer;
+        }
+    };
+    DefaultConsensusPlugin::new(EthereumConsensusSigner::new(signer))
 }
 
 pub struct GroupV2Convo {
