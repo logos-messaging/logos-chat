@@ -6,6 +6,7 @@
 //  - Everyone is an "Admin"
 //
 
+mod consensus;
 mod payloads;
 
 use openmls::extensions::{Extension, Extensions, UnknownExtension};
@@ -15,6 +16,7 @@ use openmls::key_packages::KeyPackage;
 use openmls::messages::Welcome;
 use openmls::prelude::SenderRatchetConfiguration;
 
+use crate::conversation::group_v3::consensus::{CommitValidator, YoloValidator};
 use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified};
 use crate::errors::{SendError, TypeConversionError};
 use crate::service_context::ServiceContext;
@@ -84,12 +86,13 @@ fn delivery_address_from_id(convo_id: &str) -> String {
 }
 
 #[derive(Debug)]
-pub struct GroupV3Convo {
+pub struct GroupV3Convo<V: CommitValidator> {
     convo_id: String,
     mls_group: MlsGroup,
+    commit_validator: V,
 }
 
-impl GroupV3Convo {
+impl GroupV3Convo<YoloValidator> {
     pub fn new<S: ExternalServices>(
         cx: &mut ServiceContext<S>,
         name: &str,
@@ -102,6 +105,7 @@ impl GroupV3Convo {
         let mut convo = Self {
             convo_id: hex::encode(mls_group.group_id().as_slice()),
             mls_group,
+            commit_validator: YoloValidator {},
         };
 
         convo.init(cx)?;
@@ -125,12 +129,18 @@ impl GroupV3Convo {
         let convo = Self {
             convo_id: hex::encode(mls_group.group_id().as_slice()),
             mls_group,
+            commit_validator: YoloValidator {},
         };
 
         convo.init(cx)?;
         Ok(convo)
     }
+}
 
+impl<V> GroupV3Convo<V>
+where
+    V: CommitValidator,
+{
     fn init<S: ExternalServices>(&self, cx: &mut ServiceContext<S>) -> Result<(), ChatError> {
         // Configure the delivery service to listen for the required delivery addresses.
         cx.ds
@@ -196,7 +206,10 @@ impl GroupV3Convo {
     }
 }
 
-impl ConvoBase for GroupV3Convo {
+impl<V> ConvoBase for GroupV3Convo<V>
+where
+    V: CommitValidator,
+{
     fn signers(&self) -> Result<Vec<crate::Signer>, ChatError> {
         let signers: Result<Vec<Signer>, TypeConversionError> = self
             .mls_group
@@ -220,15 +233,19 @@ impl ConvoBase for GroupV3Convo {
     }
 }
 
-impl Identified for GroupV3Convo {
+impl<V> Identified for GroupV3Convo<V>
+where
+    V: CommitValidator,
+{
     fn id(&self) -> ConversationIdRef<'_> {
         &self.convo_id
     }
 }
 
-impl<S> GroupConvo<S> for GroupV3Convo
+impl<S, V> GroupConvo<S> for GroupV3Convo<V>
 where
     S: ExternalServices,
+    V: CommitValidator,
 {
     fn add_signer(
         &mut self,
@@ -264,9 +281,10 @@ where
     }
 }
 
-impl<S> Convo<S> for GroupV3Convo
+impl<S, V> Convo<S> for GroupV3Convo<V>
 where
     S: ExternalServices,
+    V: CommitValidator,
 {
     fn send_content(
         &mut self,
