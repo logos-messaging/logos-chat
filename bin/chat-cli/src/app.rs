@@ -474,8 +474,10 @@ where
             }
             "/account" => {
                 let address = self.client.addr().to_string();
+                let signer = self.client.installation_name();
                 self.add_system_message("── Your Account Address ──");
                 self.add_system_message(&address);
+                self.add_system_message(&signer);
                 let clipboard_msg = match Clipboard::new().and_then(|mut cb| cb.set_text(&address))
                 {
                     Ok(()) => "Address copied to clipboard. Share it so others can reach you.",
