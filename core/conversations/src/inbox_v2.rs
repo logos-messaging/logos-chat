@@ -207,8 +207,8 @@ impl InboxV2 {
             }
             InviteType::GroupV3(welcome_bytes) => {
                 info!("Process V3 WelcomeMessage");
-                let welcome = self.parse_heavy_welcome(service_ctx, &welcome_bytes)?;
-                let convo = GroupV3Convo::new_from_welcome(service_ctx, &welcome)?;
+                let welcome = self.parse_heavy_welcome(&welcome_bytes)?;
+                let convo = GroupV3Convo::new_from_welcome(service_ctx, welcome)?;
                 Ok(Some((Box::new(convo), ConversationClass::Group)))
             }
         }
@@ -249,11 +249,7 @@ impl InboxV2 {
         Ok(convo)
     }
 
-    fn parse_heavy_welcome<S: ExternalServices>(
-        &self,
-        cx: &mut ServiceContext<S>,
-        welcome_bytes: &[u8],
-    ) -> Result<Welcome, ChatError> {
+    fn parse_heavy_welcome(&self, welcome_bytes: &[u8]) -> Result<Welcome, ChatError> {
         let (msg_in, _rest) = MlsMessageIn::tls_deserialize_bytes(welcome_bytes)?;
 
         let MlsMessageBodyIn::Welcome(welcome) = msg_in.extract() else {
