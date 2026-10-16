@@ -49,7 +49,6 @@ fn group_create_config(name: &str, desc: &str) -> MlsGroupCreateConfig {
         .build()
 }
 
-const OUTBOUND_HASH_CACHE_SIZE: usize = 25;
 // A message stays readable until one this many newer from its sender is
 // decrypted. Covers logos-delivery's reconnect backfill: up to 20 missed
 // messages, handed over after newer live ones.
