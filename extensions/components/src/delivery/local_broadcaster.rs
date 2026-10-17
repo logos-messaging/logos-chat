@@ -1,7 +1,6 @@
 use std::{
     cell::RefCell,
     collections::{HashSet, VecDeque},
-    hash::{DefaultHasher, Hash, Hasher},
     rc::Rc,
 };
 
@@ -30,12 +29,12 @@ pub struct LocalBroadcaster {
     shared: Rc<RefCell<BroadcasterShared<AddressedEnvelope>>>,
     cursor: usize,
     subscriptions: HashSet<String>,
-    outbound_msgs: Vec<u64>,
 }
 
 /// This is Lightweight DeliveryService which can be used for tests
 /// and local examples. Messages are not delivered until `poll` is called
-/// which allows for more fine grain test cases.
+/// which allows for more fine grain test cases. A consumer is handed the
+/// messages it publishes too.
 impl LocalBroadcaster {
     pub fn new() -> Self {
         let shared = Rc::new(RefCell::new(BroadcasterShared {
@@ -48,7 +47,6 @@ impl LocalBroadcaster {
             shared,
             cursor,
             subscriptions: HashSet::new(),
-            outbound_msgs: Vec::new(),
         }
     }
 
@@ -62,7 +60,6 @@ impl LocalBroadcaster {
             shared: inner,
             cursor,
             subscriptions: HashSet::new(),
-            outbound_msgs: Vec::new(),
         }
     }
 
@@ -80,25 +77,12 @@ impl LocalBroadcaster {
                 None => return None,
                 Some(ae) => {
                     self.cursor = next + 1;
-                    if self.subscriptions.contains(ae.delivery_address.as_str())
-                        && self.is_inbound(ae)
-                    {
+                    if self.subscriptions.contains(ae.delivery_address.as_str()) {
                         return Some(ae.data.clone());
                     }
                 }
             }
         }
-    }
-
-    fn msg_id(msg: &AddressedEnvelope) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        msg.data.as_slice().hash(&mut hasher);
-        hasher.finish()
-    }
-
-    fn is_inbound(&self, msg: &AddressedEnvelope) -> bool {
-        let mid = Self::msg_id(msg);
-        !self.outbound_msgs.contains(&mid)
     }
 }
 
@@ -113,7 +97,6 @@ impl DeliveryService for LocalBroadcaster {
 
     fn publish(&mut self, envelope: AddressedEnvelope) -> Result<(), Self::Error> {
         info!(?envelope.delivery_address, len=envelope.data.len(), "DS:Publish");
-        self.outbound_msgs.push(Self::msg_id(&envelope));
         self.shared.borrow_mut().messages.push_back(envelope);
 
         Ok(())
@@ -125,5 +108,28 @@ impl DeliveryService for LocalBroadcaster {
         // Subscriptions are evaluated on polling, not when the message is published
         self.subscriptions.insert(delivery_address.to_string());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_consumer_is_handed_what_it_publishes() {
+        let mut saro = LocalBroadcaster::new();
+        let mut raya = saro.clone();
+        saro.subscribe("weekend").unwrap();
+        raya.subscribe("weekend").unwrap();
+
+        let post = AddressedEnvelope {
+            delivery_address: "weekend".into(),
+            data: b"hello".to_vec(),
+        };
+        saro.publish(post).unwrap();
+
+        assert_eq!(saro.poll(), Some(b"hello".to_vec()));
+        assert_eq!(saro.poll(), None);
+        assert_eq!(raya.poll(), Some(b"hello".to_vec()));
     }
 }
