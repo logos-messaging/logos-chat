@@ -12,8 +12,9 @@ use components::HttpAuthClient;
 use components::basic_file_key_vault::BasicFileKeyVault;
 use crossbeam_channel::Receiver;
 use logos_chat::{
-    AuthService, ChatClient, ConversationStore, DbKey, Event, GroupV2Config, Installation,
-    LogosConfig, P2pConfig, REGISTRY_ENDPOINT, RegistrationService, RegistryPublishMode, Transport,
+    AuthService, ChatClient, ConversationStore, DbKey, EmbeddedLogosDelivery, Event, GroupV2Config,
+    Installation, LogosConfig, P2pConfig, REGISTRY_ENDPOINT, RegistrationService,
+    RegistryPublishMode, Transport,
 };
 
 use app::ChatApp;
@@ -173,7 +174,6 @@ fn main() -> Result<()> {
             let mut config = LogosConfig::new(db_str, db_key());
             config.set_registry_url(registry_url);
             config.set_registry_publish_mode(cli.registry_publish.into());
-            config.set_p2p_config(p2p_config);
             if let Some(group_v2) = group_v2_override(cli.group_commit, cli.transport) {
                 // Demo/test-only fast timers; migrates once the library's
                 // wallclock/timer abstraction replaces this raw config.
@@ -192,7 +192,9 @@ fn main() -> Result<()> {
                     .install(cli.name.as_str())?;
             let installation =
                 Installation::make(installation_key.signing_key, installation_key.account);
-            let (client, events) = logos_chat::client_with(installation, config)?;
+            let node = EmbeddedLogosDelivery::start(p2p_config)
+                .context("failed to start the delivery node")?;
+            let (client, events) = logos_chat::client_with(installation, config, node)?;
 
             println!("Node connected.");
             launch_tui(client, events, &cli)
