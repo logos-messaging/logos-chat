@@ -372,6 +372,11 @@ where
             &service_ctx.mls_identity,
             reliable.encode_to_vec(),
         )?;
+        service_ctx.causal.on_sent(
+            &self.convo_id,
+            service_ctx.mls_identity.signer_key(),
+            &reliable,
+        );
         self.after_op(service_ctx)?;
         Ok(reliable.message_id)
     }

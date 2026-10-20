@@ -496,6 +496,53 @@ fn missing_group_v2_message_is_detected() {
     assert!(harness.raya().take_missing_messages().is_empty());
 }
 
+#[test]
+fn a_refused_send_is_not_reported_missing() {
+    // A send the group refuses never goes out, so the sender's next message
+    // must not name it.
+    let mut harness = TestHarness::<3>::new(|_, _| {});
+
+    let pax_account = harness.pax().account();
+    let participants = &[harness.raya().account(), pax_account.clone()];
+    let convo_id = harness
+        .saro()
+        .create_group_convo_v2(participants, "", "")
+        .expect("saro create group");
+    harness.process_until_label("raya + pax join", |h| {
+        h.raya().convo_count() == 1 && h.pax().convo_count() == 1
+    });
+
+    let pax = std::slice::from_ref(&pax_account);
+    harness
+        .saro()
+        .group_remove_participants(&convo_id, pax)
+        .expect("saro remove pax");
+
+    // Saro sends only once a repeated removal is refused, so no message that
+    // goes out can race the commit, and stops at the first send refused.
+    harness.process_until_label("saro's send refused", |h| {
+        h.saro().group_remove_participants(&convo_id, pax).is_err()
+            && h.saro()
+                .send_content(&convo_id, b"during the removal")
+                .is_err()
+    });
+    harness.process_until_label("pax removed", |h| {
+        h.saro().group_signers(&convo_id).map_or(0, |m| m.len()) == 2
+            && h.raya().group_signers(&convo_id).map_or(0, |m| m.len()) == 2
+    });
+
+    harness
+        .saro()
+        .send_content(&convo_id, b"after the removal")
+        .expect("saro send");
+    harness.process_until_label("raya gets it", |h| {
+        h.raya().check(&convo_id, b"after the removal")
+    });
+
+    let missing = harness.raya().take_missing_messages();
+    assert!(missing.is_empty(), "{missing:?}");
+}
+
 /// End-to-end acknowledgement detection on GroupV2.
 ///
 /// Saro sends a message; Raya and Pax reply. Each reply carries Saro's message
