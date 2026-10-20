@@ -59,6 +59,7 @@ const OUT_OF_ORDER_TOLERANCE: u32 = 32;
 fn mls_join_config() -> MlsGroupJoinConfig {
     MlsGroupJoinConfig::builder()
         .sender_ratchet_configuration(sender_ratchet_config())
+        .use_ratchet_tree_extension(true)
         .build()
 }
 
