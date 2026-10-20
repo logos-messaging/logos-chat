@@ -8,7 +8,8 @@ license.workspace = true
 crate-type = ["rlib"]
 
 [features]
-# The in-memory store and the store test assertions, for crates that test against a store.
+# The in-memory store and the store test assertions, for crates that test against a store,
+# and the Core hooks a test uses to play a modified client.
 test-support = []
 
 [dependencies]

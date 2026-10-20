@@ -1,5 +1,6 @@
 use integration_tests_core::TestHarness;
 use libchat::{ChatError, DeliveryAck, MissingMessage};
+use std::time::Duration;
 use tracing::info;
 
 #[test]
@@ -573,4 +574,32 @@ fn replies_acknowledge_the_message_they_were_sent_after() {
             .all(|a| a.message_id != message_id),
         "a peer acknowledges one message only once"
     );
+}
+
+#[test]
+fn group_under_the_inbox_id_is_refused() {
+    let mut harness = TestHarness::<2>::new(|_, _| {});
+    harness.tolerate_inbound_errors();
+
+    // Saro plays a modified client that gives the group Raya's inbox id.
+    let raya_inbox = harness.raya().inbox_id().to_string();
+    let raya_account = harness.raya().account();
+    let convo_id = harness
+        .saro()
+        .create_group_convo_v2_with_id(&raya_inbox, &[raya_account])
+        .expect("saro create");
+
+    harness.process_until(|h| h.raya().convo_count() > 0 || !h.raya().inbound_errors().is_empty());
+    assert_eq!(harness.raya().convo_count(), 0);
+    let errors = harness.raya().inbound_errors();
+    assert!(errors[0].contains(&raya_inbox), "{errors:?}");
+
+    // Raya never subscribed to the group, so its traffic does not reach her.
+    harness
+        .saro()
+        .send_content(&convo_id, b"hello")
+        .expect("saro send");
+    harness.process(Duration::from_millis(500));
+    let errors = harness.raya().inbound_errors();
+    assert_eq!(errors.len(), 1, "{errors:?}");
 }
