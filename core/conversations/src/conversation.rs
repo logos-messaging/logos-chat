@@ -3,6 +3,7 @@ pub mod group_v1;
 mod group_v2;
 mod group_v3;
 pub mod mls_extensions;
+mod mls_groups;
 mod mls_utils;
 
 pub use crate::errors::ChatError;

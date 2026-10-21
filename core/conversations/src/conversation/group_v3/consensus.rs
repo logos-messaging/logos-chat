@@ -2,12 +2,7 @@ use std::fmt::Debug;
 
 use openmls::group::StagedCommit;
 
-use crate::{
-    trunc,
-    utils::{blake2b_hex, hash_size},
-};
-
-const CHAR_PER_BYTE: usize = 2; // 2 Hex characters per byte
+use crate::utils::{blake2b_hex, hash_size};
 
 /// Outcome of a submitted commit.
 #[derive(Debug, Clone, PartialEq, Eq)]

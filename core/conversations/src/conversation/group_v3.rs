@@ -11,33 +11,27 @@ mod handlers;
 mod payloads;
 
 use chat_proto::logoschat::encryption::{EncryptedPayload, encrypted_payload};
-use openmls::extensions::{Extension, Extensions, UnknownExtension};
 use openmls::framing::MlsMessageOut;
-use openmls::group::{
-    MlsGroup, MlsGroupCreateConfig, MlsGroupJoinConfig, StagedCommit, StagedWelcome,
-};
+use openmls::group::{MlsGroup, StagedWelcome};
 use openmls::key_packages::KeyPackage;
 use openmls::messages::Welcome;
 use openmls::prelude::tls_codec::DeserializeBytes as _;
 use openmls::prelude::{
-    MlsMessageIn, ProcessMessageError, ProcessedMessageContent, Sender, SenderRatchetConfiguration,
-    ValidationError,
+    MlsMessageIn, ProcessMessageError, ProcessedMessageContent, Sender, ValidationError,
 };
 use tracing::{debug, instrument, warn};
 
 use crate::conversation::group_v3::consensus::{CommitFingerprint, CommitValidator, YoloValidator};
+use crate::conversation::mls_groups::{HasMlsConvo, create_group, mls_join_config};
 use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified};
-use crate::errors::{SendError, TypeConversionError};
+use crate::errors::SendError;
 use crate::service_context::ServiceContext;
 use crate::utils::{blake2b_hex, hash_size};
 use crate::{
     AddressedEnvelope, ChatError, ConvoOutcome, DeliveryService, ExternalServices,
-    IdentityProvider, Signer, SignerKey,
+    IdentityProvider, SignerKey,
 };
 
-use super::mls_extensions::{
-    ConvoMetaInfo, GROUP_METADATA_EXTENSION_TYPE, capabilities_with_group_metadata,
-};
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
 use self::payloads::frame_id;
@@ -45,54 +39,6 @@ use self::payloads::frame_id;
 // Type Aliases
 type Frame = payloads::GroupV3Frame;
 type FrameId = String;
-
-fn group_create_config(name: &str, desc: &str) -> MlsGroupCreateConfig {
-    let meta = ConvoMetaInfo::new(name, desc);
-
-    let extensions = Extensions::from_vec(vec![Extension::Unknown(
-        GROUP_METADATA_EXTENSION_TYPE,
-        UnknownExtension(meta.to_extension_bytes()),
-    )])
-    .expect("compile time validated");
-
-    MlsGroupCreateConfig::builder()
-        .ciphersuite(crate::inbox_v2::CIPHER_SUITE)
-        .capabilities(capabilities_with_group_metadata())
-        .use_ratchet_tree_extension(true) // Embed the ratchet tree in the Welcome so joiners can build the group
-        .with_group_context_extensions(extensions)
-        .build()
-}
-
-// A message stays readable until one this many newer from its sender is
-// decrypted. Covers logos-delivery's reconnect backfill: up to 20 missed
-// messages, handed over after newer live ones.
-const OUT_OF_ORDER_TOLERANCE: u32 = 32;
-
-fn mls_join_config() -> MlsGroupJoinConfig {
-    MlsGroupJoinConfig::builder()
-        .sender_ratchet_configuration(sender_ratchet_config())
-        .use_ratchet_tree_extension(true)
-        .build()
-}
-
-fn sender_ratchet_config() -> SenderRatchetConfiguration {
-    let default = SenderRatchetConfiguration::default();
-    SenderRatchetConfiguration::new(OUT_OF_ORDER_TOLERANCE, default.maximum_forward_distance())
-}
-
-fn create_group<S: ExternalServices>(
-    cx: &mut ServiceContext<S>,
-    name: &str,
-    desc: &str,
-) -> Result<MlsGroup, ChatError> {
-    MlsGroup::new(
-        &cx.mls_provider,
-        &cx.mls_identity,
-        &group_create_config(name, desc),
-        cx.mls_identity.get_credential(),
-    )
-    .map_err(|e| ChatError::GroupCreate(e.to_string()))
-}
 
 fn delivery_address_from_id(convo_id: &str) -> String {
     blake2b_hex::<hash_size::DeliveryAddr>(&["delivery_addr|", convo_id])
@@ -228,43 +174,6 @@ where
     }
 }
 
-impl<V> ConvoBase for GroupV3Convo<V>
-where
-    V: CommitValidator,
-{
-    fn signers(&self) -> Result<Vec<crate::Signer>, ChatError> {
-        let signers: Result<Vec<Signer>, TypeConversionError> = self
-            .mls_group
-            .members()
-            .map(|m| Signer::from_member(&m))
-            .collect();
-
-        Ok(signers?)
-    }
-
-    fn pending_signers(&self) -> Result<Vec<Signer>, ChatError> {
-        Ok(vec![])
-    }
-
-    fn can_send(&self) -> bool {
-        //TODO: implement based on membership
-        true
-    }
-
-    fn metadata(&self) -> Option<crate::ConvoMetadata> {
-        let res = self.mls_group.extensions().iter().find_map(|ext| {
-            if let Extension::Unknown(ext_type, UnknownExtension(bytes)) = ext
-                && *ext_type == GROUP_METADATA_EXTENSION_TYPE
-            {
-                return ConvoMetaInfo::from_extension_bytes(bytes).ok();
-            };
-            None
-        });
-
-        res.map(Into::into)
-    }
-}
-
 impl<V> Identified for GroupV3Convo<V>
 where
     V: CommitValidator,
@@ -391,5 +300,14 @@ where
 
     fn wakeup(&mut self, _cx: &mut ServiceContext<S>) -> Result<crate::ConvoOutcome, ChatError> {
         Ok(ConvoOutcome::empty(self.id().to_string()))
+    }
+}
+
+impl<V> HasMlsConvo for GroupV3Convo<V>
+where
+    V: CommitValidator,
+{
+    fn mls_group(&self) -> &MlsGroup {
+        &self.mls_group
     }
 }
