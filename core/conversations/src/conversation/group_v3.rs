@@ -232,15 +232,25 @@ where
     }
 
     fn pending_signers(&self) -> Result<Vec<Signer>, ChatError> {
-        todo!()
+        Ok(vec![])
     }
 
     fn can_send(&self) -> bool {
-        todo!()
+        //TODO: implement based on membership
+        true
     }
 
     fn metadata(&self) -> Option<crate::ConvoMetadata> {
-        todo!()
+        let res = self.mls_group.extensions().iter().find_map(|ext| {
+            if let Extension::Unknown(ext_type, UnknownExtension(bytes)) = ext
+                && *ext_type == GROUP_METADATA_EXTENSION_TYPE
+            {
+                return ConvoMetaInfo::from_extension_bytes(bytes).ok();
+            };
+            None
+        });
+
+        res.map(Into::into)
     }
 }
 
