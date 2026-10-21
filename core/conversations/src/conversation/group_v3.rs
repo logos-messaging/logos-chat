@@ -13,7 +13,9 @@ mod payloads;
 use chat_proto::logoschat::encryption::{EncryptedPayload, encrypted_payload};
 use openmls::extensions::{Extension, Extensions, UnknownExtension};
 use openmls::framing::MlsMessageOut;
-use openmls::group::{MlsGroup, MlsGroupCreateConfig, MlsGroupJoinConfig, StagedWelcome};
+use openmls::group::{
+    MlsGroup, MlsGroupCreateConfig, MlsGroupJoinConfig, StagedCommit, StagedWelcome,
+};
 use openmls::key_packages::KeyPackage;
 use openmls::messages::Welcome;
 use openmls::prelude::tls_codec::DeserializeBytes as _;
@@ -23,7 +25,7 @@ use openmls::prelude::{
 };
 use tracing::{debug, instrument, warn};
 
-use crate::conversation::group_v3::consensus::{CommitValidator, YoloValidator};
+use crate::conversation::group_v3::consensus::{CommitFingerprint, CommitValidator, YoloValidator};
 use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified};
 use crate::errors::{SendError, TypeConversionError};
 use crate::service_context::ServiceContext;
@@ -193,16 +195,25 @@ where
     }
 
     // Handles pending_commit
-    fn process_generated_commit<S: ExternalServices>(
+    fn process_pending_commit<S: ExternalServices>(
         &mut self,
         cx: &mut ServiceContext<S>,
-        commit: MlsMessageOut,
+        commit_msg: MlsMessageOut,
         dependent_msgs: Vec<AddressedEnvelope>,
-    ) -> Result<(), SendError> {
-        // Check if can commit
-        // ????
+    ) -> Result<(), ChatError> {
+        let commit = self
+            .mls_group
+            .pending_commit()
+            .ok_or(ChatError::Protocol("no pending commit".into()))?;
+
+        let fingerprint = CommitFingerprint::from(commit);
+        let epoch = self.mls_group.epoch().as_u64(); // the epoch this commit leaves
+        self.commit_validator.propose_commit(epoch, fingerprint);
+
+        // Check if Can merge?
+
         // Send Commit
-        self.send_mls_msg(cx, commit)?;
+        self.send_mls_msg(cx, commit_msg)?;
 
         // Update State
         self.mls_group.merge_pending_commit(&cx.mls_provider)?;
@@ -277,8 +288,12 @@ where
         let existing = self.signers()?.into_iter();
         let signers = unique(member_diff(signers, existing));
 
+        if !self.commit_validator.can_make_commit() {
+            unimplemented!("create proposal for steward")
+        }
+
         let key_packages: Vec<KeyPackage> = fetch_key_packages(cx, signers)?;
-        let (commit, welcome, _) = self
+        let (commit_msg, welcome, _) = self
             .mls_group
             .add_members(&cx.mls_provider, &cx.mls_identity, key_packages.as_slice())
             .map_err(ChatError::generic)?;
@@ -288,7 +303,7 @@ where
             .map(|s| crate::inbox_v2::create_invite_v3(&SignerKey::from(s.leaf_node()), &welcome))
             .collect();
 
-        self.process_generated_commit(cx, commit, dependent_messages?)?;
+        self.process_pending_commit(cx, commit_msg, dependent_messages?)?;
 
         Ok(())
     }
