@@ -51,5 +51,5 @@ pub(crate) struct ServiceContext<S: ExternalServices> {
     /// Timing/policy for GroupV2 (de-mls) conversations, applied at
     /// create/join. The creator's phase durations reach joiners inside the
     /// welcome's `ConversationSync`.
-    pub(crate) demls_config: de_mls::ConversationConfig,
+    pub(crate) demls_config: de_mls_v2::ConversationConfig,
 }
