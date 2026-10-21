@@ -46,6 +46,8 @@ pub enum ChatError {
     Delivery(String),
     #[error("mls error: {0}")]
     MlsError(#[from] MlsError),
+    #[error("mls merge commit: {0}")]
+    MlsMergeCommit(#[from] MergePendingCommitError<MemoryStorageError>),
     #[error("demls error: {0}")]
     DeMlsError(#[from] ConversationError),
     // Used when a core function is called with a convo_id which is unsupported

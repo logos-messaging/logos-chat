@@ -3,9 +3,11 @@ use openmls::prelude::Member;
 use prost::Message as _;
 use tracing::{debug, info, warn};
 
-use super::consensus::CommitValidator;
+use super::consensus::{CommitValidator, CommitVerdict};
 use super::payloads::{GroupV3Payload, frame_id};
 use super::{Frame, GroupV3Convo};
+
+use crate::conversation::group_v3::consensus::CommitFingerprint;
 use crate::service_context::ServiceContext;
 use crate::{ChatError, Content, ConvoOutcome, ExternalServices, Signer};
 
@@ -52,9 +54,12 @@ where
         commit: StagedCommit,
     ) -> Result<ConvoOutcome, ChatError> {
         let epoch = self.mls_group.epoch().as_u64();
-        if !self.commit_validator.can_merge_commit() {
-            warn!(convo = %self.convo_id, epoch, "incoming commit rejected by validator");
-            return Ok(ConvoOutcome::empty(self.convo_id.to_string()));
+        let fingerprint = CommitFingerprint::from(&commit);
+
+        match self.commit_validator.can_merge_commit(epoch, fingerprint) {
+            CommitVerdict::Discard => todo!(),
+            CommitVerdict::Failed(_) => todo!(),
+            CommitVerdict::Merge => (),
         }
 
         self.mls_group
