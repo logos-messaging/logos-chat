@@ -7,21 +7,31 @@
 //
 
 mod consensus;
+mod handlers;
 mod payloads;
 
+use chat_proto::logoschat::encryption::{EncryptedPayload, encrypted_payload};
 use openmls::extensions::{Extension, Extensions, UnknownExtension};
 use openmls::framing::MlsMessageOut;
 use openmls::group::{MlsGroup, MlsGroupCreateConfig, MlsGroupJoinConfig, StagedWelcome};
 use openmls::key_packages::KeyPackage;
 use openmls::messages::Welcome;
-use openmls::prelude::SenderRatchetConfiguration;
+use openmls::prelude::tls_codec::DeserializeBytes as _;
+use openmls::prelude::{
+    MlsMessageIn, ProcessMessageError, ProcessedMessageContent, Sender, SenderRatchetConfiguration,
+    ValidationError,
+};
+use tracing::{debug, instrument, warn};
 
 use crate::conversation::group_v3::consensus::{CommitValidator, YoloValidator};
 use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified};
 use crate::errors::{SendError, TypeConversionError};
 use crate::service_context::ServiceContext;
 use crate::utils::{blake2b_hex, hash_size};
-use crate::{AddressedEnvelope, ChatError, DeliveryService, ExternalServices, Signer, SignerKey};
+use crate::{
+    AddressedEnvelope, ChatError, ConvoOutcome, DeliveryService, ExternalServices,
+    IdentityProvider, Signer, SignerKey,
+};
 
 use super::mls_extensions::{
     ConvoMetaInfo, GROUP_METADATA_EXTENSION_TYPE, capabilities_with_group_metadata,
@@ -296,15 +306,65 @@ where
         self.send_frame(cx, frame).map_err(Into::into)
     }
 
+    #[instrument(name = "groupv3.handle_frame", skip_all, fields(user_id = %cx.mls_identity.display_name()))]
     fn handle_frame(
         &mut self,
-        _cx: &mut ServiceContext<S>,
-        _enc: chat_proto::logoschat::encryption::EncryptedPayload,
-    ) -> Result<crate::ConvoOutcome, ChatError> {
-        todo!()
+        cx: &mut ServiceContext<S>,
+        enc: EncryptedPayload,
+    ) -> Result<ConvoOutcome, ChatError> {
+        let empty = ConvoOutcome::empty(self.convo_id.clone());
+
+        let Some(encrypted_payload::Encryption::Plaintext(pt)) = enc.encryption else {
+            return Err(ChatError::ProtocolExpectation(
+                "None",
+                "Some(Encryption::Plaintext)".into(),
+            ));
+        };
+
+        let protocol_message = MlsMessageIn::tls_deserialize_exact_bytes(&pt.payload)
+            .map_err(ChatError::generic)?
+            .try_into_protocol_message()
+            .map_err(ChatError::generic)?;
+
+        // Includes our own commits, which return here after we merged them.
+        if protocol_message.epoch() < self.mls_group.epoch() {
+            debug!(convo = %self.convo_id, epoch = protocol_message.epoch().as_u64(), "dropping message from past epoch");
+            return Ok(empty);
+        }
+
+        let processed = match self
+            .mls_group
+            .process_message(&cx.mls_provider, protocol_message)
+        {
+            Ok(processed) => processed,
+            Err(ProcessMessageError::ValidationError(ValidationError::CannotDecryptOwnMessage)) => {
+                debug!(convo = %self.convo_id, "dropping own message");
+                return Ok(empty);
+            }
+            Err(e) => return Err(ChatError::generic(e)),
+        };
+
+        // Resolved before `into_content` consumes the message.
+        let sender = match processed.sender() {
+            Sender::Member(index) => self.mls_group.member_at(*index),
+            _ => None,
+        };
+
+        match processed.into_content() {
+            ProcessedMessageContent::ApplicationMessage(msg) => {
+                self.handle_content(cx, sender, &msg.into_bytes())
+            }
+            ProcessedMessageContent::StagedCommitMessage(commit) => {
+                self.handle_mls_commit(cx, *commit)
+            }
+            other => {
+                debug!(convo = %self.convo_id, ?other, "ignoring mls message");
+                Ok(empty)
+            }
+        }
     }
 
     fn wakeup(&mut self, _cx: &mut ServiceContext<S>) -> Result<crate::ConvoOutcome, ChatError> {
-        todo!()
+        Ok(ConvoOutcome::empty(self.id().to_string()))
     }
 }
