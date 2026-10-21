@@ -20,7 +20,8 @@ crypto = { workspace = true }
 alloy = "2.0"
 base64 = "0.22"
 chat-proto = { workspace = true }
-de-mls = { git = "https://github.com/vacp2p/de-mls", rev = "4d85a02" }
+de-mls-v2 = { package = "de-mls", git = "https://github.com/vacp2p/de-mls", rev = "4d85a02" }
+de-mls-v3 = { package = "de-mls", git = "https://github.com/vacp2p/de-mls", rev = "d793fa1" }
 hashgraph-like-consensus = "0.6.0"
 hex = "0.4.3"
 openmls = { version = "0.8.1", features = ["libcrux-provider"] }
