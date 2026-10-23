@@ -16,7 +16,7 @@ mod types;
 mod utils;
 
 pub use causal_history::{DeliveryAck, Frontier, MissingMessage};
-pub use conversation::{GroupV2Clock, MessageId};
+pub use conversation::{GroupV2Clock, GroupV2Frame, GroupV2Payload, MessageId};
 pub use core::{ConversationId, Core};
 /// Timing/policy for GroupV2 conversations (de-mls's per-conversation config).
 /// Defaults to the de-mls library defaults; inject via
@@ -28,6 +28,7 @@ pub use de_mls::ConversationConfig as GroupV2Config;
 pub use de_mls::MockClock;
 pub use errors::ChatError;
 pub use identity::{AuthenticatedSigner, ParticipantId, Signer, SignerError, SignerKey, SignerRef};
+pub use inbox_v2::{InboxV2Frame, InviteType};
 pub use kv::{KvTransaction, ScopedKvStore};
 pub use outcomes::{
     Content, ConversationClass, ConvoOutcome, InboxOutcome, NewConversation, PayloadOutcome,
