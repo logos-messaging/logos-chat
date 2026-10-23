@@ -60,5 +60,6 @@ unknown-registry = "deny"
 unknown-git = "deny"
 allow-git = [
     "https://github.com/logos-messaging/chat_proto",
+    "https://github.com/logos-messaging/logos-delivery-rust-bindings",
     "https://github.com/vacp2p/de-mls",
 ]
