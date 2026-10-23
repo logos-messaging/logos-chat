@@ -455,6 +455,7 @@ where
             .collect();
 
         let mut result = Ok(());
+        let mut added = false;
         for FetchedMember {
             signature_key,
             credential,
@@ -471,7 +472,7 @@ where
                 &service_ctx.mls_identity,
                 &key_package,
             ) {
-                Ok(()) => {}
+                Ok(()) => added = true,
                 // Already seated — it raced the check above. Nothing to invite,
                 // and no reason to drop the rest of the batch.
                 Err(ConversationError::AlreadyMember) => {
@@ -483,6 +484,14 @@ where
                     break;
                 }
             }
+        }
+        // A member alone in the group decides an add with its own vote, and
+        // de-mls applies a decided outcome only when polled. An add goes
+        // through only in Working; in Freezing a poll can merge a commit,
+        // whose events this method would drop.
+        if added {
+            self.conversation
+                .poll(&service_ctx.mls_provider, &service_ctx.mls_identity);
         }
         // Flush even on a mid-loop failure: proposals already opened must be
         // published and the wakeup re-armed, or they sit dormant until an
