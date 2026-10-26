@@ -4,7 +4,7 @@ mod mls_provider;
 use crate::errors::SendError;
 use crate::storage::{ConversationKind, ConversationMeta, ConversationStore};
 use chat_proto::logoschat::envelope::EnvelopeV1;
-use de_mls_v2::protos::de_mls::messages::v1::MemberWelcome;
+use de_mls::protos::de_mls::messages::v1::MemberWelcome;
 use openmls::prelude::tls_codec::Serialize;
 use openmls::prelude::*;
 use prost::{Message, Oneof};

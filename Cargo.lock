@@ -1952,25 +1952,10 @@ name = "de-mls"
 version = "4.0.0"
 source = "git+https://github.com/vacp2p/de-mls?rev=4d85a02#4d85a02fbe439b9ceeb1c693f44823318434bbec"
 dependencies = [
- "hashgraph-like-consensus 0.6.0",
+ "hashgraph-like-consensus",
  "indexmap 2.14.0",
  "openmls",
  "openmls_traits 0.5.0",
- "prost",
- "prost-build",
- "sha2 0.11.0",
- "thiserror",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "de-mls"
-version = "5.0.0"
-source = "git+https://github.com/vacp2p/de-mls?rev=d793fa1#d793fa11dcfb3ed691396f2a35b0e4f5e7dd1643"
-dependencies = [
- "hashgraph-like-consensus 0.7.0",
- "indexmap 2.14.0",
  "prost",
  "prost-build",
  "sha2 0.11.0",
@@ -2690,23 +2675,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hashgraph-like-consensus"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc3bd0b5b88d149deaf66734a210bba76c60f03812c3172367116ae139983b92"
-dependencies = [
- "alloy",
- "alloy-signer",
- "parking_lot",
- "prost",
- "prost-build",
- "sha2 0.10.9",
- "thiserror",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "hashlink"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3408,9 +3376,8 @@ dependencies = [
  "blake2",
  "chat-proto",
  "crypto",
- "de-mls 4.0.0",
- "de-mls 5.0.0",
- "hashgraph-like-consensus 0.6.0",
+ "de-mls",
+ "hashgraph-like-consensus",
  "hex",
  "openmls",
  "openmls_libcrux_crypto 0.3.1",
