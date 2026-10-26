@@ -12,10 +12,10 @@ use alloy::signers::local::PrivateKeySigner;
 use blake2::{Blake2b, Digest, digest::consts::U6};
 use chat_proto::logoschat::encryption::{EncryptedPayload, Plaintext, encrypted_payload};
 use chat_proto::logoschat::reliability::ReliablePayload;
-use de_mls_v2::protos::de_mls::messages::v1::{
+use de_mls::protos::de_mls::messages::v1::{
     AppMessage as AppMessageProto, MemberWelcome, app_message,
 };
-use de_mls_v2::{
+use de_mls::{
     Conversation, ConversationError, ConversationEvent, MemberId, MockClock, PeerScoringService,
     ScoringConfig, WallClock, default_score_deltas,
     defaults::{DefaultConsensusPlugin, DefaultPeerScoring, InMemoryPeerScoreStorage},
@@ -68,7 +68,7 @@ fn rand_app_id() -> Arc<[u8]> {
 
 /// The signer we name a member by — its MLS signature key, the same id
 /// `add_member` takes and, hex-encoded, what the registry is keyed on.
-fn signer_of(member: &de_mls_v2::Member) -> SignerKey {
+fn signer_of(member: &de_mls::Member) -> SignerKey {
     SignerKey::from(member.signature_key.as_slice())
 }
 

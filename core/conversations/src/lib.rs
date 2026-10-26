@@ -24,8 +24,8 @@ pub use core::{ConversationId, Core};
 /// inactivity, freeze, recovery, voting inactivity, proposal expiration,
 /// consensus timeout) travel to joiners with the welcome and overwrite
 /// theirs; vote delays and the policy fields stay local to each member.
-pub use de_mls_v2::ConversationConfig as GroupV2Config;
-pub use de_mls_v2::MockClock;
+pub use de_mls::ConversationConfig as GroupV2Config;
+pub use de_mls::MockClock;
 pub use errors::ChatError;
 pub use identity::{AuthenticatedSigner, ParticipantId, Signer, SignerError, SignerKey, SignerRef};
 pub use kv::{KvTransaction, ScopedKvStore};

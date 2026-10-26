@@ -1,4 +1,4 @@
-use de_mls_v2::{ConversationError, mls_crypto::MlsError};
+use de_mls::{ConversationError, mls_crypto::MlsError};
 use openmls::ciphersuite::signature::SignaturePublicKey;
 use openmls::group::{CreateMessageError, MergePendingCommitError};
 use openmls::{framing::errors::MlsMessageError, prelude::tls_codec};
