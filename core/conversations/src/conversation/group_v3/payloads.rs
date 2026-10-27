@@ -1,23 +1,20 @@
 //! Wire framing for GroupV3.
 //!
 //! ```text
-//! AddressedEnvelope                    delivery address + convo id
-//! └── GroupV3Payload                   protobuf
-//!     ├── encrypted_header             placeholder (4 zero bytes)
-//!     └── encrypted_frame              TLS-serialized MlsMessageOut
-//!         └── GroupV3Frame             protobuf; MLS application data only
-//!             └── GroupV3FrameType     Content | ConsensusMessage
+//! AddressedEnvelope                        delivery address + convo id
+//! └── GroupV3Payload                       protobuf
+//!     ├── encrypted_header                 bytes; placeholder
+//!     └── encrypted_frame                  bytes; TLS-serialized
+//!         └── MlsMessage                   Commit | ApplicationMessage
+//!             └── GroupV3Frame             protobuf; ApplicationMessage only
+//!                 └── GroupV3FrameType     Content | ConsensusMessage
 //! ```
 //!
-//! MLS handshake messages (commits, proposals) are placed in `encrypted_frame`
-//! directly with no `GroupV3Frame` inside. `FrameId` hashes the encoded
-//! `GroupV3Frame`, so sender and receivers derive the same id from plaintext.
-//! `GroupV3Frame` tags 1–5 are reserved for frame parameters.
+//! `FrameId` hashes the encoded `GroupV3Frame`, so sender and receivers derive the same id from
+//! plaintext. `GroupV3Frame` tags 1–5 are reserved for frame parameters.
 
 use openmls::framing::MlsMessageOut;
-use prost::{DecodeError, Message, Oneof, bytes::Bytes};
-
-use super::{FrameId, GroupV3Convo, delivery_address_from_id};
+use prost::{Message, Oneof, bytes::Bytes};
 
 use crate::{
     AddressedEnvelope,
@@ -25,6 +22,8 @@ use crate::{
     errors::SendError,
     utils::{blake2b_hex, hash_size},
 };
+
+use super::{FrameId, GroupV3Convo, delivery_address_from_id};
 
 pub(super) fn frame_id(frame_bytes: &[u8]) -> FrameId {
     blake2b_hex::<hash_size::MessageId>(&["logos-chat|message_id|".as_bytes(), frame_bytes])
