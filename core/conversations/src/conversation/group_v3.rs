@@ -1,5 +1,5 @@
 // TESTING ONLY
-// A stream Group Conversation that uses a commit validator to ensure valid commit order.
+// A Group Conversation that uses SDS for message ordering
 //
 // Invariants:
 //  - Signers are not allowed change their SigningKey.
