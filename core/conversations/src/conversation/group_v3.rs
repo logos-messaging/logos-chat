@@ -19,6 +19,7 @@ use openmls::prelude::{
     MlsMessageIn, ProcessMessageError, ProcessedMessageContent, Sender, ValidationError,
 };
 use openmls_traits::OpenMlsProvider;
+use prost::Message;
 use tracing::{debug, instrument, warn};
 
 use crate::conversation::mls_groups::{HasMlsConvo, create_group, mls_join_config};
@@ -226,14 +227,16 @@ where
     }
 
     #[instrument(name = "groupv3.handle_frame", skip_all, fields(user_id = %cx.mls_identity.display_name()))]
-    fn handle_frame(
+    fn handle_payload(
         &mut self,
         cx: &mut ServiceContext<S>,
-        enc: EncryptedPayload,
+        payload: &[u8],
     ) -> Result<ConvoOutcome, ChatError> {
         let empty = ConvoOutcome::empty(self.convo_id.clone());
+        let encrypted_payload = EncryptedPayload::decode(payload)?;
 
-        let Some(encrypted_payload::Encryption::Plaintext(pt)) = enc.encryption else {
+        let Some(encrypted_payload::Encryption::Plaintext(pt)) = encrypted_payload.encryption
+        else {
             return Err(ChatError::ProtocolExpectation(
                 "None",
                 "Some(Encryption::Plaintext)".into(),

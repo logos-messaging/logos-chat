@@ -1,5 +1,4 @@
 use crate::identity::SignerKey;
-use chat_proto::logoschat::encryption::EncryptedPayload;
 
 use crate::{
     ChatError, ConvoMetadata, ExternalServices, MessageId, Signer,
@@ -47,12 +46,12 @@ where
         self.inner_group.send_content(cx, content)
     }
 
-    fn handle_frame(
+    fn handle_payload(
         &mut self,
         cx: &mut ServiceContext<S>,
-        enc: EncryptedPayload,
+        payload: &[u8],
     ) -> Result<crate::ConvoOutcome, ChatError> {
-        self.inner_group.handle_frame(cx, enc)
+        self.inner_group.handle_payload(cx, payload)
     }
 
     fn wakeup(
