@@ -3,12 +3,12 @@ use openmls::prelude::Member;
 use prost::Message as _;
 use tracing::{debug, info};
 
-use super::payloads::{GroupV3Payload, frame_id};
-use super::{Frame, GroupV3Convo};
-
 use crate::conversation::mls_utils::EpochFingerprint;
 use crate::service_context::ServiceContext;
 use crate::{ChatError, Content, ConvoOutcome, ExternalServices, Signer};
+
+use super::payloads::{GroupV3FrameType, frame_id};
+use super::{Frame, GroupV3Convo};
 
 impl GroupV3Convo {
     pub(super) fn handle_content<S: ExternalServices>(
@@ -20,7 +20,7 @@ impl GroupV3Convo {
         let message_id = frame_id(bytes);
 
         let content = match Frame::decode(bytes)?.payload {
-            Some(GroupV3Payload::Content(content)) => content,
+            Some(GroupV3FrameType::Content(content)) => content,
             other => {
                 debug!(convo = %self.convo_id, ?other, "ignoring non-content frame");
                 return Ok(ConvoOutcome::empty(self.convo_id.to_string()));
