@@ -13,8 +13,16 @@
 use std::fmt;
 
 use crypto::Ed25519VerifyingKey;
+use openmls::{
+    credentials::{BasicCredential, Credential},
+    group::Member,
+    treesync::LeafNode,
+};
 
-use crate::service_traits::{AuthResult, AuthService};
+use crate::{
+    errors::TypeConversionError,
+    service_traits::{AuthResult, AuthService},
+};
 
 /// Who signed: the signature key the group's ciphersuite verifies under.
 ///
@@ -44,6 +52,14 @@ impl From<&Ed25519VerifyingKey> for SignerKey {
 
 /// Any bytes: which signature scheme they belong to is the ciphersuite's
 /// business, and MLS checks the key itself.
+impl From<&LeafNode> for SignerKey {
+    fn from(value: &LeafNode) -> Self {
+        SignerKey::from(value.signature_key().as_slice())
+    }
+}
+
+/// Any bytes: which signature scheme they belong to is the ciphersuite's
+/// business, and MLS checks the key itself.
 impl From<&[u8]> for SignerKey {
     fn from(value: &[u8]) -> Self {
         Self(value.to_vec())
@@ -58,6 +74,14 @@ impl TryFrom<&str> for SignerKey {
         hex::decode(value)
             .map(Self)
             .map_err(|_| SignerError::NotHex)
+    }
+}
+
+/// Any bytes: which signature scheme they belong to is the ciphersuite's
+/// business, and MLS checks the key itself.
+impl From<&openmls::prelude::SignaturePublicKey> for SignerKey {
+    fn from(value: &openmls::prelude::SignaturePublicKey) -> Self {
+        Self::from(value.as_slice())
     }
 }
 
@@ -100,6 +124,22 @@ impl From<&[u8]> for ParticipantId {
     }
 }
 
+// identity.rs, beside the TryFrom
+impl From<ParticipantId> for Credential {
+    fn from(pid: ParticipantId) -> Self {
+        BasicCredential::new(pid.as_bytes().to_vec()).into()
+    }
+}
+
+impl TryFrom<Credential> for ParticipantId {
+    type Error = TypeConversionError;
+
+    fn try_from(cred: Credential) -> Result<Self, Self::Error> {
+        Ok(Self::from(BasicCredential::try_from(cred)?.identity()))
+        // Ok(participant_id)
+    }
+}
+
 impl fmt::Display for ParticipantId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&hex::encode(self.as_bytes()))
@@ -116,6 +156,20 @@ pub struct Signer {
 }
 
 impl Signer {
+    pub(crate) fn from_member(member: &Member) -> Result<Self, TypeConversionError> {
+        Ok(Self {
+            signer: SignerKey::from(member.signature_key.as_slice()),
+            participant_id: ParticipantId::try_from(member.credential.to_owned())?,
+        })
+    }
+
+    pub(crate) fn from_leaf_node(leaf: &LeafNode) -> Result<Self, TypeConversionError> {
+        Ok(Self {
+            signer: SignerKey::from(leaf),
+            participant_id: ParticipantId::try_from(leaf.credential().to_owned())?,
+        })
+    }
+
     pub(crate) fn from_leaf(signature_key: &[u8], credential: &[u8]) -> Self {
         Self {
             signer: SignerKey::from(signature_key),
@@ -146,7 +200,7 @@ impl Signer {
 
 /// The auth service's verdict on a member, as of when it was asked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AuthStatus {
+pub enum AuthStatus {
     Valid,
     /// Was valid; withdrawn since.
     Revoked,
@@ -156,6 +210,17 @@ pub(crate) enum AuthStatus {
     Unknown,
 }
 
+impl AuthStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AuthStatus::Valid => "Valid",
+            AuthStatus::Revoked => "Revoked",
+            AuthStatus::Invalid => "Invalid",
+            AuthStatus::Unknown => "Unknown",
+        }
+    }
+}
+
 impl From<AuthResult> for AuthStatus {
     fn from(result: AuthResult) -> Self {
         match result {
@@ -163,6 +228,12 @@ impl From<AuthResult> for AuthStatus {
             AuthResult::Revoked => Self::Revoked,
             AuthResult::Invalid => Self::Invalid,
         }
+    }
+}
+
+impl std::fmt::Display for AuthStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 

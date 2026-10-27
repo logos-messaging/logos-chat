@@ -3,7 +3,7 @@ use blake2::{Blake2b, Digest};
 /// Track hash sizes in use across the crate.
 pub mod hash_size {
     use blake2::digest::{
-        consts::{U4, U6, U32, U64},
+        consts::{U4, U6, U7, U32, U64},
         generic_array::ArrayLength,
         typenum::{IsLessOrEqual, NonZero},
     };
@@ -31,6 +31,7 @@ pub mod hash_size {
         ConvoId  => U6,
         /// Delivery Address length
         DeliveryAddr => U4,
+        EpochFingerprint => U7,
         /// Causal history message ID hash length (256-bit, collision-resistant)
         MessageId => U32,
     }
