@@ -265,12 +265,14 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
         self.send_message(content, cx)
     }
 
-    fn handle_frame(
+    fn handle_payload(
         &mut self,
         cx: &mut ServiceContext<S>,
-        encoded_payload: EncryptedPayload,
+        payload: &[u8],
     ) -> Result<ConvoOutcome, ChatError> {
-        let bytes = match encoded_payload.encryption {
+        let encrypted_payload = EncryptedPayload::decode(payload)?;
+
+        let bytes = match encrypted_payload.encryption {
             Some(encrypted_payload::Encryption::Plaintext(pt)) => pt.payload,
             _ => {
                 return Err(ChatError::ProtocolExpectation(

@@ -9,7 +9,6 @@ mod mls_utils;
 pub use crate::errors::ChatError;
 use crate::identity::{Signer, SignerKey, SignerRef};
 use crate::outcomes::ConvoOutcome;
-use crate::proto::EncryptedPayload;
 use crate::service_context::{ExternalServices, ServiceContext};
 use crate::types::ConvoMetadata;
 pub use direct_v1::DirectV1Convo;
@@ -34,15 +33,15 @@ pub(crate) trait Convo<S: ExternalServices>: Identified + ConvoBase + Send {
         content: &[u8],
     ) -> Result<MessageId, ChatError>;
 
-    /// Decrypts and processes an incoming encrypted frame.
+    /// Decrypts and processes an incoming payload
     ///
     /// Returns the [`ConvoOutcome`] describing what the frame produced; its
     /// `content` is `None` for protocol-only frames (placeholders, MLS
     /// commits). Errors only on decryption or frame-parsing failure.
-    fn handle_frame(
+    fn handle_payload(
         &mut self,
         cx: &mut ServiceContext<S>,
-        enc: EncryptedPayload,
+        enc: &[u8],
     ) -> Result<ConvoOutcome, ChatError>;
 
     /// Advances any time-driven protocol work (de-mls consensus deadlines) and
