@@ -33,7 +33,7 @@ use crate::{
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
-use self::payloads::frame_id;
+use self::payloads::{GroupV3Payload, frame_id};
 
 // Type Aliases
 type Frame = payloads::GroupV3Frame;
@@ -233,10 +233,13 @@ where
     ) -> Result<ConvoOutcome, ChatError> {
         let empty = ConvoOutcome::empty(self.convo_id.clone());
 
-        let protocol_message = MlsMessageIn::tls_deserialize_exact_bytes(payload)
-            .map_err(ChatError::generic)?
-            .try_into_protocol_message()
-            .map_err(ChatError::generic)?;
+        let payload = GroupV3Payload::decode(payload)?;
+
+        let protocol_message =
+            MlsMessageIn::tls_deserialize_exact_bytes(payload.encrypted_frame.as_ref())
+                .map_err(ChatError::generic)?
+                .try_into_protocol_message()
+                .map_err(ChatError::generic)?;
 
         // Includes our own commits, which return here after we merged them.
         if protocol_message.epoch() < self.mls_group.epoch() {
