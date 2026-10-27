@@ -18,10 +18,10 @@ use openmls::prelude::tls_codec::DeserializeBytes as _;
 use openmls::prelude::{
     MlsMessageIn, ProcessMessageError, ProcessedMessageContent, Sender, ValidationError,
 };
+use openmls_traits::OpenMlsProvider;
 use tracing::{debug, instrument, warn};
 
 use crate::conversation::mls_groups::{HasMlsConvo, create_group, mls_join_config};
-use crate::conversation::mls_utils::EpochFingerprint;
 use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified};
 use crate::errors::SendError;
 use crate::service_context::ServiceContext;
@@ -140,19 +140,19 @@ impl GroupV3Convo {
         commit_msg: MlsMessageOut,
         dependent_msgs: Vec<AddressedEnvelope>,
     ) -> Result<(), ChatError> {
-        let commit = self
-            .mls_group
-            .pending_commit()
-            .ok_or(ChatError::Protocol("no pending commit".into()))?;
-
-        let fingerprint = EpochFingerprint::from(commit);
-        let epoch = self.mls_group.epoch().as_u64(); // the epoch this commit leaves
-        self.commit_validator.propose_commit(epoch, fingerprint);
-
-        // Check if Can merge?
+        // TODO: Check if Can merge?
 
         // Send Commit
-        self.send_mls_msg(cx, commit_msg)?;
+        if let Err(e) = self.send_mls_msg(cx, commit_msg) {
+            // Discard the staged commit so the group isn't left wedged
+            if let Err(clear_err) = self
+                .mls_group
+                .clear_pending_commit(cx.mls_provider.storage())
+            {
+                warn!(convo = %self.convo_id, error = %clear_err, "failed to clear pending commit");
+            }
+            return Err(e.into());
+        }
 
         // Update State
         self.mls_group.merge_pending_commit(&cx.mls_provider)?;
@@ -180,11 +180,14 @@ where
         let existing = self.signers()?.into_iter();
         let signers = unique(member_diff(signers, existing));
 
-        if !self.commit_validator.can_make_commit() {
-            unimplemented!("create proposal for steward")
-        }
+        // TODO: Check if allowed to make commit;
 
         let key_packages: Vec<KeyPackage> = fetch_key_packages(cx, signers)?;
+        if key_packages.is_empty() {
+            warn!("no members to add to mls::group, ignoring");
+            return Ok(());
+        }
+
         let (commit_msg, welcome, _) = self
             .mls_group
             .add_members(&cx.mls_provider, &cx.mls_identity, key_packages.as_slice())
