@@ -9,18 +9,15 @@
 mod handlers;
 mod payloads;
 
-use chat_proto::logoschat::encryption::{EncryptedPayload, encrypted_payload};
 use openmls::framing::MlsMessageOut;
 use openmls::group::{MlsGroup, StagedWelcome};
 use openmls::key_packages::KeyPackage;
 use openmls::messages::Welcome;
+use openmls::prelude::MlsMessageIn;
 use openmls::prelude::tls_codec::DeserializeBytes as _;
-use openmls::prelude::{
-    MlsMessageIn, ProcessMessageError, ProcessedMessageContent, Sender, ValidationError,
-};
 use openmls_traits::OpenMlsProvider;
 use prost::Message;
-use tracing::{debug, instrument, warn};
+use tracing::{instrument, warn};
 
 use crate::conversation::mls_groups::{HasMlsConvo, create_group, mls_join_config};
 use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified};
@@ -34,7 +31,7 @@ use crate::{
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
-use self::payloads::frame_id;
+use self::payloads::{GroupV3Payload, frame_id};
 
 // Type Aliases
 type Frame = payloads::GroupV3Frame;
@@ -166,6 +163,10 @@ impl GroupV3Convo {
         }
         Ok(())
     }
+
+    fn default_outcome(&self) -> ConvoOutcome {
+        ConvoOutcome::empty(self.convo_id.clone())
+    }
 }
 
 impl<S> GroupConvo<S> for GroupV3Convo
@@ -232,62 +233,19 @@ where
         cx: &mut ServiceContext<S>,
         payload: &[u8],
     ) -> Result<ConvoOutcome, ChatError> {
-        let empty = ConvoOutcome::empty(self.convo_id.clone());
-        let encrypted_payload = EncryptedPayload::decode(payload)?;
+        let payload = GroupV3Payload::decode(payload)?;
 
-        let Some(encrypted_payload::Encryption::Plaintext(pt)) = encrypted_payload.encryption
-        else {
-            return Err(ChatError::ProtocolExpectation(
-                "None",
-                "Some(Encryption::Plaintext)".into(),
-            ));
-        };
+        let protocol_message =
+            MlsMessageIn::tls_deserialize_exact_bytes(payload.encrypted_frame.as_ref())
+                .map_err(ChatError::generic)?
+                .try_into_protocol_message()
+                .map_err(ChatError::generic)?;
 
-        let protocol_message = MlsMessageIn::tls_deserialize_exact_bytes(&pt.payload)
-            .map_err(ChatError::generic)?
-            .try_into_protocol_message()
-            .map_err(ChatError::generic)?;
-
-        // Includes our own commits, which return here after we merged them.
-        if protocol_message.epoch() < self.mls_group.epoch() {
-            debug!(convo = %self.convo_id, epoch = protocol_message.epoch().as_u64(), "dropping message from past epoch");
-            return Ok(empty);
-        }
-
-        let processed = match self
-            .mls_group
-            .process_message(&cx.mls_provider, protocol_message)
-        {
-            Ok(processed) => processed,
-            Err(ProcessMessageError::ValidationError(ValidationError::CannotDecryptOwnMessage)) => {
-                debug!(convo = %self.convo_id, "dropping own message");
-                return Ok(empty);
-            }
-            Err(e) => return Err(ChatError::generic(e)),
-        };
-
-        // Resolved before `into_content` consumes the message.
-        let sender = match processed.sender() {
-            Sender::Member(index) => self.mls_group.member_at(*index),
-            _ => None,
-        };
-
-        match processed.into_content() {
-            ProcessedMessageContent::ApplicationMessage(msg) => {
-                self.handle_content(cx, sender, &msg.into_bytes())
-            }
-            ProcessedMessageContent::StagedCommitMessage(commit) => {
-                self.handle_mls_commit(cx, *commit)
-            }
-            other => {
-                debug!(convo = %self.convo_id, ?other, "ignoring mls message");
-                Ok(empty)
-            }
-        }
+        self.handle_mls_protocol_msg(cx, protocol_message)
     }
 
     fn wakeup(&mut self, _cx: &mut ServiceContext<S>) -> Result<crate::ConvoOutcome, ChatError> {
-        Ok(ConvoOutcome::empty(self.id().to_string()))
+        Ok(self.default_outcome())
     }
 }
 
