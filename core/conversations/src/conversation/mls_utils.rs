@@ -1,4 +1,5 @@
 use openmls::{
+    group::StagedCommit,
     key_packages::{KeyPackage, KeyPackageIn},
     prelude::tls_codec::Deserialize,
     versions::ProtocolVersion,
@@ -7,8 +8,10 @@ use openmls_traits::OpenMlsProvider;
 use std::collections::HashSet;
 
 use crate::{
-    ChatError, ExternalServices, RegistrationService,
-    Signer, SignerKey, errors::KeyPackageError, service_context::ServiceContext,
+    ChatError, ExternalServices, RegistrationService, Signer, SignerKey,
+    errors::KeyPackageError,
+    service_context::ServiceContext,
+    utils::{blake2b_hex, hash_size},
 };
 
 pub fn unique<'a, T, I>(iter: I) -> impl Iterator<Item = &'a T>
@@ -85,5 +88,28 @@ fn validate_keypackage<S: ExternalServices>(
             signer: reported_signer,
             auth_status,
         }),
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct EpochFingerprint {
+    val: String,
+}
+
+impl EpochFingerprint {
+    pub fn as_str(&self) -> &str {
+        &self.val
+    }
+}
+
+impl From<&StagedCommit> for EpochFingerprint {
+    fn from(value: &StagedCommit) -> Self {
+        let authenticator = value.epoch_authenticator().expect("is member"); // To receive a Staged commit the signer must be a member of the group.
+        let hash = blake2b_hex::<hash_size::EpochFingerprint>(&[
+            b"logos-chat|epoch-fingerprint|v1\0",
+            authenticator.as_slice(),
+        ]);
+
+        Self { val: hash }
     }
 }
