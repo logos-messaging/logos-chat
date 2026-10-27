@@ -1,4 +1,3 @@
-use chat_proto::logoschat::encryption::{EncryptedPayload, Plaintext, encrypted_payload};
 use openmls::framing::MlsMessageOut;
 use prost::{Message, Oneof, bytes::Bytes};
 
@@ -7,7 +6,6 @@ use super::{FrameId, delivery_address_from_id};
 use crate::{
     AddressedEnvelope,
     errors::SendError,
-    types::AddressedEncryptedPayload,
     utils::{blake2b_hex, hash_size},
 };
 
@@ -43,15 +41,9 @@ impl GroupV3Frame {
 pub fn to_envelope(convo_id: String, msg: MlsMessageOut) -> Result<AddressedEnvelope, SendError> {
     let bytes = msg.to_bytes()?;
 
-    let payload = AddressedEncryptedPayload {
-        delivery_address: delivery_address_from_id(&convo_id),
-        data: EncryptedPayload {
-            // TODO: (P3) Don't force the encryption payload on convotypes. They can manage it internally if desired.
-            encryption: Some(encrypted_payload::Encryption::Plaintext(Plaintext {
-                payload: bytes.into(),
-            })),
-        },
-    };
-
-    Ok(payload.into_envelope(convo_id))
+    Ok(AddressedEnvelope::new(
+        delivery_address_from_id(&convo_id),
+        convo_id,
+        &bytes,
+    ))
 }

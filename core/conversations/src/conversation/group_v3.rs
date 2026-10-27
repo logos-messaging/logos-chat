@@ -9,7 +9,6 @@
 mod handlers;
 mod payloads;
 
-use chat_proto::logoschat::encryption::{EncryptedPayload, encrypted_payload};
 use openmls::framing::MlsMessageOut;
 use openmls::group::{MlsGroup, StagedWelcome};
 use openmls::key_packages::KeyPackage;
@@ -19,7 +18,6 @@ use openmls::prelude::{
     MlsMessageIn, ProcessMessageError, ProcessedMessageContent, Sender, ValidationError,
 };
 use openmls_traits::OpenMlsProvider;
-use prost::Message;
 use tracing::{debug, instrument, warn};
 
 use crate::conversation::mls_groups::{HasMlsConvo, create_group, mls_join_config};
@@ -234,17 +232,8 @@ where
         payload: &[u8],
     ) -> Result<ConvoOutcome, ChatError> {
         let empty = ConvoOutcome::empty(self.convo_id.clone());
-        let encrypted_payload = EncryptedPayload::decode(payload)?;
 
-        let Some(encrypted_payload::Encryption::Plaintext(pt)) = encrypted_payload.encryption
-        else {
-            return Err(ChatError::ProtocolExpectation(
-                "None",
-                "Some(Encryption::Plaintext)".into(),
-            ));
-        };
-
-        let protocol_message = MlsMessageIn::tls_deserialize_exact_bytes(&pt.payload)
+        let protocol_message = MlsMessageIn::tls_deserialize_exact_bytes(payload)
             .map_err(ChatError::generic)?
             .try_into_protocol_message()
             .map_err(ChatError::generic)?;
