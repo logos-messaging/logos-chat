@@ -17,7 +17,7 @@ use crate::{
     errors::ChatError,
     inbox_v2::{InboxV2, MlsEphemeralPqProvider, MlsIdentityProvider},
     outcomes::{ConversationClass, ConvoOutcome, InboxOutcome, PayloadOutcome},
-    proto::{EncryptedPayload, EnvelopeV1, Message},
+    proto::{EnvelopeV1, Message},
 };
 use openmls::group::GroupId;
 use std::collections::{HashMap, hash_map::Entry};
@@ -477,18 +477,16 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         convo_id: &str,
         enc_payload_bytes: &[u8],
     ) -> Result<ConvoOutcome, ChatError> {
-        let enc_payload = EncryptedPayload::decode(enc_payload_bytes)?;
-
         if self.cached_convos.contains_key(convo_id) {
             let convo_type = self
                 .cached_convos
                 .get_mut(convo_id)
                 .ok_or_else(|| ChatError::NoConvo(convo_id.to_string()))?;
 
-            convo_type.handle_frame(&mut self.services, enc_payload)
+            convo_type.handle_payload(&mut self.services, enc_payload_bytes)
         } else {
             let mut convo = self.load_convo(convo_id)?;
-            convo.handle_frame(&mut self.services, enc_payload)
+            convo.handle_payload(&mut self.services, enc_payload_bytes)
         }
     }
 
@@ -625,14 +623,14 @@ impl<S: ExternalServices> Convo<S> for ConvoTypeOwned<S> {
         }
     }
 
-    fn handle_frame(
+    fn handle_payload(
         &mut self,
         cx: &mut ServiceContext<S>,
-        enc: EncryptedPayload,
+        payload: &[u8],
     ) -> Result<ConvoOutcome, ChatError> {
         match self {
-            ConvoTypeOwned::Group(group_convo) => group_convo.handle_frame(cx, enc),
-            ConvoTypeOwned::Direct(convo) => convo.handle_frame(cx, enc),
+            ConvoTypeOwned::Group(group_convo) => group_convo.handle_payload(cx, payload),
+            ConvoTypeOwned::Direct(convo) => convo.handle_payload(cx, payload),
         }
     }
 
