@@ -2,6 +2,7 @@ mod direct_v1;
 pub mod group_v1;
 mod group_v2;
 pub mod mls_extensions;
+pub(crate) mod mls_trace;
 
 pub use crate::errors::ChatError;
 use crate::identity::{Signer, SignerKey, SignerRef};
@@ -11,7 +12,7 @@ use crate::service_context::{ExternalServices, ServiceContext};
 use crate::types::ConvoMetadata;
 pub use direct_v1::DirectV1Convo;
 pub use group_v1::GroupV1Convo;
-pub use group_v2::{GroupV2Clock, GroupV2Convo};
+pub use group_v2::{GroupV2Clock, GroupV2Convo, GroupV2Frame, GroupV2Payload};
 
 pub type ConversationId = String;
 pub type ConversationIdRef<'a> = &'a str;
