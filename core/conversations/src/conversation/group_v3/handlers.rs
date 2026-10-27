@@ -1,20 +1,16 @@
 use openmls::group::StagedCommit;
 use openmls::prelude::Member;
 use prost::Message as _;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-use super::consensus::{CommitValidator, CommitVerdict};
 use super::payloads::{GroupV3Payload, frame_id};
 use super::{Frame, GroupV3Convo};
 
-use crate::conversation::group_v3::consensus::CommitFingerprint;
+use crate::conversation::mls_utils::EpochFingerprint;
 use crate::service_context::ServiceContext;
 use crate::{ChatError, Content, ConvoOutcome, ExternalServices, Signer};
 
-impl<V> GroupV3Convo<V>
-where
-    V: CommitValidator,
-{
+impl GroupV3Convo {
     pub(super) fn handle_content<S: ExternalServices>(
         &self,
         cx: &mut ServiceContext<S>,
@@ -54,13 +50,9 @@ where
         commit: StagedCommit,
     ) -> Result<ConvoOutcome, ChatError> {
         let epoch = self.mls_group.epoch().as_u64();
-        let fingerprint = CommitFingerprint::from(&commit);
+        let fingerprint = EpochFingerprint::from(&commit);
 
-        match self.commit_validator.can_merge_commit(epoch, fingerprint) {
-            CommitVerdict::Discard => todo!(),
-            CommitVerdict::Failed(_) => todo!(),
-            CommitVerdict::Merge => (),
-        }
+        // TODO: Validate Commit
 
         self.mls_group
             .merge_staged_commit(&cx.mls_provider, commit)
@@ -70,6 +62,7 @@ where
             convo = %self.convo_id,
             epoch,
             new_epoch = self.mls_group.epoch().as_u64(),
+            epochfingerprint = fingerprint.as_str(),
             "incoming commit merged"
         );
         Ok(ConvoOutcome {

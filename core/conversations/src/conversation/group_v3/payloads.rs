@@ -2,14 +2,11 @@ use chat_proto::logoschat::encryption::{EncryptedPayload, Plaintext, encrypted_p
 use openmls::framing::MlsMessageOut;
 use prost::{Message, Oneof, bytes::Bytes};
 
-use super::{GroupV3Convo, delivery_address_from_id};
+use super::{FrameId, GroupV3Convo, delivery_address_from_id};
 
 use crate::{
     AddressedEnvelope,
-    conversation::{
-        Identified,
-        group_v3::{FrameId, consensus::CommitValidator},
-    },
+    conversation::Identified,
     errors::SendError,
     types::AddressedEncryptedPayload,
     utils::{blake2b_hex, hash_size},
@@ -28,9 +25,9 @@ pub struct GroupV3Frame {
 
 #[derive(Clone, PartialEq, Oneof)]
 pub enum GroupV3Payload {
-    #[prost(message, tag = "6")]
+    #[prost(bytes = "bytes", tag = "6")]
     Content(Bytes),
-    #[prost(message, tag = "7")]
+    #[prost(bytes = "bytes", tag = "7")]
     ConsensusMessage(Bytes),
 }
 
@@ -46,10 +43,7 @@ impl GroupV3Frame {
     }
 }
 
-impl<V> GroupV3Convo<V>
-where
-    V: CommitValidator,
-{
+impl GroupV3Convo {
     pub fn to_envelope(&self, msg: MlsMessageOut) -> Result<AddressedEnvelope, SendError> {
         let bytes = msg.to_bytes()?;
 
