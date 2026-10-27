@@ -1,12 +1,11 @@
 // TESTING ONLY
-// Group Conversation that uses a commit validator to ensure valid commit order.
+// A stream Group Conversation that uses a commit validator to ensure valid commit order.
 //
 // Invariants:
 //  - Signers are not allowed change their SigningKey.
 //  - Everyone is an "Admin"
 //
 
-mod consensus;
 mod handlers;
 mod payloads;
 
@@ -21,8 +20,8 @@ use openmls::prelude::{
 };
 use tracing::{debug, instrument, warn};
 
-use crate::conversation::group_v3::consensus::{CommitFingerprint, CommitValidator, YoloValidator};
 use crate::conversation::mls_groups::{HasMlsConvo, create_group, mls_join_config};
+use crate::conversation::mls_utils::EpochFingerprint;
 use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified};
 use crate::errors::SendError;
 use crate::service_context::ServiceContext;
@@ -45,13 +44,12 @@ fn delivery_address_from_id(convo_id: &str) -> String {
 }
 
 #[derive(Debug)]
-pub struct GroupV3Convo<V: CommitValidator> {
+pub struct GroupV3Convo {
     convo_id: String,
     mls_group: MlsGroup,
-    commit_validator: V,
 }
 
-impl GroupV3Convo<YoloValidator> {
+impl GroupV3Convo {
     pub fn new<S: ExternalServices>(
         cx: &mut ServiceContext<S>,
         name: &str,
@@ -64,7 +62,6 @@ impl GroupV3Convo<YoloValidator> {
         let mut convo = Self {
             convo_id: hex::encode(mls_group.group_id().as_slice()),
             mls_group,
-            commit_validator: YoloValidator {},
         };
 
         convo.init(cx)?;
@@ -88,7 +85,6 @@ impl GroupV3Convo<YoloValidator> {
         let convo = Self {
             convo_id: hex::encode(mls_group.group_id().as_slice()),
             mls_group,
-            commit_validator: YoloValidator {},
         };
 
         convo.init(cx)?;
@@ -96,10 +92,7 @@ impl GroupV3Convo<YoloValidator> {
     }
 }
 
-impl<V> GroupV3Convo<V>
-where
-    V: CommitValidator,
-{
+impl GroupV3Convo {
     fn init<S: ExternalServices>(&self, cx: &mut ServiceContext<S>) -> Result<(), ChatError> {
         // Configure the delivery service to listen for the required delivery addresses.
         cx.ds
@@ -152,7 +145,7 @@ where
             .pending_commit()
             .ok_or(ChatError::Protocol("no pending commit".into()))?;
 
-        let fingerprint = CommitFingerprint::from(commit);
+        let fingerprint = EpochFingerprint::from(commit);
         let epoch = self.mls_group.epoch().as_u64(); // the epoch this commit leaves
         self.commit_validator.propose_commit(epoch, fingerprint);
 
@@ -174,19 +167,9 @@ where
     }
 }
 
-impl<V> Identified for GroupV3Convo<V>
-where
-    V: CommitValidator,
-{
-    fn id(&self) -> ConversationIdRef<'_> {
-        &self.convo_id
-    }
-}
-
-impl<S, V> GroupConvo<S> for GroupV3Convo<V>
+impl<S> GroupConvo<S> for GroupV3Convo
 where
     S: ExternalServices,
-    V: CommitValidator,
 {
     fn add_signer(
         &mut self,
@@ -226,10 +209,9 @@ where
     }
 }
 
-impl<S, V> Convo<S> for GroupV3Convo<V>
+impl<S> Convo<S> for GroupV3Convo
 where
     S: ExternalServices,
-    V: CommitValidator,
 {
     fn send_content(
         &mut self,
@@ -303,10 +285,13 @@ where
     }
 }
 
-impl<V> HasMlsConvo for GroupV3Convo<V>
-where
-    V: CommitValidator,
-{
+impl Identified for GroupV3Convo {
+    fn id(&self) -> ConversationIdRef<'_> {
+        &self.convo_id
+    }
+}
+
+impl HasMlsConvo for GroupV3Convo {
     fn mls_group(&self) -> &MlsGroup {
         &self.mls_group
     }
