@@ -1,19 +1,17 @@
-//! Safe synchronous wrapper around the raw liblogosdelivery FFI.
+//! Safe synchronous wrapper around the liblogosdelivery typed FFI.
 //!
-//! # Why Box::into_raw for one-shot callbacks?
+//! # Why Box::into_raw for one-shot replies?
 //!
-//! `sendRequestToFFIThread` (nim-ffi) signals the caller as soon as the FFI
-//! thread *receives* the request, before it processes it. The actual result
-//! callback fires later, from the Nim async event loop, after the Rust call
-//! frame has returned and its stack variables are gone. Passing `&mut closure`
-//! as `user_data` therefore produces a dangling pointer by the time the
-//! callback fires — a use-after-free that manifests as a SIGSEGV when the
-//! operation fails and the callback tries to write an error into captured
-//! stack memory.
+//! The typed helpers return as soon as the request is handed to the FFI thread;
+//! the reply callback fires later, from the Nim async event loop, after the
+//! Rust call frame has returned and its stack variables are gone. Passing a
+//! stack address as `user_data` would therefore dangle by the time the reply
+//! arrives.
 //!
-//! Fix: heap-allocate each one-shot closure with `Box::into_raw`, synchronise
-//! via an `mpsc` channel (blocking until the callback fires), then drop the
-//! box. The pointer is valid for the entire async lifetime of the request.
+//! Fix: heap-allocate the reply sender with `Box::into_raw` and block on its
+//! channel. Each helper calls its reply callback exactly once — including when
+//! it fails before submitting — so the trampoline takes the box back and frees
+//! it there.
 //!
 //! # Why store the event callback inside LogosNodeCtx?
 //!
@@ -26,15 +24,17 @@
 //! order guarantees it is freed *after* Drop::drop returns (i.e. after
 //! stop+destroy complete), so the pointer is always valid when Nim calls it.
 
-use std::ffi::CString;
-use std::os::raw::c_void;
+use std::ffi::{CStr, CString};
+use std::os::raw::{c_char, c_int, c_void};
 use std::sync::mpsc;
 
-use super::sys::{self as ffi, RET_OK, get_trampoline};
+use super::sys::{self as ffi, LogosDeliveryCtx, RET_OK, ReplyFn, get_trampoline};
+
+type Reply = Result<String, String>;
 
 /// Opaque handle to a logos-delivery node context.
 pub struct LogosNodeCtx {
-    ctx: *mut c_void,
+    ctx: *mut LogosDeliveryCtx,
     /// Keeps the event-callback closure alive for the lifetime of the node.
     _event_cb: Option<Box<dyn std::any::Any + Send>>,
 }
@@ -43,195 +43,139 @@ pub struct LogosNodeCtx {
 unsafe impl Send for LogosNodeCtx {}
 unsafe impl Sync for LogosNodeCtx {}
 
+/// Copies a borrowed C string, treating null as empty.
+fn copy_cstr(ptr: *const c_char) -> String {
+    if ptr.is_null() {
+        return String::new();
+    }
+    unsafe { CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned()
+}
+
+unsafe extern "C" fn reply_trampoline(
+    err_code: c_int,
+    reply: *const *const c_char,
+    err_msg: *const c_char,
+    user_data: *mut c_void,
+) {
+    let tx = unsafe { Box::from_raw(user_data as *mut mpsc::SyncSender<Reply>) };
+    let result = if err_code == RET_OK {
+        Ok(if reply.is_null() {
+            String::new()
+        } else {
+            copy_cstr(unsafe { *reply })
+        })
+    } else {
+        Err(copy_cstr(err_msg))
+    };
+    let _ = tx.send(result);
+}
+
+/// Makes one typed call and blocks until its reply arrives.
+fn call(op: &str, f: impl FnOnce(ReplyFn, *mut c_void) -> c_int) -> Reply {
+    let (tx, rx) = mpsc::sync_channel::<Reply>(1);
+    let user_data = Box::into_raw(Box::new(tx)) as *mut c_void;
+    // A non-zero return still delivers its error through the reply callback.
+    let _ = f(reply_trampoline, user_data);
+    rx.recv()
+        .unwrap_or_else(|_| Err(format!("{op}: callback channel disconnected")))
+}
+
+/// Where a created context is reported; `usize` because a raw pointer is not `Send`.
+type Created = Result<usize, String>;
+
+unsafe extern "C" fn create_trampoline(
+    err_code: c_int,
+    ctx: *mut LogosDeliveryCtx,
+    err_msg: *const c_char,
+    user_data: *mut c_void,
+) {
+    let tx = unsafe { Box::from_raw(user_data as *mut mpsc::SyncSender<Created>) };
+    let result = if err_code == RET_OK && !ctx.is_null() {
+        Ok(ctx as usize)
+    } else {
+        Err(copy_cstr(err_msg))
+    };
+    let _ = tx.send(result);
+}
+
 impl LogosNodeCtx {
     pub fn new(config_json: &str) -> Result<Self, String> {
         let config_cstr = CString::new(config_json).map_err(|e| e.to_string())?;
 
-        let (tx, rx) = mpsc::sync_channel::<Result<(), String>>(1);
-        let closure = move |ret: i32, data: &str| {
-            let _ = tx.send(if ret == RET_OK {
-                Ok(())
-            } else {
-                Err(data.to_string())
-            });
-        };
-        let raw = Box::into_raw(Box::new(closure));
-        let cb = get_trampoline(unsafe { &*raw });
+        let (tx, rx) = mpsc::sync_channel::<Created>(1);
+        let user_data = Box::into_raw(Box::new(tx)) as *mut c_void;
+        let _ = unsafe { ffi::lcshim_create(config_cstr.as_ptr(), create_trampoline, user_data) };
+        let ctx = rx
+            .recv()
+            .unwrap_or_else(|_| Err("create: callback channel disconnected".into()))?;
 
-        let ctx = unsafe {
-            ffi::logosdelivery_create_node(config_cstr.as_ptr(), cb, raw as *const c_void)
-        };
-
-        // create_node may call the callback synchronously (try_recv) or
-        // asynchronously (recv). Handle both.
-        let callback_result: Result<(), String> = if ctx.is_null() {
-            rx.try_recv()
-                .unwrap_or(Err("logosdelivery_create_node returned null".into()))
-        } else {
-            rx.recv()
-                .unwrap_or(Err("callback channel disconnected".into()))
-        };
-        drop(unsafe { Box::from_raw(raw) });
-
-        callback_result.map(|_| Self {
-            ctx,
+        Ok(Self {
+            ctx: ctx as *mut LogosDeliveryCtx,
             _event_cb: None,
         })
     }
 
     pub fn start(&self) -> Result<(), String> {
-        let (tx, rx) = mpsc::sync_channel::<Result<(), String>>(1);
-        let closure = move |ret: i32, data: &str| {
-            let _ = tx.send(if ret == RET_OK {
-                Ok(())
-            } else {
-                Err(data.to_string())
-            });
-        };
-        let raw = Box::into_raw(Box::new(closure));
-        let cb = get_trampoline(unsafe { &*raw });
-
-        let ret = unsafe { ffi::logosdelivery_start_node(self.ctx, cb, raw as *const c_void) };
-
-        if ret != RET_OK {
-            drop(unsafe { Box::from_raw(raw) });
-            return Err(format!("logosdelivery_start_node returned {ret}"));
-        }
-        let result = rx
-            .recv()
-            .unwrap_or(Err("callback channel disconnected".into()));
-        drop(unsafe { Box::from_raw(raw) });
-        result
+        call("start_node", |cb, ud| unsafe {
+            ffi::lcshim_start_node(self.ctx, cb, ud)
+        })
+        .map(|_| ())
     }
 
     pub fn subscribe(&self, content_topic: &str) -> Result<(), String> {
         let topic_cstr = CString::new(content_topic).map_err(|e| e.to_string())?;
-
-        let (tx, rx) = mpsc::sync_channel::<Result<(), String>>(1);
-        let closure = move |ret: i32, data: &str| {
-            let _ = tx.send(if ret == RET_OK {
-                Ok(())
-            } else {
-                Err(data.to_string())
-            });
-        };
-        let raw = Box::into_raw(Box::new(closure));
-        let cb = get_trampoline(unsafe { &*raw });
-
-        let ret = unsafe {
-            ffi::logosdelivery_subscribe(self.ctx, cb, raw as *const c_void, topic_cstr.as_ptr())
-        };
-
-        if ret != RET_OK {
-            drop(unsafe { Box::from_raw(raw) });
-            return Err(format!("logosdelivery_subscribe returned {ret}"));
-        }
-
-        let result = rx
-            .recv()
-            .unwrap_or(Err("callback channel disconnected".into()));
-        drop(unsafe { Box::from_raw(raw) });
-        result
+        call("subscribe", |cb, ud| unsafe {
+            ffi::lcshim_subscribe(self.ctx, topic_cstr.as_ptr(), cb, ud)
+        })
+        .map(|_| ())
     }
 
     pub fn unsubscribe(&self, content_topic: &str) -> Result<(), String> {
         let topic_cstr = CString::new(content_topic).map_err(|e| e.to_string())?;
-
-        let (tx, rx) = mpsc::sync_channel::<Result<(), String>>(1);
-        let closure = move |ret: i32, data: &str| {
-            let _ = tx.send(if ret == RET_OK {
-                Ok(())
-            } else {
-                Err(data.to_string())
-            });
-        };
-        let raw = Box::into_raw(Box::new(closure));
-        let cb = get_trampoline(unsafe { &*raw });
-
-        let ret = unsafe {
-            ffi::logosdelivery_unsubscribe(self.ctx, cb, raw as *const c_void, topic_cstr.as_ptr())
-        };
-
-        if ret != RET_OK {
-            drop(unsafe { Box::from_raw(raw) });
-            return Err(format!("logosdelivery_unsubscribe returned {ret}"));
-        }
-        let result = rx
-            .recv()
-            .unwrap_or(Err("callback channel disconnected".into()));
-        drop(unsafe { Box::from_raw(raw) });
-        result
+        call("unsubscribe", |cb, ud| unsafe {
+            ffi::lcshim_unsubscribe(self.ctx, topic_cstr.as_ptr(), cb, ud)
+        })
+        .map(|_| ())
     }
 
     /// Returns the request ID on success.
     pub fn send(&self, message_json: &str) -> Result<String, String> {
         let msg_cstr = CString::new(message_json).map_err(|e| e.to_string())?;
-
-        let (tx, rx) = mpsc::sync_channel::<Result<String, String>>(1);
-        let closure = move |ret: i32, data: &str| {
-            let _ = tx.send(if ret == RET_OK {
-                Ok(data.to_string())
-            } else {
-                Err(data.to_string())
-            });
-        };
-        let raw = Box::into_raw(Box::new(closure));
-        let cb = get_trampoline(unsafe { &*raw });
-
-        let ret = unsafe {
-            ffi::logosdelivery_send(self.ctx, cb, raw as *const c_void, msg_cstr.as_ptr())
-        };
-
-        if ret != RET_OK {
-            drop(unsafe { Box::from_raw(raw) });
-            return Err(format!("logosdelivery_send returned {ret}"));
-        }
-        let result = rx
-            .recv()
-            .unwrap_or(Err("callback channel disconnected".into()));
-        drop(unsafe { Box::from_raw(raw) });
-        result
+        call("send", |cb, ud| unsafe {
+            ffi::lcshim_send(self.ctx, msg_cstr.as_ptr(), cb, ud)
+        })
     }
 
-    /// Stores the event callback inside the node so it is dropped *after*
-    /// stop+destroy in Drop, keeping the pointer valid for the node's lifetime.
-    pub fn set_event_callback<C>(&mut self, closure: C)
+    /// Registers the event callback for `event_name` (e.g. `onMessageReceived`)
+    /// and stores it inside the node so it is dropped *after* stop+destroy in
+    /// Drop, keeping the pointer valid for the node's lifetime.
+    pub fn set_event_callback<C>(&mut self, event_name: &str, closure: C) -> Result<(), String>
     where
         C: FnMut(i32, &str) + Send + 'static,
     {
+        let name_cstr = CString::new(event_name).map_err(|e| e.to_string())?;
         let mut boxed = Box::new(closure);
         let cb = get_trampoline(&*boxed);
         let user_data = &mut *boxed as *mut C as *const c_void;
-        unsafe {
-            ffi::logosdelivery_set_event_callback(self.ctx, cb, user_data);
+        let listener_id =
+            unsafe { ffi::lcshim_add_event_listener(self.ctx, name_cstr.as_ptr(), cb, user_data) };
+        if listener_id == 0 {
+            return Err(format!(
+                "add_event_listener({event_name}) rejected the context"
+            ));
         }
         // Move the box into self; the heap address (user_data) is unaffected.
         self._event_cb = Some(boxed);
+        Ok(())
     }
 
     pub fn stop(&self) -> Result<(), String> {
-        let (tx, rx) = mpsc::sync_channel::<Result<(), String>>(1);
-        let closure = move |ret: i32, data: &str| {
-            let _ = tx.send(if ret == RET_OK {
-                Ok(())
-            } else {
-                Err(data.to_string())
-            });
-        };
-        let raw = Box::into_raw(Box::new(closure));
-        let cb = get_trampoline(unsafe { &*raw });
-
-        let ret = unsafe { ffi::logosdelivery_stop_node(self.ctx, cb, raw as *const c_void) };
-
-        if ret != RET_OK {
-            drop(unsafe { Box::from_raw(raw) });
-            return Err(format!("logosdelivery_stop_node returned {ret}"));
-        }
-        let result = rx
-            .recv()
-            .unwrap_or(Err("callback channel disconnected".into()));
-        drop(unsafe { Box::from_raw(raw) });
-        result
+        call("stop_node", |cb, ud| unsafe {
+            ffi::lcshim_stop_node(self.ctx, cb, ud)
+        })
+        .map(|_| ())
     }
 }
 
@@ -241,17 +185,9 @@ impl Drop for LogosNodeCtx {
         // Rust drops fields after Drop::drop returns, so _event_cb outlives
         // everything below — the event callback pointer stays valid throughout.
         if let Err(e) = self.stop() {
-            tracing::warn!("logosdelivery_stop_node failed during drop: {e}");
+            tracing::warn!("logosdelivery stop_node failed during drop: {e}");
         }
-
-        let (tx, rx) = mpsc::sync_channel::<()>(1);
-        let closure = move |_: i32, _: &str| {
-            let _ = tx.send(());
-        };
-        let raw = Box::into_raw(Box::new(closure));
-        let cb = get_trampoline(unsafe { &*raw });
-        unsafe { ffi::logosdelivery_destroy(self.ctx, cb, raw as *const c_void) };
-        let _ = rx.recv();
-        drop(unsafe { Box::from_raw(raw) });
+        // Synchronous; also releases the context allocated at create.
+        unsafe { ffi::lcshim_destroy(self.ctx) };
     }
 }

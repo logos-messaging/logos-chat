@@ -283,12 +283,16 @@ impl<T> ThreadedDeliveryWrapper<T> {
         // discv5UdpPort defaults to 9000 in libwaku, so a second instance with
         // a distinct --port still collides on UDP. Bind it to tcp_port so a
         // single --port knob keeps both ports distinct across instances.
+        // Only `mode`, `preset` and the `*Overrides` maps are accepted at the
+        // top level; per-node settings go in `messagingOverrides`.
         let config_json = serde_json::json!({
-            "logLevel": cfg.log_level,
             "mode": "Core",
             "preset": cfg.preset,
-            "tcpPort": cfg.port,
-            "discv5UdpPort": cfg.port,
+            "messagingOverrides": {
+                "log-level": cfg.log_level,
+                "tcp-port": cfg.port,
+                "discv5-udp-port": cfg.port,
+            },
         })
         .to_string();
 
@@ -326,7 +330,11 @@ impl<T> ThreadedDeliveryWrapper<T> {
                 Err(crossbeam_channel::TrySendError::Disconnected(_)) => false,
             });
         };
-        node.set_event_callback(event_closure);
+        // Only received messages are mapped, so only that event is registered.
+        if let Err(e) = node.set_event_callback("onMessageReceived", event_closure) {
+            let _ = ready_tx.send(Err(DeliveryError::StartupFailed(e)));
+            return;
+        }
 
         if let Err(e) = node.start() {
             let _ = ready_tx.send(Err(DeliveryError::StartupFailed(e)));

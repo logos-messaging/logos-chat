@@ -24,6 +24,8 @@ fn main() {
         other => panic!("unsupported OS for logos-delivery transport: {other}"),
     }
 
+    compile_shim(&lib_dir);
+
     // Two linking modes, because dev builds and *distributable* builds want
     // opposite things out of the library's install name / soname.
     if relocatable() || target_os == "ios" {
@@ -62,6 +64,52 @@ fn main() {
         println!("cargo:rustc-link-lib=dylib=logosdelivery");
     }
     println!("cargo:lib_dir={}", lib_dir.display());
+}
+
+/// Compile `csrc/shim.c`, which re-exports the library's `static inline` typed
+/// helpers as linkable symbols, and link the TinyCBOR they encode with. The
+/// headers sit beside the library in the same package (`<lib_dir>/../include`).
+fn compile_shim(lib_dir: &Path) {
+    let include_dir = lib_dir
+        .parent()
+        .map(|p| p.join("include"))
+        .unwrap_or_default();
+    let tinycbor = locate_tinycbor(lib_dir).unwrap_or_else(|| {
+        panic!(
+            "TinyCBOR not found: set TINYCBOR_DIR, or use a liblogosdelivery package \
+             that propagates it (nix-support/propagated-build-inputs)"
+        )
+    });
+
+    println!("cargo:rerun-if-changed=csrc/shim.c");
+    cc::Build::new()
+        .file("csrc/shim.c")
+        .include(&include_dir)
+        .include(tinycbor.join("include"))
+        .compile("lcshim");
+
+    println!(
+        "cargo:rustc-link-search=native={}",
+        tinycbor.join("lib").display()
+    );
+    println!("cargo:rustc-link-lib=static=tinycbor");
+}
+
+/// TinyCBOR's install prefix: `TINYCBOR_DIR`, else the copy the nix package
+/// propagates to its consumers.
+fn locate_tinycbor(lib_dir: &Path) -> Option<PathBuf> {
+    println!("cargo:rerun-if-env-changed=TINYCBOR_DIR");
+    if let Ok(dir) = std::env::var("TINYCBOR_DIR") {
+        return Some(PathBuf::from(dir));
+    }
+    let propagated = lib_dir
+        .parent()?
+        .join("nix-support/propagated-build-inputs");
+    fs::read_to_string(propagated)
+        .ok()?
+        .split_whitespace()
+        .find(|p| p.contains("-tinycbor-"))
+        .map(PathBuf::from)
 }
 
 /// Opt-in relocatable linking for builds that get shipped to other machines.
