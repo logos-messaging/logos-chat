@@ -15,7 +15,9 @@
 //! constructors off the alias; they are crate-level functions ([`open`],
 //! [`open_with_transport`]) taking the all-inclusive [`LogosConfig`] instead.
 
-use components::{ContactRegistry, HttpAuthClient, RegistryPublishMode};
+use std::time::Duration;
+
+use components::{CachedAuth, ContactRegistry, HttpAuthClient, RegistryPublishMode};
 use crossbeam_channel::Receiver;
 use embedded_logos_delivery::{EmbeddedLogosDelivery, P2pConfig};
 use logos_account::AccountError;
@@ -33,6 +35,10 @@ use logos_generic_chat::{
 
 /// The endpoint for the account and keypackage registration service.
 pub const REGISTRY_ENDPOINT: &str = "https://devnet.chat-kc.logos.co";
+
+/// How long a peer's endorsed signers are trusted before re-fetching, and so
+/// how long a revoked signer can still pass.
+const AUTH_CACHE_TTL: Duration = Duration::from_mins(10);
 
 /// Configuration for opening a Logos client.
 ///
@@ -152,7 +158,7 @@ pub fn open_with_transport<T: Transport + Clone>(
     transport: T,
 ) -> Result<
     (
-        ChatClient<T, ContactRegistry<T>, HttpAuthClient, SqliteStore>,
+        ChatClient<T, ContactRegistry<T>, CachedAuth<HttpAuthClient>, SqliteStore>,
         Receiver<Event>,
     ),
     ClientError,
@@ -182,7 +188,7 @@ pub fn open_with_transport<T: Transport + Clone>(
     let mut builder = ChatClientBuilder::new(installation)
         .transport(transport)
         .registration(registry)
-        .auth(auth)
+        .auth(CachedAuth::new(auth, AUTH_CACHE_TTL))
         .storage(store);
     if let Some(group_v2) = config.group_v2_config {
         builder = builder.group_v2_config(group_v2);
@@ -215,7 +221,7 @@ where
 type ClientType = ChatClient<
     EmbeddedLogosDelivery,
     ContactRegistry<EmbeddedLogosDelivery>,
-    HttpAuthClient,
+    CachedAuth<HttpAuthClient>,
     SqliteStore,
 >;
 
@@ -249,7 +255,7 @@ pub fn client_with(
     let builder = ChatClientBuilder::new(installation)
         .transport(transport)
         .registration(registry)
-        .auth(auth)
+        .auth(CachedAuth::new(auth, AUTH_CACHE_TTL))
         .storage(store)
         .group_v2_config(demls_config);
     builder.build()
@@ -266,7 +272,7 @@ pub fn client_with(
 pub type LogosChatClient = ChatClient<
     EmbeddedLogosDelivery,
     ContactRegistry<EmbeddedLogosDelivery>,
-    HttpAuthClient,
+    CachedAuth<HttpAuthClient>,
     SqliteStore,
 >;
 
