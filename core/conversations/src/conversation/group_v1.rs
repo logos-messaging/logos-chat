@@ -22,7 +22,7 @@ use crate::utils::{blake2b_hex, hash_size};
 use crate::{
     DeliveryService, IdentityProvider,
     conversation::{ChatError, Convo, ConvoBase, GroupConvo, Identified},
-    outcomes::{Content, ConvoOutcome},
+    outcomes::{Content, ConvoOutcome, Observation},
     service_traits::KeyPackageProvider,
     types::AddressedEncryptedPayload,
 };
@@ -344,8 +344,7 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
         };
         Ok(ConvoOutcome {
             convo_id: self.id().to_string(),
-            content,
-            members_changed: false,
+            observations: content.into_iter().map(Observation::Content).collect(),
         })
     }
 

@@ -1,5 +1,5 @@
 use integration_tests_core::TestHarness;
-use libchat::{ChatError, ConvoOutcome, PayloadOutcome};
+use libchat::{ChatError, ConvoOutcome, Observation, PayloadOutcome};
 use std::time::Duration;
 
 #[test]
@@ -201,13 +201,14 @@ fn burst_delivered_out_of_order_is_read_whole() {
 
     let mut read = Vec::new();
     for payload in &burst {
-        match harness.raya().handle_payload(payload).expect("raya reads") {
-            PayloadOutcome::Convo(ConvoOutcome {
-                content: Some(content),
-                ..
-            }) => read.push(content.bytes),
-            outcome => panic!("expected content, got {outcome:?}"),
-        }
+        let outcome = harness.raya().handle_payload(payload).expect("raya reads");
+        let PayloadOutcome::Convo(ConvoOutcome { observations, .. }) = &outcome else {
+            panic!("expected content, got {outcome:?}");
+        };
+        let [Observation::Content(content)] = observations.as_slice() else {
+            panic!("expected content, got {outcome:?}");
+        };
+        read.push(content.bytes.clone());
     }
     read.sort();
     assert_eq!(read, sent);
