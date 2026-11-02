@@ -52,8 +52,6 @@ impl GroupV3Convo {
         let epoch = self.mls_group.epoch().as_u64();
         let fingerprint = EpochFingerprint::from(&commit);
 
-        // TODO: Validate Commit
-
         self.mls_group
             .merge_staged_commit(&cx.mls_provider, commit)
             .map_err(ChatError::generic)?;

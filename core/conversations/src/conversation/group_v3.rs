@@ -33,7 +33,7 @@ use crate::{
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
-use self::payloads::frame_id;
+use self::payloads::{frame_id, to_envelope};
 
 // Type Aliases
 type Frame = payloads::GroupV3Frame;
@@ -127,7 +127,7 @@ impl GroupV3Convo {
         msg: MlsMessageOut,
     ) -> Result<(), SendError> {
         cx.ds
-            .publish(self.to_envelope(msg)?)
+            .publish(to_envelope(self.convo_id.to_string(), msg)?)
             .map_err(|e| SendError::Delivery(e.to_string()))?;
 
         Ok(())
@@ -180,8 +180,6 @@ where
         let existing = self.signers()?.into_iter();
         let signers = unique(member_diff(signers, existing));
 
-        // TODO: Check if allowed to make commit;
-
         let key_packages: Vec<KeyPackage> = fetch_key_packages(cx, signers)?;
         if key_packages.is_empty() {
             warn!("no members to add to mls::group, ignoring");
@@ -193,12 +191,12 @@ where
             .add_members(&cx.mls_provider, &cx.mls_identity, key_packages.as_slice())
             .map_err(ChatError::generic)?;
 
-        let dependent_messages: Result<Vec<AddressedEnvelope>, SendError> = key_packages
+        let invites: Result<Vec<AddressedEnvelope>, SendError> = key_packages
             .iter()
             .map(|s| crate::inbox_v2::create_invite_v3(&SignerKey::from(s.leaf_node()), &welcome))
             .collect();
 
-        self.process_pending_commit(cx, commit_msg, dependent_messages?)?;
+        self.process_pending_commit(cx, commit_msg, invites?)?;
 
         Ok(())
     }

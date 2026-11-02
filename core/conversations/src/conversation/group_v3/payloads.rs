@@ -27,8 +27,6 @@ pub struct GroupV3Frame {
 pub enum GroupV3Payload {
     #[prost(bytes = "bytes", tag = "6")]
     Content(Bytes),
-    #[prost(bytes = "bytes", tag = "7")]
-    ConsensusMessage(Bytes),
 }
 
 impl GroupV3Frame {
@@ -43,20 +41,18 @@ impl GroupV3Frame {
     }
 }
 
-impl GroupV3Convo {
-    pub fn to_envelope(&self, msg: MlsMessageOut) -> Result<AddressedEnvelope, SendError> {
-        let bytes = msg.to_bytes()?;
+pub fn to_envelope(convo_id: String, msg: MlsMessageOut) -> Result<AddressedEnvelope, SendError> {
+    let bytes = msg.to_bytes()?;
 
-        let payload = AddressedEncryptedPayload {
-            delivery_address: delivery_address_from_id(self.id()),
-            data: EncryptedPayload {
-                // TODO: (P3) Don't force the encryption payload on convotypes. They can manage it internally if desired.
-                encryption: Some(encrypted_payload::Encryption::Plaintext(Plaintext {
-                    payload: bytes.into(),
-                })),
-            },
-        };
+    let payload = AddressedEncryptedPayload {
+        delivery_address: delivery_address_from_id(&convo_id),
+        data: EncryptedPayload {
+            // TODO: (P3) Don't force the encryption payload on convotypes. They can manage it internally if desired.
+            encryption: Some(encrypted_payload::Encryption::Plaintext(Plaintext {
+                payload: bytes.into(),
+            })),
+        },
+    };
 
-        Ok(payload.into_envelope(self.id().to_string()))
-    }
+    Ok(payload.into_envelope(convo_id))
 }
