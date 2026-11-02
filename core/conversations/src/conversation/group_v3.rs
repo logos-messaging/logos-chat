@@ -116,34 +116,19 @@ impl GroupV3Convo {
             self.mls_group
                 .create_message(&cx.mls_provider, &cx.mls_identity, frame.as_slice())?;
 
-        self.send_mls_msg(cx, mls_msg)?;
+        self.publish_mls_msg(cx, mls_msg)?;
 
         Ok(frame_id)
     }
 
-    fn send_mls_msg<S: ExternalServices>(
-        &mut self,
-        cx: &mut ServiceContext<S>,
-        msg: MlsMessageOut,
-    ) -> Result<(), SendError> {
-        cx.ds
-            .publish(to_envelope(self.convo_id.to_string(), msg)?)
-            .map_err(|e| SendError::Delivery(e.to_string()))?;
-
-        Ok(())
-    }
-
-    // Handles pending_commit
-    fn process_pending_commit<S: ExternalServices>(
+    fn send_pending_commit<S: ExternalServices>(
         &mut self,
         cx: &mut ServiceContext<S>,
         commit_msg: MlsMessageOut,
         dependent_msgs: Vec<AddressedEnvelope>,
     ) -> Result<(), ChatError> {
-        // TODO: Check if Can merge?
-
         // Send Commit
-        if let Err(e) = self.send_mls_msg(cx, commit_msg) {
+        if let Err(e) = self.publish_mls_msg(cx, commit_msg) {
             // Discard the staged commit so the group isn't left wedged
             if let Err(clear_err) = self
                 .mls_group
@@ -159,10 +144,28 @@ impl GroupV3Convo {
 
         // Send Welcomes
         for env in dependent_msgs {
-            cx.ds
-                .publish(env)
-                .map_err(|e| SendError::Delivery(e.to_string()))?;
+            Self::publish_envelope(cx, env)?;
         }
+        Ok(())
+    }
+
+    fn publish_mls_msg<S: ExternalServices>(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        msg: MlsMessageOut,
+    ) -> Result<(), SendError> {
+        let env = to_envelope(self.convo_id.to_string(), msg)?;
+        Self::publish_envelope(cx, env)
+    }
+
+    fn publish_envelope<S: ExternalServices>(
+        cx: &mut ServiceContext<S>,
+        env: AddressedEnvelope,
+    ) -> Result<(), SendError> {
+        cx.ds
+            .publish(env)
+            .map_err(|e| SendError::Delivery(e.to_string()))?;
+
         Ok(())
     }
 }
@@ -196,7 +199,7 @@ where
             .map(|s| crate::inbox_v2::create_invite_v3(&SignerKey::from(s.leaf_node()), &welcome))
             .collect();
 
-        self.process_pending_commit(cx, commit_msg, invites?)?;
+        self.send_pending_commit(cx, commit_msg, invites?)?;
 
         Ok(())
     }

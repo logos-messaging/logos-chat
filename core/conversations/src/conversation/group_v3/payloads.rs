@@ -2,11 +2,10 @@ use chat_proto::logoschat::encryption::{EncryptedPayload, Plaintext, encrypted_p
 use openmls::framing::MlsMessageOut;
 use prost::{Message, Oneof, bytes::Bytes};
 
-use super::{FrameId, GroupV3Convo, delivery_address_from_id};
+use super::{FrameId, delivery_address_from_id};
 
 use crate::{
     AddressedEnvelope,
-    conversation::Identified,
     errors::SendError,
     types::AddressedEncryptedPayload,
     utils::{blake2b_hex, hash_size},
