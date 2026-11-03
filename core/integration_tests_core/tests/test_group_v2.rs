@@ -1,5 +1,6 @@
-use integration_tests_core::TestHarness;
-use libchat::{ChatError, DeliveryAck, MissingMessage};
+use integration_tests_core::{TestHarness, fast_group_v2_config};
+use libchat::{ChatError, DeliveryAck, GroupV2Config, MissingMessage};
+use std::time::Duration;
 use tracing::info;
 
 #[test]
@@ -123,6 +124,40 @@ fn core_client_batch_add() {
     harness.process_until_label("saro create", |h| {
         h.raya().convo_count() == 1 && h.pax().convo_count() == 1
     });
+}
+
+#[test]
+fn a_lone_member_adds_within_the_batch_window_and_the_freeze() {
+    // Saro, alone in the group, decides the add with its own vote, so the
+    // round must not wait for the library's consensus timeout.
+    let defaults = GroupV2Config::default();
+    let config = GroupV2Config {
+        consensus_timeout: defaults.consensus_timeout,
+        proposal_expiration: defaults.proposal_expiration,
+        ..fast_group_v2_config()
+    };
+    let step = Duration::from_millis(50);
+    // One step carries the welcome, the other is slack.
+    let deadline = config.commit_batch_window + config.freeze_duration + 2 * step;
+
+    let mut harness = TestHarness::<2>::new(|_, _| {});
+    harness.saro().set_group_v2_config(config);
+    let convo_id = harness
+        .saro()
+        .create_group_convo_v2(&[], "", "")
+        .expect("saro create");
+    let raya = [harness.raya().account()];
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &raya)
+        .expect("saro add raya");
+
+    let mut elapsed = Duration::ZERO;
+    while harness.raya().convo_count() == 0 {
+        assert!(elapsed <= deadline, "raya had not joined after {elapsed:?}");
+        harness.process(step);
+        elapsed += step;
+    }
 }
 
 #[test]

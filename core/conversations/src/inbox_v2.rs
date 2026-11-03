@@ -258,7 +258,7 @@ impl InboxV2 {
 
 #[derive(Clone, PartialEq, Message)]
 pub struct InboxV2Frame {
-    #[prost(oneof = "InviteType", tags = "1, 2, 3")]
+    #[prost(oneof = "InviteType", tags = "1, 2")]
     pub payload: Option<InviteType>,
 }
 

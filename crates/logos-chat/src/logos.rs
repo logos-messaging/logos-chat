@@ -211,6 +211,50 @@ where
     Installation::load_or_create(store, || Ok(register_account(auth)?))
 }
 
+// The fully qualified Client Type
+type ClientType = ChatClient<
+    EmbeddedLogosDelivery,
+    ContactRegistry<EmbeddedLogosDelivery>,
+    HttpAuthClient,
+    SqliteStore,
+>;
+
+pub fn client_with(
+    installation: Installation,
+    config: LogosConfig,
+) -> Result<(ClientType, Receiver<Event>), ClientError> {
+    let transport = EmbeddedLogosDelivery::start(config.p2p_config.clone())
+        .map_err(|e| ClientError::Transport(e.to_string()))?;
+
+    let registry = ContactRegistry::new(
+        transport.clone(),
+        config.registry_url.to_string(),
+        RegistryPublishMode::Http,
+    );
+
+    // Auth uses the same server as registry for the time being
+    let auth = HttpAuthClient::new(config.registry_url);
+
+    let store = SqliteStore::new(StorageConfig::InMemory)?;
+
+    let demls_config = GroupV2Config {
+        voting_delay: std::time::Duration::from_millis(50),
+        consensus_timeout: std::time::Duration::from_millis(250),
+        commit_batch_window: std::time::Duration::from_millis(500),
+        freeze_duration: std::time::Duration::from_millis(500),
+        proposal_expiration: std::time::Duration::from_millis(4000),
+        ..GroupV2Config::default()
+    };
+
+    let builder = ChatClientBuilder::new(installation)
+        .transport(transport)
+        .registration(registry)
+        .auth(auth)
+        .storage(store)
+        .group_v2_config(demls_config);
+    builder.build()
+}
+
 /// The Logos client: a [`ChatClient`] wired to the Logos service stack —
 /// the [`Installation`](logos_generic_chat::Installation) its store holds, the keypackage +
 /// account registry ([`ContactRegistry`], the keypackage store; it queries

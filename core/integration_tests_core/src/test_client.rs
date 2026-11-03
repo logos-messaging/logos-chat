@@ -365,7 +365,8 @@ impl TestHarness<4> {
 
 /// Millisecond GroupV2 timers for virtual-time tests — the production
 /// defaults converge too slowly for the harness's step sizes.
-fn fast_group_v2_config() -> GroupV2Config {
+/// [`TestHarness::new`] installs them on every client.
+pub fn fast_group_v2_config() -> GroupV2Config {
     GroupV2Config {
         voting_delay: Duration::from_millis(50),
         consensus_timeout: Duration::from_millis(250),
