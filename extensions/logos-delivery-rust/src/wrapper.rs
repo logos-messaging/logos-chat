@@ -26,11 +26,19 @@
 //! order guarantees it is freed *after* Drop::drop returns (i.e. after
 //! stop+destroy complete), so the pointer is always valid when Nim calls it.
 
-use std::ffi::CString;
+use std::collections::BTreeMap;
 use std::os::raw::c_void;
 use std::sync::mpsc;
 
-use super::sys::{self as ffi, RET_OK, get_trampoline};
+use super::sys::{self as ffi, RET_OK, get_reply_trampoline, get_trampoline};
+
+/// Encodes a request envelope: a CBOR map of string fields.
+fn cbor_req(fields: &[(&str, &str)]) -> Vec<u8> {
+    let map: BTreeMap<_, _> = fields.iter().copied().collect();
+    let mut buf = Vec::new();
+    ciborium::into_writer(&map, &mut buf).expect("CBOR encoding into a Vec cannot fail");
+    buf
+}
 
 /// Opaque handle to a logos-delivery node context.
 pub struct LogosNodeCtx {
@@ -45,7 +53,7 @@ unsafe impl Sync for LogosNodeCtx {}
 
 impl LogosNodeCtx {
     pub fn new(config_json: &str) -> Result<Self, String> {
-        let config_cstr = CString::new(config_json).map_err(|e| e.to_string())?;
+        let req = cbor_req(&[("configJson", config_json)]);
 
         let (tx, rx) = mpsc::sync_channel::<Result<(), String>>(1);
         let closure = move |ret: i32, data: &str| {
@@ -56,10 +64,10 @@ impl LogosNodeCtx {
             });
         };
         let raw = Box::into_raw(Box::new(closure));
-        let cb = get_trampoline(unsafe { &*raw });
+        let cb = get_reply_trampoline(unsafe { &*raw });
 
         let ctx = unsafe {
-            ffi::logosdelivery_create_node(config_cstr.as_ptr(), cb, raw as *const c_void)
+            ffi::logosdelivery_create_node(req.as_ptr(), req.len(), cb, raw as *const c_void)
         };
 
         // create_node may call the callback synchronously (try_recv) or
@@ -72,6 +80,11 @@ impl LogosNodeCtx {
                 .unwrap_or(Err("callback channel disconnected".into()))
         };
         drop(unsafe { Box::from_raw(raw) });
+
+        // A failed create still hands back a live (empty) handle.
+        if callback_result.is_err() && !ctx.is_null() {
+            unsafe { ffi::logosdelivery_destroy(ctx) };
+        }
 
         callback_result.map(|_| Self {
             ctx,
@@ -89,9 +102,12 @@ impl LogosNodeCtx {
             });
         };
         let raw = Box::into_raw(Box::new(closure));
-        let cb = get_trampoline(unsafe { &*raw });
+        let cb = get_reply_trampoline(unsafe { &*raw });
 
-        let ret = unsafe { ffi::logosdelivery_start_node(self.ctx, cb, raw as *const c_void) };
+        let req = cbor_req(&[]);
+        let ret = unsafe {
+            ffi::logosdelivery_start_node(self.ctx, cb, raw as *const c_void, req.as_ptr(), req.len())
+        };
 
         if ret != RET_OK {
             drop(unsafe { Box::from_raw(raw) });
@@ -105,7 +121,7 @@ impl LogosNodeCtx {
     }
 
     pub fn subscribe(&self, content_topic: &str) -> Result<(), String> {
-        let topic_cstr = CString::new(content_topic).map_err(|e| e.to_string())?;
+        let req = cbor_req(&[("contentTopicStr", content_topic)]);
 
         let (tx, rx) = mpsc::sync_channel::<Result<(), String>>(1);
         let closure = move |ret: i32, data: &str| {
@@ -116,10 +132,10 @@ impl LogosNodeCtx {
             });
         };
         let raw = Box::into_raw(Box::new(closure));
-        let cb = get_trampoline(unsafe { &*raw });
+        let cb = get_reply_trampoline(unsafe { &*raw });
 
         let ret = unsafe {
-            ffi::logosdelivery_subscribe(self.ctx, cb, raw as *const c_void, topic_cstr.as_ptr())
+            ffi::logosdelivery_subscribe(self.ctx, cb, raw as *const c_void, req.as_ptr(), req.len())
         };
 
         if ret != RET_OK {
@@ -135,7 +151,7 @@ impl LogosNodeCtx {
     }
 
     pub fn unsubscribe(&self, content_topic: &str) -> Result<(), String> {
-        let topic_cstr = CString::new(content_topic).map_err(|e| e.to_string())?;
+        let req = cbor_req(&[("contentTopicStr", content_topic)]);
 
         let (tx, rx) = mpsc::sync_channel::<Result<(), String>>(1);
         let closure = move |ret: i32, data: &str| {
@@ -146,10 +162,10 @@ impl LogosNodeCtx {
             });
         };
         let raw = Box::into_raw(Box::new(closure));
-        let cb = get_trampoline(unsafe { &*raw });
+        let cb = get_reply_trampoline(unsafe { &*raw });
 
         let ret = unsafe {
-            ffi::logosdelivery_unsubscribe(self.ctx, cb, raw as *const c_void, topic_cstr.as_ptr())
+            ffi::logosdelivery_unsubscribe(self.ctx, cb, raw as *const c_void, req.as_ptr(), req.len())
         };
 
         if ret != RET_OK {
@@ -165,7 +181,7 @@ impl LogosNodeCtx {
 
     /// Returns the request ID on success.
     pub fn send(&self, message_json: &str) -> Result<String, String> {
-        let msg_cstr = CString::new(message_json).map_err(|e| e.to_string())?;
+        let req = cbor_req(&[("messageJson", message_json)]);
 
         let (tx, rx) = mpsc::sync_channel::<Result<String, String>>(1);
         let closure = move |ret: i32, data: &str| {
@@ -176,10 +192,10 @@ impl LogosNodeCtx {
             });
         };
         let raw = Box::into_raw(Box::new(closure));
-        let cb = get_trampoline(unsafe { &*raw });
+        let cb = get_reply_trampoline(unsafe { &*raw });
 
         let ret = unsafe {
-            ffi::logosdelivery_send(self.ctx, cb, raw as *const c_void, msg_cstr.as_ptr())
+            ffi::logosdelivery_send(self.ctx, cb, raw as *const c_void, req.as_ptr(), req.len())
         };
 
         if ret != RET_OK {
@@ -193,8 +209,9 @@ impl LogosNodeCtx {
         result
     }
 
-    /// Stores the event callback inside the node so it is dropped *after*
-    /// stop+destroy in Drop, keeping the pointer valid for the node's lifetime.
+    /// Registers `closure` for `onMessageReceived` events. Stores it inside the
+    /// node so it is dropped *after* stop+destroy in Drop, keeping the pointer
+    /// valid for the node's lifetime.
     pub fn set_event_callback<C>(&mut self, closure: C)
     where
         C: FnMut(i32, &str) + Send + 'static,
@@ -203,7 +220,12 @@ impl LogosNodeCtx {
         let cb = get_trampoline(&*boxed);
         let user_data = &mut *boxed as *mut C as *const c_void;
         unsafe {
-            ffi::logosdelivery_set_event_callback(self.ctx, cb, user_data);
+            ffi::logosdelivery_add_event_listener(
+                self.ctx,
+                c"onMessageReceived".as_ptr(),
+                cb,
+                user_data,
+            );
         }
         // Move the box into self; the heap address (user_data) is unaffected.
         self._event_cb = Some(boxed);
@@ -219,9 +241,12 @@ impl LogosNodeCtx {
             });
         };
         let raw = Box::into_raw(Box::new(closure));
-        let cb = get_trampoline(unsafe { &*raw });
+        let cb = get_reply_trampoline(unsafe { &*raw });
 
-        let ret = unsafe { ffi::logosdelivery_stop_node(self.ctx, cb, raw as *const c_void) };
+        let req = cbor_req(&[]);
+        let ret = unsafe {
+            ffi::logosdelivery_stop_node(self.ctx, cb, raw as *const c_void, req.as_ptr(), req.len())
+        };
 
         if ret != RET_OK {
             drop(unsafe { Box::from_raw(raw) });
@@ -244,14 +269,6 @@ impl Drop for LogosNodeCtx {
             tracing::warn!("logosdelivery_stop_node failed during drop: {e}");
         }
 
-        let (tx, rx) = mpsc::sync_channel::<()>(1);
-        let closure = move |_: i32, _: &str| {
-            let _ = tx.send(());
-        };
-        let raw = Box::into_raw(Box::new(closure));
-        let cb = get_trampoline(unsafe { &*raw });
-        unsafe { ffi::logosdelivery_destroy(self.ctx, cb, raw as *const c_void) };
-        let _ = rx.recv();
-        drop(unsafe { Box::from_raw(raw) });
+        unsafe { ffi::logosdelivery_destroy(self.ctx) };
     }
 }
