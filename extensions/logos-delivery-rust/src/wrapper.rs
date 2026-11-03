@@ -106,7 +106,13 @@ impl LogosNodeCtx {
 
         let req = cbor_req(&[]);
         let ret = unsafe {
-            ffi::logosdelivery_start_node(self.ctx, cb, raw as *const c_void, req.as_ptr(), req.len())
+            ffi::logosdelivery_start_node(
+                self.ctx,
+                cb,
+                raw as *const c_void,
+                req.as_ptr(),
+                req.len(),
+            )
         };
 
         if ret != RET_OK {
@@ -135,7 +141,13 @@ impl LogosNodeCtx {
         let cb = get_reply_trampoline(unsafe { &*raw });
 
         let ret = unsafe {
-            ffi::logosdelivery_subscribe(self.ctx, cb, raw as *const c_void, req.as_ptr(), req.len())
+            ffi::logosdelivery_subscribe(
+                self.ctx,
+                cb,
+                raw as *const c_void,
+                req.as_ptr(),
+                req.len(),
+            )
         };
 
         if ret != RET_OK {
@@ -165,7 +177,13 @@ impl LogosNodeCtx {
         let cb = get_reply_trampoline(unsafe { &*raw });
 
         let ret = unsafe {
-            ffi::logosdelivery_unsubscribe(self.ctx, cb, raw as *const c_void, req.as_ptr(), req.len())
+            ffi::logosdelivery_unsubscribe(
+                self.ctx,
+                cb,
+                raw as *const c_void,
+                req.as_ptr(),
+                req.len(),
+            )
         };
 
         if ret != RET_OK {
@@ -245,7 +263,13 @@ impl LogosNodeCtx {
 
         let req = cbor_req(&[]);
         let ret = unsafe {
-            ffi::logosdelivery_stop_node(self.ctx, cb, raw as *const c_void, req.as_ptr(), req.len())
+            ffi::logosdelivery_stop_node(
+                self.ctx,
+                cb,
+                raw as *const c_void,
+                req.as_ptr(),
+                req.len(),
+            )
         };
 
         if ret != RET_OK {
