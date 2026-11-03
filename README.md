@@ -135,7 +135,6 @@ crates/        the client layer
 
 extensions/    pluggable implementations
   components/          registries, delivery helpers, wakeup
-  logos-delivery-rust/ FFI bindings to liblogosdelivery
   embedded-logos-delivery/  an embedded Waku node as a Transport
   message-store/       an application's chat messages in its own SQLite database
 
