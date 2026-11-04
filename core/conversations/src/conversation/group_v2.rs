@@ -384,12 +384,14 @@ where
     }
 
     #[instrument(name = "groupv2.handle_frame", skip_all, fields(user_id = %service_ctx.mls_identity.display_name()))]
-    fn handle_frame(
+    fn handle_payload(
         &mut self,
         service_ctx: &mut super::ServiceContext<S>,
-        encoded_payload: EncryptedPayload,
+        payload: &[u8],
     ) -> Result<ConvoOutcome, ChatError> {
-        let bytes = match encoded_payload.encryption {
+        let encrypted_payload = EncryptedPayload::decode(payload)?;
+
+        let bytes = match encrypted_payload.encryption {
             Some(encrypted_payload::Encryption::Plaintext(pt)) => pt.payload,
             _ => {
                 return Err(ChatError::generic("Expected plaintext"));
