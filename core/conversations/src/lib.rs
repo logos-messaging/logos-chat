@@ -30,7 +30,8 @@ pub use errors::ChatError;
 pub use identity::{AuthenticatedSigner, ParticipantId, Signer, SignerError, SignerKey, SignerRef};
 pub use kv::{KvTransaction, ScopedKvStore};
 pub use outcomes::{
-    Content, ConversationClass, ConvoOutcome, InboxOutcome, NewConversation, PayloadOutcome,
+    Content, ConversationClass, ConvoOutcome, InboxOutcome, NewConversation, Observation,
+    PayloadOutcome,
 };
 pub use service_context::ExternalServices;
 pub use service_traits::{

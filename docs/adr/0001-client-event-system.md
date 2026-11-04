@@ -5,7 +5,7 @@
 | Status | Accepted |
 | Issue | https://github.com/logos-messaging/libchat/issues/97 |
 | Date | 2026-05-19 |
-| Last revised | 2026-06-11 |
+| Last revised | 2026-11-01 |
 
 ## Context and Problem
 
@@ -77,7 +77,7 @@ sequenceDiagram
     Delivery-)Worker: inbound payload (subscribed address)
     Worker->>Core: handle_payload(payload)
     Core-->>Worker: Ok(PayloadOutcome)
-    Worker->>Worker: translate fields → Event values
+    Worker->>Worker: translate observations → Event values
     Worker-)App: events via Receiver<Event>
 
     Note over App: App drains on its own schedule

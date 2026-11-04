@@ -35,9 +35,9 @@ pub(crate) trait Convo<S: ExternalServices>: Identified + ConvoBase + Send {
 
     /// Decrypts and processes an incoming payload
     ///
-    /// Returns the [`ConvoOutcome`] describing what the frame produced; its
-    /// `content` is `None` for protocol-only frames (placeholders, MLS
-    /// commits). Errors only on decryption or frame-parsing failure.
+    /// Returns the [`ConvoOutcome`] describing what the frame produced, with no
+    /// `Content` for protocol-only frames (placeholders, MLS commits). Errors
+    /// only on decryption or frame-parsing failure.
     fn handle_payload(
         &mut self,
         cx: &mut ServiceContext<S>,

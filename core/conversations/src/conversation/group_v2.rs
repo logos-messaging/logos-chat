@@ -34,7 +34,7 @@ use tracing::{info, instrument};
 use crate::IdentityProvider;
 use crate::conversation::{ConversationIdRef, ExternalServices, MessageId, ServiceContext};
 use crate::{
-    ConvoOutcome, DeliveryService, RegistrationService,
+    ConvoOutcome, DeliveryService, Observation, RegistrationService,
     conversation::{ChatError, Convo, ConvoBase, GroupConvo, Identified},
 };
 
@@ -623,9 +623,8 @@ impl GroupV2Convo {
     /// Turn drained de-mls events into a [`ConvoOutcome`], unwrapping the
     /// message from its causal-history envelope.
     ///
-    /// An outcome holds one message and de-mls emits at most one per frame, so
-    /// the first wins. A second would be dropped without being recorded as
-    /// seen, leaving a later reference to report it missing.
+    /// de-mls emits at most one message per frame. A roster change anywhere in
+    /// the drain is observed after it.
     fn outcome_from_events<S: ExternalServices>(
         &self,
         service_ctx: &ServiceContext<S>,
@@ -665,7 +664,7 @@ impl GroupV2Convo {
 
         // A commit that only removes comes with no `CommitApplied`: the members
         // who stay get `MembersChanged`, and the removed one `Leaving`.
-        let members_changed = events.iter().any(|evt| {
+        let signers_changed = events.iter().any(|evt| {
             matches!(
                 evt,
                 ConversationEvent::CommitApplied(_)
@@ -674,10 +673,14 @@ impl GroupV2Convo {
                     | ConversationEvent::Leaving
             )
         });
+        let mut observations: Vec<Observation> =
+            content.into_iter().map(Observation::Content).collect();
+        if signers_changed {
+            observations.push(Observation::SignersChanged);
+        }
         Ok(ConvoOutcome {
             convo_id: self.convo_id.clone(),
-            content,
-            members_changed,
+            observations,
         })
     }
 }

@@ -97,7 +97,10 @@ impl TestClient {
             match &outcome {
                 PayloadOutcome::Empty => continue,
                 PayloadOutcome::Convo(convo_outcome) => {
-                    if let Some(data) = &convo_outcome.content {
+                    for observation in &convo_outcome.observations {
+                        let libchat::Observation::Content(data) = observation else {
+                            continue;
+                        };
                         info!(
                             content = String::from_utf8_lossy(&data.bytes).to_string(),
                             "COT"

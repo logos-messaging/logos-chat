@@ -8,7 +8,7 @@ use tracing::{debug, info};
 
 use crate::conversation::mls_utils::EpochFingerprint;
 use crate::service_context::ServiceContext;
-use crate::{ChatError, Content, ConvoOutcome, ExternalServices, Signer};
+use crate::{ChatError, Content, ConvoOutcome, ExternalServices, Observation, Signer};
 
 use super::payloads::{GroupV3FrameType, frame_id};
 use super::{Frame, GroupV3Convo};
@@ -98,7 +98,7 @@ impl GroupV3Convo {
             });
 
         Ok(ConvoOutcome {
-            content,
+            observations: content.into_iter().map(Observation::Content).collect(),
             ..self.default_outcome()
         })
     }
@@ -123,7 +123,7 @@ impl GroupV3Convo {
             "incoming commit merged"
         );
         Ok(ConvoOutcome {
-            members_changed: true,
+            observations: vec![Observation::SignersChanged],
             ..self.default_outcome()
         })
     }

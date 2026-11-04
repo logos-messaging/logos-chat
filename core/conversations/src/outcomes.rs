@@ -1,7 +1,7 @@
 //! Observations a single inbound payload produces.
 //!
-//! - [`ConvoOutcome`] — an optional [`Content`] on a single existing
-//!   conversation, plus whether a commit changed its membership.
+//! - [`ConvoOutcome`] — the [`Observation`]s on a single existing
+//!   conversation, in order.
 //! - [`InboxOutcome`] — a newly observed conversation, optionally with an
 //!   initial [`ConvoOutcome`].
 //! - [`PayloadOutcome`] — the union of the above, plus `Empty`.
@@ -30,19 +30,26 @@ pub struct Content {
     pub message_id: String,
 }
 
+/// One thing a conversation observed while handling a payload or a wakeup.
+#[derive(Debug, Clone)]
+pub enum Observation {
+    Content(Content),
+    /// A commit changed the group's signers.
+    SignersChanged,
+}
+
 #[derive(Debug, Clone)]
 pub struct ConvoOutcome {
     pub convo_id: ConversationId,
-    pub content: Option<Content>,
-    pub members_changed: bool,
+    /// In the order the conversation observed them.
+    pub observations: Vec<Observation>,
 }
 
 impl ConvoOutcome {
     pub fn empty(convo_id: ConversationId) -> Self {
         Self {
             convo_id,
-            content: None,
-            members_changed: false,
+            observations: Vec::new(),
         }
     }
 }

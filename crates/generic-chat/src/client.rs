@@ -6,8 +6,8 @@ use components::{ThreadedWakeupService, WakeupEvent};
 use crossbeam_channel::{Receiver, Sender, select};
 use libchat::{
     AuthService, ConversationId, ConversationStore, ConvoMetadata, ConvoOutcome, Core, DeliveryAck,
-    DeliveryService, GroupV2Config, InboxOutcome, MessageId, MissingMessage, ParticipantId,
-    PayloadOutcome, RegistrationService,
+    DeliveryService, GroupV2Config, InboxOutcome, MessageId, MissingMessage, Observation,
+    ParticipantId, PayloadOutcome, RegistrationService,
 };
 use logos_account::AccountAddr;
 use parking_lot::Mutex;
@@ -471,25 +471,28 @@ where
 fn convo_events(outcome: ConvoOutcome) -> Vec<Event> {
     let ConvoOutcome {
         convo_id,
-        content,
-        members_changed,
+        observations,
     } = outcome;
     let convo_id: Arc<str> = Arc::from(convo_id);
-    let mut events = Vec::new();
-    if let Some(c) = content
-        && let Some(sender) = decode_signer(c.sender)
-    {
-        events.push(Event::MessageReceived {
-            convo_id: Arc::clone(&convo_id),
+    observations
+        .into_iter()
+        .filter_map(|observation| observation_event(&convo_id, observation))
+        .collect()
+}
+
+/// `None` for a message whose sender does not decode.
+fn observation_event(convo_id: &Arc<str>, observation: Observation) -> Option<Event> {
+    match observation {
+        Observation::Content(c) => decode_signer(c.sender).map(|sender| Event::MessageReceived {
+            convo_id: Arc::clone(convo_id),
             content: c.bytes,
             sender,
             message_id: c.message_id,
-        });
+        }),
+        Observation::SignersChanged => Some(Event::ConversationMembersChanged {
+            convo_id: Arc::clone(convo_id),
+        }),
     }
-    if members_changed {
-        events.push(Event::ConversationMembersChanged { convo_id });
-    }
-    events
 }
 
 fn inbox_events(outcome: InboxOutcome) -> Vec<Event> {
@@ -503,16 +506,12 @@ fn inbox_events(outcome: InboxOutcome) -> Vec<Event> {
         convo_id: Arc::clone(&id),
         class: new_conversation.class,
     });
-    if let Some(c) = initial.and_then(|co| co.content)
-        && let Some(sender) = decode_signer(c.sender)
-    {
-        events.push(Event::MessageReceived {
-            convo_id: Arc::clone(&id),
-            content: c.bytes,
-            sender,
-            message_id: c.message_id,
-        });
-    }
+    events.extend(
+        initial
+            .into_iter()
+            .flat_map(|co| co.observations)
+            .filter_map(|observation| observation_event(&id, observation)),
+    );
     events
 }
 
