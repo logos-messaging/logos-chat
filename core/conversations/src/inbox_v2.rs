@@ -1,6 +1,7 @@
 mod identity;
 mod mls_provider;
 
+use crate::errors::SendError;
 use crate::storage::{ConversationKind, ConversationMeta, ConversationStore};
 use chat_proto::logoschat::envelope::EnvelopeV1;
 use de_mls::protos::de_mls::messages::v1::MemberWelcome;
@@ -16,11 +17,11 @@ pub(crate) use mls_provider::MlsEphemeralPqProvider;
 use crate::ChatError;
 use crate::DeliveryService;
 use crate::RegistrationService;
-use crate::conversation::GroupConvo;
 use crate::conversation::GroupV1Convo;
 use crate::conversation::GroupV2Convo;
 use crate::conversation::Identified as _;
 use crate::conversation::mls_extensions::GROUP_METADATA_EXTENSION_TYPE;
+use crate::conversation::{GroupConvo, GroupV3Convo};
 use crate::outcomes::ConversationClass;
 use crate::service_context::{ExternalServices, ServiceContext};
 use crate::utils::{blake2b_hex, hash_size};
@@ -101,6 +102,25 @@ pub fn invite_user_v2<DS: DeliveryService>(
         data: envelope.encode_to_vec(),
     })
     .map_err(ChatError::generic)
+}
+
+pub fn create_invite_v3(
+    signer: SignerRef,
+    welcome: &MlsMessageOut,
+) -> Result<AddressedEnvelope, SendError> {
+    let frame = InboxV2Frame {
+        payload: Some(InviteType::GroupV3(welcome.to_bytes()?)),
+    };
+    let envelope = EnvelopeV1 {
+        conversation_hint: conversation_id_for(signer),
+        salt: 0,
+        payload: frame.encode_to_vec().into(),
+    };
+
+    Ok(AddressedEnvelope {
+        delivery_address: delivery_address_for(signer),
+        data: envelope.encode_to_vec(),
+    })
 }
 
 /// A convo built from an InboxV2 invite, paired with the display class its
@@ -185,6 +205,12 @@ impl InboxV2 {
                 let convo = GroupV2Convo::new_from_welcome(service_ctx, &mw)?;
                 Ok(Some((Box::new(convo), ConversationClass::Group)))
             }
+            InviteType::GroupV3(welcome_bytes) => {
+                info!("Process V3 WelcomeMessage");
+                let welcome = self.parse_heavy_welcome(&welcome_bytes)?;
+                let convo = GroupV3Convo::new_from_welcome(service_ctx, welcome)?;
+                Ok(Some((Box::new(convo), ConversationClass::Group)))
+            }
         }
     }
 
@@ -223,6 +249,19 @@ impl InboxV2 {
         Ok(convo)
     }
 
+    fn parse_heavy_welcome(&self, welcome_bytes: &[u8]) -> Result<Welcome, ChatError> {
+        let (msg_in, _rest) = MlsMessageIn::tls_deserialize_bytes(welcome_bytes)?;
+
+        let MlsMessageBodyIn::Welcome(welcome) = msg_in.extract() else {
+            return Err(ChatError::ProtocolExpectation(
+                "something else",
+                "Welcome".into(),
+            ));
+        };
+
+        Ok(welcome)
+    }
+
     fn create_keypackage<S: ExternalServices>(
         cx: &ServiceContext<S>,
     ) -> Result<KeyPackage, ChatError> {
@@ -258,7 +297,7 @@ impl InboxV2 {
 
 #[derive(Clone, PartialEq, Message)]
 pub struct InboxV2Frame {
-    #[prost(oneof = "InviteType", tags = "1, 2")]
+    #[prost(oneof = "InviteType", tags = "1, 2, 3")]
     pub payload: Option<InviteType>,
 }
 
@@ -268,6 +307,8 @@ pub enum InviteType {
     GroupV1(GroupV1HeavyInvite),
     #[prost(bytes, tag = "2")]
     GroupV2(Vec<u8>),
+    #[prost(bytes, tag = "3")]
+    GroupV3(Vec<u8>),
 }
 
 #[derive(Clone, PartialEq, Message)]
