@@ -4,6 +4,7 @@ mod group_v2;
 mod group_v3;
 pub mod mls_extensions;
 mod mls_groups;
+pub(crate) mod mls_trace;
 mod mls_utils;
 
 pub use crate::errors::ChatError;
@@ -11,9 +12,10 @@ use crate::identity::{Signer, SignerKey, SignerRef};
 use crate::outcomes::ConvoOutcome;
 use crate::service_context::{ExternalServices, ServiceContext};
 use crate::types::ConvoMetadata;
+use crate::utils::{blake2b_hex, hash_size};
 pub use direct_v1::DirectV1Convo;
 pub use group_v1::GroupV1Convo;
-pub use group_v2::{GroupV2Clock, GroupV2Convo};
+pub use group_v2::{GroupV2Clock, GroupV2Convo, GroupV2Frame, GroupV2Payload};
 pub use group_v3::GroupV3Convo;
 
 pub type ConversationId = String;
@@ -23,6 +25,14 @@ pub type ConversationIdRef<'a> = &'a str;
 /// causal-history envelope. Handed back by a send so a caller can match later
 /// observations — acknowledgements, gaps — to the message that produced them.
 pub type MessageId = String;
+
+/// Identifies one frame of a conversation: a hash of the frame as it travels,
+/// which its sender and every receiver hold, whether they can read it or not.
+pub(crate) type FrameId = String;
+
+pub(crate) fn frame_id(encoded: &[u8]) -> FrameId {
+    blake2b_hex::<hash_size::FrameId>(&[b"logos-chat|frame_id|".as_slice(), encoded])
+}
 
 /// Behaviour shared by every conversation kind.
 pub(crate) trait Convo<S: ExternalServices>: Identified + ConvoBase + Send {
