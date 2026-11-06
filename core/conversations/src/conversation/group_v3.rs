@@ -10,11 +10,12 @@ mod handlers;
 mod payloads;
 mod storage;
 
+use std::collections::VecDeque;
 use std::fmt;
 use std::time::Duration;
 
 use openmls::framing::MlsMessageOut;
-use openmls::group::{MlsGroup, StagedWelcome};
+use openmls::group::{GroupEpoch, MlsGroup, StagedWelcome};
 use openmls::key_packages::KeyPackage;
 use openmls::messages::Welcome;
 use openmls_traits::OpenMlsProvider;
@@ -34,6 +35,7 @@ use crate::{
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
+use self::handlers::HeldMessage;
 use self::payloads::{GroupV3Payload, commit_payload, message_id, protocol_message, to_envelope};
 use self::storage::SeededStorage;
 
@@ -48,6 +50,10 @@ const SDS_TICK_INTERVAL: Duration = Duration::from_secs(1);
 // ids for the joiner to count as delivered.
 const MAX_CAUSAL_HISTORY: usize = 10;
 
+// Messages wait in SDS for a missing dependency, or here for a later epoch; each wait holds at
+// most this many, dropping the oldest, though the wait for an epoch keeps its commits.
+const MAX_WAITING_MESSAGES: usize = 500;
+
 fn delivery_address_from_id(convo_id: &str) -> String {
     blake2b_hex::<hash_size::DeliveryAddr>(&["delivery_addr|", convo_id])
 }
@@ -61,6 +67,7 @@ fn create_sds_channel<S: ExternalServices>(
     // messages as their own.
     let mut config = Config::new(cx.mls_identity.signer_key().to_string(), convo_id);
     config.max_causal_history = MAX_CAUSAL_HISTORY;
+    config.max_incoming_buffer = MAX_WAITING_MESSAGES;
     config.repair = None;
     Channel::with_storage(config, SeededStorage::new(seeded_ids)).map_err(ChatError::generic)
 }
@@ -72,10 +79,14 @@ fn now_ms<S: ExternalServices>(cx: &ServiceContext<S>) -> u64 {
 pub struct GroupV3Convo {
     convo_id: String,
     mls_group: MlsGroup,
+    /// The epoch we created or joined the group at.
+    joined_epoch: GroupEpoch,
     channel: Channel<SeededStorage>,
     /// The ids our invite carried, which our channel counts as delivered, oldest first; none for
     /// the creator.
     seeded_ids: Vec<MessageId>,
+    /// Held for a later epoch, oldest first.
+    held_messages: VecDeque<HeldMessage>,
 }
 
 // `sds::Channel` implements no `Debug`.
@@ -132,12 +143,15 @@ impl GroupV3Convo {
         seeded_ids: Vec<MessageId>,
     ) -> Result<Self, ChatError> {
         let convo_id = hex::encode(mls_group.group_id().as_slice());
+        let joined_epoch = mls_group.epoch();
         let channel = create_sds_channel(cx, &convo_id, &seeded_ids)?;
         Ok(Self {
             convo_id,
             mls_group,
+            joined_epoch,
             channel,
             seeded_ids,
+            held_messages: VecDeque::new(),
         })
     }
 }
@@ -314,11 +328,14 @@ where
     ) -> Result<ConvoOutcome, ChatError> {
         let payload = GroupV3Payload::decode(payload)?;
         if payload.encrypted_header.is_empty() {
-            return self.handle_mls_protocol_msg(
+            let mut outcome = self.handle_mls_protocol_msg(
                 cx,
                 None,
                 protocol_message(&payload.encrypted_frame)?,
-            );
+            )?;
+            // A merged commit can bring the epoch held messages wait for.
+            outcome.observations.extend(self.retry_held_messages(cx));
+            return Ok(outcome);
         }
 
         let events = self

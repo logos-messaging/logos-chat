@@ -58,6 +58,9 @@ impl<T: HasMlsConvo + ?Sized> ConvoBase for T {
 // messages, handed over after newer live ones.
 const OUT_OF_ORDER_TOLERANCE: u32 = 32;
 
+// A message sent just before a commit can arrive after it; OpenMLS keeps no past epoch by default.
+pub const MAX_PAST_EPOCHS: usize = 1;
+
 pub fn group_create_config(name: &str, desc: &str) -> MlsGroupCreateConfig {
     let meta = ConvoMetaInfo::new(name, desc);
 
@@ -70,6 +73,7 @@ pub fn group_create_config(name: &str, desc: &str) -> MlsGroupCreateConfig {
     MlsGroupCreateConfig::builder()
         .ciphersuite(crate::inbox_v2::CIPHER_SUITE)
         .capabilities(capabilities_with_group_metadata())
+        .max_past_epochs(MAX_PAST_EPOCHS)
         .sender_ratchet_configuration(sender_ratchet_config())
         .use_ratchet_tree_extension(true) // Embed the ratchet tree in the Welcome so joiners can build the group
         .with_group_context_extensions(extensions)
@@ -78,6 +82,7 @@ pub fn group_create_config(name: &str, desc: &str) -> MlsGroupCreateConfig {
 
 pub fn mls_join_config() -> MlsGroupJoinConfig {
     MlsGroupJoinConfig::builder()
+        .max_past_epochs(MAX_PAST_EPOCHS)
         .sender_ratchet_configuration(sender_ratchet_config())
         .use_ratchet_tree_extension(true)
         .build()
