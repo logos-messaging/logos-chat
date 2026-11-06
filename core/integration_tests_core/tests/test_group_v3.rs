@@ -109,3 +109,45 @@ fn groupv3_resend_heals_a_lost_message() {
         .collect();
     assert_eq!(contents, [b"m1", b"m2"]);
 }
+
+#[test]
+fn groupv3_creator_opens_a_late_resend() {
+    let mut harness = TestHarness::<2>::new(|_, _| {});
+    let convo_id = create_group(&mut harness);
+
+    harness
+        .raya()
+        .send_content(&convo_id, b"lost")
+        .expect("raya send lost");
+    harness.saro().drop_pending_payloads();
+    // A second on, so Raya's SDS log orders Saro's next messages after "lost".
+    harness.process(Duration::from_secs(1));
+
+    // Ten newer entries, a message's whole causal history, so Raya's next messages no longer
+    // name "lost" and SDS hands them to Saro without it.
+    for i in 0..10 {
+        harness
+            .saro()
+            .send_content(&convo_id, format!("s{i}").as_bytes())
+            .expect("saro send");
+    }
+    harness.process_until_label("raya gets saro's", |h| {
+        h.raya().received_messages().len() == 10
+    });
+    // Past OpenMLS's default window of 5 keys per sender, within the 32 a joiner keeps.
+    for i in 0..8 {
+        harness
+            .raya()
+            .send_content(&convo_id, format!("r{i}").as_bytes())
+            .expect("raya send");
+    }
+    harness.process_until_label("saro gets raya's", |h| {
+        h.saro().received_messages().len() == 8
+    });
+
+    // Raya resends "lost" after 60 s without an acknowledgement.
+    harness.process(Duration::from_secs(61));
+    harness.process_until_label("saro opens the resend", |h| {
+        h.saro().check(&convo_id, b"lost")
+    });
+}

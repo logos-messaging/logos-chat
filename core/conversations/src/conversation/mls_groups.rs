@@ -70,6 +70,7 @@ pub fn group_create_config(name: &str, desc: &str) -> MlsGroupCreateConfig {
     MlsGroupCreateConfig::builder()
         .ciphersuite(crate::inbox_v2::CIPHER_SUITE)
         .capabilities(capabilities_with_group_metadata())
+        .sender_ratchet_configuration(sender_ratchet_config())
         .use_ratchet_tree_extension(true) // Embed the ratchet tree in the Welcome so joiners can build the group
         .with_group_context_extensions(extensions)
         .build()
