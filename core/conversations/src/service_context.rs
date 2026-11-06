@@ -2,7 +2,7 @@
 
 use crate::IdentityProvider;
 use crate::causal_history::CausalHistoryStore;
-use crate::conversation::GroupV2Clock;
+use crate::clock::Clock;
 use crate::inbox_v2::{MlsEphemeralPqProvider, MlsIdentityProvider};
 use crate::service_traits::AuthService;
 use crate::service_traits::WakeupService;
@@ -46,8 +46,8 @@ pub(crate) struct ServiceContext<S: ExternalServices> {
     pub(crate) mls_provider: MlsEphemeralPqProvider,
     pub(crate) causal: CausalHistoryStore,
     pub(crate) wakeup_service: S::WS,
-    /// Time source for GroupV2 (de-mls) conversations.
-    pub(crate) demls_clock: GroupV2Clock,
+    /// Time source for conversation timers.
+    pub(crate) clock: Clock,
     /// Timing/policy for GroupV2 (de-mls) conversations, applied at
     /// create/join. The creator's phase durations reach joiners inside the
     /// welcome's `ConversationSync`.
