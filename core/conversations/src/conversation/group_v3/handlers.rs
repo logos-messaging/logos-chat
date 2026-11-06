@@ -4,20 +4,56 @@ use openmls::prelude::{
     ValidationError,
 };
 use prost::Message as _;
-use tracing::{debug, info};
+use sds::Event;
+use tracing::{debug, info, warn};
 
 use crate::conversation::mls_utils::EpochFingerprint;
 use crate::service_context::ServiceContext;
-use crate::{ChatError, Content, ConvoOutcome, ExternalServices, Observation, Signer};
+use crate::{ChatError, Content, ConvoOutcome, ExternalServices, MessageId, Observation, Signer};
 
-use super::payloads::{GroupV3FrameType, frame_id};
+use super::payloads::{GroupV3FrameType, protocol_message};
 use super::{Frame, GroupV3Convo};
 
 impl GroupV3Convo {
+    /// Act on SDS events in order: a released message goes through MLS, a packet is published.
+    /// A failure warns and moves on to the next event.
+    pub(super) fn handle_sds_events<S: ExternalServices>(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        events: Vec<Event>,
+    ) -> Vec<Observation> {
+        let mut observations = Vec::new();
+        for event in events {
+            match event {
+                Event::MessageReady {
+                    message_id,
+                    content,
+                    ..
+                } => match protocol_message(&content)
+                    .and_then(|message| self.handle_mls_protocol_msg(cx, Some(message_id), message))
+                {
+                    Ok(outcome) => observations.extend(outcome.observations),
+                    Err(e) => {
+                        warn!(convo = %self.convo_id, error = %e, "dropping released message")
+                    }
+                },
+                Event::Resend(packet) | Event::Sync(packet) | Event::Repair(packet) => {
+                    if let Err(e) = self.publish_payload(cx, packet.into()) {
+                        warn!(convo = %self.convo_id, error = %e, "failed to publish sds packet");
+                    }
+                }
+                other => debug!(convo = %self.convo_id, ?other, "sds event"),
+            }
+        }
+        observations
+    }
+
     /// Handle inbound mls encrypted messages. Accepts a successfully decoded ProtocolMessage
+    /// and its SDS id when SDS released it.
     pub(super) fn handle_mls_protocol_msg<S: ExternalServices>(
         &mut self,
         cx: &mut ServiceContext<S>,
+        message_id: Option<MessageId>,
         protocol_message: ProtocolMessage,
     ) -> Result<ConvoOutcome, ChatError> {
         // Includes our own commits, which return here after we merged them.
@@ -38,13 +74,14 @@ impl GroupV3Convo {
             Err(e) => return Err(ChatError::generic(e)),
         };
 
-        self.handle_mls_msg(cx, processed)
+        self.handle_mls_msg(cx, message_id, processed)
     }
 
     /// Handle MLS ProcessedMessage. Send Commits and Application messages down to different parsers
     fn handle_mls_msg<S: ExternalServices>(
         &mut self,
         cx: &mut ServiceContext<S>,
+        message_id: Option<MessageId>,
         processed: ProcessedMessage,
     ) -> Result<ConvoOutcome, ChatError> {
         // Resolved before `into_content` consumes the message.
@@ -53,14 +90,16 @@ impl GroupV3Convo {
             _ => None,
         };
 
-        match processed.into_content() {
-            ProcessedMessageContent::ApplicationMessage(msg) => {
-                self.handle_mls_application_message(cx, sender, msg)
+        // Commits travel outside SDS and application messages through it; either one arriving the
+        // other way is ignored.
+        match (processed.into_content(), message_id) {
+            (ProcessedMessageContent::ApplicationMessage(msg), Some(message_id)) => {
+                self.handle_mls_application_message(cx, sender, msg, message_id)
             }
-            ProcessedMessageContent::StagedCommitMessage(commit) => {
+            (ProcessedMessageContent::StagedCommitMessage(commit), None) => {
                 self.handle_mls_commit(cx, *commit)
             }
-            other => {
+            (other, _) => {
                 debug!(convo = %self.convo_id, ?other, "ignoring mls message");
                 Ok(self.default_outcome())
             }
@@ -73,9 +112,9 @@ impl GroupV3Convo {
         cx: &mut ServiceContext<S>,
         sender: Option<Member>,
         app_msg: ApplicationMessage,
+        message_id: MessageId,
     ) -> Result<ConvoOutcome, ChatError> {
         let bytes = app_msg.into_bytes();
-        let message_id = frame_id(&bytes);
 
         let content = match Frame::decode(&*bytes)?.payload {
             Some(GroupV3FrameType::Content(content)) => content,
