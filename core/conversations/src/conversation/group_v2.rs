@@ -9,7 +9,7 @@ use crate::conversation::mls_extensions::{
 };
 use crate::identity::{Signer, SignerKey, SignerRef};
 use crate::types::{AddressedEncryptedPayload, ConvoMetadata};
-use crate::{Content, WakeupService};
+use crate::{Clock, Content, WakeupService};
 use alloy::signers::local::PrivateKeySigner;
 use blake2::{Blake2b, Digest, digest::consts::U6};
 use chat_proto::logoschat::encryption::{EncryptedPayload, Plaintext, encrypted_payload};
@@ -18,7 +18,7 @@ use de_mls::protos::de_mls::messages::v1::{
     AppMessage as AppMessageProto, MemberWelcome, app_message,
 };
 use de_mls::{
-    Conversation, ConversationError, ConversationEvent, MemberId, MockClock, PeerScoringService,
+    Conversation, ConversationError, ConversationEvent, MemberId, PeerScoringService,
     ScoringConfig, WallClock, default_score_deltas,
     defaults::{DefaultConsensusPlugin, DefaultPeerScoring, InMemoryPeerScoreStorage},
 };
@@ -30,7 +30,7 @@ use openmls::prelude::{KeyPackageIn, OpenMlsProvider as _, ProtocolVersion};
 use prost::Message;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use tracing::field::{Empty, display};
 use tracing::{Span, info, instrument};
 
@@ -42,26 +42,11 @@ use crate::{
     conversation::{ChatError, Convo, ConvoBase, GroupConvo, Identified},
 };
 
-/// The de-mls time source: every conversation deadline (freeze windows,
-/// consensus timeouts, auto-votes) and consensus wire timestamp is measured
-/// against this clock. Production runs on system time; tests share one
-/// `MockClock` with the harness scheduler so virtual time moves the
-/// protocol's timers.
-#[derive(Debug, Clone, Default)]
-pub enum GroupV2Clock {
-    #[default]
-    System,
-    Mock(MockClock),
-}
-
-impl WallClock for GroupV2Clock {
+/// de-mls measures every conversation deadline (freeze windows, consensus timeouts, auto-votes)
+/// and consensus wire timestamp against the core's clock.
+impl WallClock for Clock {
     fn now(&self) -> Duration {
-        match self {
-            GroupV2Clock::System => SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default(),
-            GroupV2Clock::Mock(clock) => clock.now(),
-        }
+        Clock::now(self)
     }
 }
 
@@ -100,7 +85,7 @@ fn make_consensus() -> DefaultConsensusPlugin {
 
 pub struct GroupV2Convo {
     convo_id: String,
-    conversation: Conversation<DefaultConsensusPlugin, InMemoryPeerScoreStorage, GroupV2Clock>,
+    conversation: Conversation<DefaultConsensusPlugin, InMemoryPeerScoreStorage, Clock>,
     /// Map of invited members: signature key to credential.
     pending_invites: HashMap<Vec<u8>, Vec<u8>>,
     /// Keeps track of current group members: maps de-mls `MemberId` handles to signer ids.
@@ -223,7 +208,7 @@ impl GroupV2Convo {
             &service_ctx.mls_identity,
             &make_consensus(),
             make_scoring(),
-            service_ctx.demls_clock.clone(),
+            service_ctx.clock.clone(),
             rand_app_id(),
             service_ctx.demls_config.clone(),
             &initial_members,
@@ -265,7 +250,7 @@ impl GroupV2Convo {
             &welcome.conversation_sync_bytes,
             &make_consensus(),
             make_scoring(),
-            service_ctx.demls_clock.clone(),
+            service_ctx.clock.clone(),
             rand_app_id(),
             service_ctx.demls_config.clone(),
         )?
