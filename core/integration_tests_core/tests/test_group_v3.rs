@@ -151,3 +151,69 @@ fn groupv3_creator_opens_a_late_resend() {
         h.saro().check(&convo_id, b"lost")
     });
 }
+
+/// Saro creates a group with Raya and settles until Raya has joined.
+fn create_group_for_adds(harness: &mut TestHarness<4>) -> String {
+    let participants = &[harness.raya().account()];
+    let convo_id = harness
+        .saro()
+        .create_group_convo_v3(participants, "", "")
+        .expect("saro create group");
+    harness.process_until_label("Raya join", |h| h.raya().convo_count() == 1);
+    convo_id
+}
+
+#[test]
+fn groupv3_members_added_later_receive_the_next_message() {
+    let mut harness = TestHarness::<4>::new(|_, _| {});
+    let convo_id = create_group_for_adds(&mut harness);
+    // One more than a message's causal history, so an invite must carry the newest.
+    for i in 0..11 {
+        harness
+            .saro()
+            .send_content(&convo_id, format!("m{i}").as_bytes())
+            .expect("saro send");
+    }
+    harness.process_until(|h| h.raya().received_messages().len() == 11);
+
+    let pax = harness.pax().account();
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &[pax])
+        .expect("saro adds pax");
+    harness.process_until_label("Pax join", |h| {
+        h.pax().convo_count() == 1 && h.raya().group_signers(&convo_id).map_or(0, |s| s.len()) == 3
+    });
+    // Pax's next invite then mixes their seed with a message of their own.
+    harness
+        .pax()
+        .send_content(&convo_id, b"p1")
+        .expect("pax send p1");
+    harness.process_until(|h| h.saro().check(&convo_id, b"p1") && h.raya().check(&convo_id, b"p1"));
+    let mira = harness.mira().account();
+    harness
+        .pax()
+        .group_add_participants(&convo_id, &[mira])
+        .expect("pax adds mira");
+    harness.process_until_label("Saro and Raya apply both adds", |h| {
+        h.mira().convo_count() == 1
+            && h.saro().group_signers(&convo_id).map_or(0, |s| s.len()) == 4
+            && h.raya().group_signers(&convo_id).map_or(0, |s| s.len()) == 4
+    });
+
+    // Both name m2..m10 and p1: the newcomers received none of m2..m10, and Mira not p1 either.
+    harness
+        .saro()
+        .send_content(&convo_id, b"from saro")
+        .expect("saro send");
+    harness
+        .raya()
+        .send_content(&convo_id, b"from raya")
+        .expect("raya send");
+    harness.process_until_label("newcomers get both", |h| {
+        h.pax().check(&convo_id, b"from saro")
+            && h.pax().check(&convo_id, b"from raya")
+            && h.mira().check(&convo_id, b"from saro")
+            && h.mira().check(&convo_id, b"from raya")
+    });
+}

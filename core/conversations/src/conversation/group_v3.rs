@@ -8,6 +8,7 @@
 
 mod handlers;
 mod payloads;
+mod storage;
 
 use std::fmt;
 use std::time::Duration;
@@ -28,12 +29,13 @@ use crate::service_context::ServiceContext;
 use crate::utils::{blake2b_hex, hash_size};
 use crate::{
     AddressedEnvelope, ChatError, ConvoOutcome, DeliveryService, ExternalServices,
-    IdentityProvider, SignerKey, WakeupService,
+    IdentityProvider, MessageId, SignerKey, WakeupService,
 };
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
 use self::payloads::{GroupV3Payload, commit_payload, message_id, protocol_message, to_envelope};
+use self::storage::SeededStorage;
 
 // Type Aliases
 type Frame = payloads::GroupV3Frame;
@@ -42,6 +44,10 @@ type Frame = payloads::GroupV3Frame;
 // replacing one, so only `init` and `wakeup` arm it.
 const SDS_TICK_INTERVAL: Duration = Duration::from_secs(1);
 
+// A message names this many of its sender's newest SDS log entries, so an invite carries as many
+// ids for the joiner to count as delivered.
+const MAX_CAUSAL_HISTORY: usize = 10;
+
 fn delivery_address_from_id(convo_id: &str) -> String {
     blake2b_hex::<hash_size::DeliveryAddr>(&["delivery_addr|", convo_id])
 }
@@ -49,12 +55,14 @@ fn delivery_address_from_id(convo_id: &str) -> String {
 fn create_sds_channel<S: ExternalServices>(
     cx: &ServiceContext<S>,
     convo_id: &str,
-) -> Result<Channel, ChatError> {
+    seeded_ids: &[MessageId],
+) -> Result<Channel<SeededStorage>, ChatError> {
     // The signer, not the account: two installations of one account would drop each other's
     // messages as their own.
     let mut config = Config::new(cx.mls_identity.signer_key().to_string(), convo_id);
+    config.max_causal_history = MAX_CAUSAL_HISTORY;
     config.repair = None;
-    Channel::new(config).map_err(ChatError::generic)
+    Channel::with_storage(config, SeededStorage::new(seeded_ids)).map_err(ChatError::generic)
 }
 
 fn now_ms<S: ExternalServices>(cx: &ServiceContext<S>) -> u64 {
@@ -64,7 +72,10 @@ fn now_ms<S: ExternalServices>(cx: &ServiceContext<S>) -> u64 {
 pub struct GroupV3Convo {
     convo_id: String,
     mls_group: MlsGroup,
-    channel: Channel,
+    channel: Channel<SeededStorage>,
+    /// The ids our invite carried, which our channel counts as delivered, oldest first; none for
+    /// the creator.
+    seeded_ids: Vec<MessageId>,
 }
 
 // `sds::Channel` implements no `Debug`.
@@ -87,16 +98,19 @@ impl GroupV3Convo {
         // Create MlsGroup
         let mls_group = create_group(cx, name, desc)?;
 
-        let mut convo = Self::from_group(cx, mls_group)?;
+        let mut convo = Self::from_group(cx, mls_group, Vec::new())?;
 
         convo.init(cx)?;
         convo.add_signer(cx, signers)?;
         Ok(convo)
     }
 
+    /// Joins from a Welcome. `seeded_ids` are the newest ids the inviter counts as delivered, and
+    /// our channel counts them as delivered too.
     pub fn new_from_welcome<S: ExternalServices>(
         cx: &mut ServiceContext<S>,
         welcome: Welcome,
+        seeded_ids: Vec<MessageId>,
     ) -> Result<Self, ChatError> {
         let mls_group =
             StagedWelcome::build_from_welcome(&cx.mls_provider, &mls_join_config(), welcome)
@@ -106,7 +120,7 @@ impl GroupV3Convo {
                 .into_group(&cx.mls_provider)
                 .map_err(ChatError::generic)?;
 
-        let convo = Self::from_group(cx, mls_group)?;
+        let convo = Self::from_group(cx, mls_group, seeded_ids)?;
 
         convo.init(cx)?;
         Ok(convo)
@@ -115,13 +129,15 @@ impl GroupV3Convo {
     fn from_group<S: ExternalServices>(
         cx: &ServiceContext<S>,
         mls_group: MlsGroup,
+        seeded_ids: Vec<MessageId>,
     ) -> Result<Self, ChatError> {
         let convo_id = hex::encode(mls_group.group_id().as_slice());
-        let channel = create_sds_channel(cx, &convo_id)?;
+        let channel = create_sds_channel(cx, &convo_id, &seeded_ids)?;
         Ok(Self {
             convo_id,
             mls_group,
             channel,
+            seeded_ids,
         })
     }
 }
@@ -214,6 +230,14 @@ impl GroupV3Convo {
         Ok(())
     }
 
+    /// The newest ids we count as delivered, oldest first, taking every logged id as newer than
+    /// every seeded one, since the invite carries no timestamps to interleave them.
+    fn recent_message_ids(&self) -> Vec<MessageId> {
+        let mut ids = self.seeded_ids.clone();
+        ids.extend(self.channel.history());
+        ids.split_off(ids.len().saturating_sub(MAX_CAUSAL_HISTORY))
+    }
+
     fn default_outcome(&self) -> ConvoOutcome {
         ConvoOutcome::empty(self.convo_id.clone())
     }
@@ -243,9 +267,16 @@ where
             .add_members(&cx.mls_provider, &cx.mls_identity, key_packages.as_slice())
             .map_err(ChatError::generic)?;
 
+        let recent_message_ids = self.recent_message_ids();
         let invites: Result<Vec<AddressedEnvelope>, SendError> = key_packages
             .iter()
-            .map(|s| crate::inbox_v2::create_invite_v3(&SignerKey::from(s.leaf_node()), &welcome))
+            .map(|s| {
+                crate::inbox_v2::create_invite_v3(
+                    &SignerKey::from(s.leaf_node()),
+                    &welcome,
+                    &recent_message_ids,
+                )
+            })
             .collect();
 
         self.send_pending_commit(cx, commit_msg, invites?)?;
