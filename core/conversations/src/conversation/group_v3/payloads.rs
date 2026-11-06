@@ -11,12 +11,12 @@
 //!                 └── GroupV3FrameType     Content
 //! ```
 //!
-//! Application messages travel through SDS, which orders them and resends what goes
+//! Commits and application messages travel through SDS, which orders them and resends what goes
 //! unacknowledged. The SDS message id, `message_id`, hashes the MLS message, so two sends of
 //! the same content get different ids, and receivers read it from the SDS header. `GroupV3Frame`
 //! tags 1–5 are reserved for frame parameters.
 
-use openmls::framing::{MlsMessageOut, ProtocolMessage};
+use openmls::framing::ProtocolMessage;
 use openmls::prelude::MlsMessageIn;
 use openmls::prelude::tls_codec::DeserializeBytes as _;
 use prost::{Message, Oneof, bytes::Bytes};
@@ -24,7 +24,6 @@ use sds::SDSRecord;
 
 use crate::{
     AddressedEnvelope, ChatError, MessageId,
-    errors::SendError,
     utils::{blake2b_hex, hash_size},
 };
 
@@ -57,16 +56,6 @@ impl GroupV3Frame {
     pub fn encode(self) -> Vec<u8> {
         self.encode_to_vec()
     }
-}
-
-/// Commits travel outside SDS, with an empty header.
-pub fn commit_payload(msg: MlsMessageOut) -> Result<GroupV3Payload, SendError> {
-    let bytes = msg.to_bytes()?;
-
-    Ok(GroupV3Payload {
-        encrypted_header: Bytes::new(),
-        encrypted_frame: bytes.into(),
-    })
 }
 
 pub fn to_envelope(convo_id: String, payload: GroupV3Payload) -> AddressedEnvelope {

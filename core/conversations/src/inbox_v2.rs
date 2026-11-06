@@ -8,6 +8,7 @@ use de_mls::protos::de_mls::messages::v1::MemberWelcome;
 use openmls::prelude::tls_codec::Serialize;
 use openmls::prelude::*;
 use prost::{Message, Oneof};
+use sds::StartPoint;
 use tracing::info;
 use tracing::instrument;
 
@@ -107,9 +108,14 @@ pub fn invite_user_v2<DS: DeliveryService>(
 pub fn create_invite_v3(
     signer: SignerRef,
     welcome: &MlsMessageOut,
+    commit: &StartPoint,
 ) -> Result<AddressedEnvelope, SendError> {
     let frame = InboxV2Frame {
-        payload: Some(InviteType::GroupV3(welcome.to_bytes()?)),
+        payload: Some(InviteType::GroupV3(GroupV3Invite {
+            welcome_bytes: welcome.to_bytes()?,
+            commit_message_id: commit.message_id.clone(),
+            commit_lamport_timestamp: commit.lamport_timestamp,
+        })),
     };
     let envelope = EnvelopeV1 {
         conversation_hint: conversation_id_for(signer),
@@ -205,10 +211,14 @@ impl InboxV2 {
                 let convo = GroupV2Convo::new_from_welcome(service_ctx, &mw)?;
                 Ok(Some((Box::new(convo), ConversationClass::Group)))
             }
-            InviteType::GroupV3(welcome_bytes) => {
+            InviteType::GroupV3(invite) => {
                 info!("Process V3 WelcomeMessage");
-                let welcome = self.parse_heavy_welcome(&welcome_bytes)?;
-                let convo = GroupV3Convo::new_from_welcome(service_ctx, welcome)?;
+                let welcome = self.parse_heavy_welcome(&invite.welcome_bytes)?;
+                let start = StartPoint {
+                    message_id: invite.commit_message_id,
+                    lamport_timestamp: invite.commit_lamport_timestamp,
+                };
+                let convo = GroupV3Convo::new_from_welcome(service_ctx, welcome, start)?;
                 Ok(Some((Box::new(convo), ConversationClass::Group)))
             }
         }
@@ -307,14 +317,26 @@ pub enum InviteType {
     GroupV1(GroupV1HeavyInvite),
     #[prost(bytes, tag = "2")]
     GroupV2(Vec<u8>),
-    #[prost(bytes, tag = "3")]
-    GroupV3(Vec<u8>),
+    #[prost(message, tag = "3")]
+    GroupV3(GroupV3Invite),
 }
 
 #[derive(Clone, PartialEq, Message)]
 pub struct GroupV1HeavyInvite {
     #[prost(bytes, tag = "1")]
     pub welcome_bytes: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct GroupV3Invite {
+    #[prost(bytes, tag = "1")]
+    pub welcome_bytes: Vec<u8>,
+    /// The SDS id and Lamport timestamp of the commit that adds the joiner, whose channel starts
+    /// there.
+    #[prost(string, tag = "2")]
+    pub commit_message_id: String,
+    #[prost(uint64, tag = "3")]
+    pub commit_lamport_timestamp: u64,
 }
 
 #[cfg(test)]
