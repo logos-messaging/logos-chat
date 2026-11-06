@@ -45,6 +45,7 @@ pub struct TestClient {
     received_messages: Vec<ReceivedMessage<Vec<u8>>>,
     inbound_errors: Vec<String>,
     tolerate_inbound_errors: bool,
+    delayed_payloads: Vec<Vec<u8>>,
 }
 
 impl TestClient {
@@ -55,6 +56,7 @@ impl TestClient {
             received_messages: vec![],
             inbound_errors: vec![],
             tolerate_inbound_errors: false,
+            delayed_payloads: vec![],
         }
     }
 
@@ -79,6 +81,7 @@ impl TestClient {
         while let Some(data) = self.inner.ds().poll() {
             messages.push(data);
         }
+        messages.append(&mut self.delayed_payloads);
 
         let mut outcomes = vec![];
         for data in messages {
@@ -126,6 +129,15 @@ impl TestClient {
     pub fn drop_pending_payloads(&mut self) {
         let ds = self.inner.ds();
         while ds.poll().is_some() {}
+    }
+
+    /// Poll and hold every payload waiting for this client; the next drain hands them over after
+    /// the payloads published in the meantime, as a transport that reorders would.
+    pub fn delay_pending_payloads(&mut self) {
+        let ds = self.inner.ds();
+        while let Some(data) = ds.poll() {
+            self.delayed_payloads.push(data);
+        }
     }
 
     pub fn received_messages(&self) -> &[ReceivedMessage<Vec<u8>>] {

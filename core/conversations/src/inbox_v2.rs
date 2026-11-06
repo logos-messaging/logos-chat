@@ -107,9 +107,13 @@ pub fn invite_user_v2<DS: DeliveryService>(
 pub fn create_invite_v3(
     signer: SignerRef,
     welcome: &MlsMessageOut,
+    recent_message_ids: &[String],
 ) -> Result<AddressedEnvelope, SendError> {
     let frame = InboxV2Frame {
-        payload: Some(InviteType::GroupV3(welcome.to_bytes()?)),
+        payload: Some(InviteType::GroupV3(GroupV3Invite {
+            welcome_bytes: welcome.to_bytes()?,
+            recent_message_ids: recent_message_ids.to_vec(),
+        })),
     };
     let envelope = EnvelopeV1 {
         conversation_hint: conversation_id_for(signer),
@@ -205,10 +209,14 @@ impl InboxV2 {
                 let convo = GroupV2Convo::new_from_welcome(service_ctx, &mw)?;
                 Ok(Some((Box::new(convo), ConversationClass::Group)))
             }
-            InviteType::GroupV3(welcome_bytes) => {
+            InviteType::GroupV3(invite) => {
                 info!("Process V3 WelcomeMessage");
-                let welcome = self.parse_heavy_welcome(&welcome_bytes)?;
-                let convo = GroupV3Convo::new_from_welcome(service_ctx, welcome)?;
+                let welcome = self.parse_heavy_welcome(&invite.welcome_bytes)?;
+                let convo = GroupV3Convo::new_from_welcome(
+                    service_ctx,
+                    welcome,
+                    invite.recent_message_ids,
+                )?;
                 Ok(Some((Box::new(convo), ConversationClass::Group)))
             }
         }
@@ -307,14 +315,24 @@ pub enum InviteType {
     GroupV1(GroupV1HeavyInvite),
     #[prost(bytes, tag = "2")]
     GroupV2(Vec<u8>),
-    #[prost(bytes, tag = "3")]
-    GroupV3(Vec<u8>),
+    #[prost(message, tag = "3")]
+    GroupV3(GroupV3Invite),
 }
 
 #[derive(Clone, PartialEq, Message)]
 pub struct GroupV1HeavyInvite {
     #[prost(bytes, tag = "1")]
     pub welcome_bytes: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct GroupV3Invite {
+    #[prost(bytes, tag = "1")]
+    pub welcome_bytes: Vec<u8>,
+    /// The newest SDS message ids the inviter counts as delivered, oldest first; the joiner counts
+    /// them as delivered too.
+    #[prost(string, repeated, tag = "2")]
+    pub recent_message_ids: Vec<String>,
 }
 
 #[cfg(test)]

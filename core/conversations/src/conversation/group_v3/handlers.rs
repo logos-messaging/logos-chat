@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use openmls::framing::{ApplicationMessage, ProtocolMessage};
 use openmls::prelude::{
     Member, ProcessMessageError, ProcessedMessage, ProcessedMessageContent, Sender, StagedCommit,
@@ -7,12 +9,19 @@ use prost::Message as _;
 use sds::Event;
 use tracing::{debug, info, warn};
 
+use crate::conversation::mls_groups::MAX_PAST_EPOCHS;
 use crate::conversation::mls_utils::EpochFingerprint;
 use crate::service_context::ServiceContext;
 use crate::{ChatError, Content, ConvoOutcome, ExternalServices, MessageId, Observation, Signer};
 
 use super::payloads::{GroupV3FrameType, protocol_message};
-use super::{Frame, GroupV3Convo};
+use super::{Frame, GroupV3Convo, MAX_WAITING_MESSAGES};
+
+/// An MLS message held for an epoch we have not reached, with its SDS id if SDS released it.
+pub(super) struct HeldMessage {
+    message_id: Option<MessageId>,
+    message: ProtocolMessage,
+}
 
 impl GroupV3Convo {
     /// Act on SDS events in order: a released message goes through MLS, a packet is published.
@@ -48,6 +57,38 @@ impl GroupV3Convo {
         observations
     }
 
+    /// Retry the held messages whose epoch we have reached, oldest first. A retried commit moves
+    /// the epoch on, which can ready more.
+    pub(super) fn retry_held_messages<S: ExternalServices>(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+    ) -> Vec<Observation> {
+        let mut observations = Vec::new();
+        loop {
+            let epoch = self.mls_group.epoch();
+            let (ready, still_held): (VecDeque<_>, VecDeque<_>) =
+                std::mem::take(&mut self.held_messages)
+                    .into_iter()
+                    .partition(|held| held.message.epoch() <= epoch);
+            self.held_messages = still_held;
+            if ready.is_empty() {
+                return observations;
+            }
+            for HeldMessage {
+                message_id,
+                message,
+            } in ready
+            {
+                match self.handle_mls_protocol_msg(cx, message_id, message) {
+                    Ok(outcome) => observations.extend(outcome.observations),
+                    Err(e) => {
+                        warn!(convo = %self.convo_id, error = %e, "dropping message held for its epoch")
+                    }
+                }
+            }
+        }
+    }
+
     /// Handle inbound mls encrypted messages. Accepts a successfully decoded ProtocolMessage
     /// and its SDS id when SDS released it.
     pub(super) fn handle_mls_protocol_msg<S: ExternalServices>(
@@ -56,9 +97,20 @@ impl GroupV3Convo {
         message_id: Option<MessageId>,
         protocol_message: ProtocolMessage,
     ) -> Result<ConvoOutcome, ChatError> {
-        // Includes our own commits, which return here after we merged them.
-        if protocol_message.epoch() < self.mls_group.epoch() {
-            debug!(convo = %self.convo_id, epoch = protocol_message.epoch().as_u64(), "dropping message from past epoch");
+        let epoch = protocol_message.epoch();
+        let current = self.mls_group.epoch();
+        if epoch > current {
+            self.hold_for_epoch(message_id, protocol_message);
+            return Ok(self.default_outcome());
+        }
+        // OpenMLS opens only application messages from a past epoch, and keeps MAX_PAST_EPOCHS of
+        // them, none from before we joined. Our own commits return here once merged.
+        if epoch < current
+            && (protocol_message.is_handshake_message()
+                || epoch < self.joined_epoch
+                || current.as_u64() - epoch.as_u64() > MAX_PAST_EPOCHS as u64)
+        {
+            debug!(convo = %self.convo_id, epoch = epoch.as_u64(), "dropping message from past epoch");
             return Ok(self.default_outcome());
         }
 
@@ -77,6 +129,28 @@ impl GroupV3Convo {
         self.handle_mls_msg(cx, message_id, processed)
     }
 
+    /// Keep a message for a later epoch. When full, the oldest held application message makes
+    /// room, since nothing resends a commit.
+    fn hold_for_epoch(&mut self, message_id: Option<MessageId>, message: ProtocolMessage) {
+        debug!(convo = %self.convo_id, epoch = message.epoch().as_u64(), "holding message for a later epoch");
+        if self.held_messages.len() >= MAX_WAITING_MESSAGES {
+            let Some(oldest) = self
+                .held_messages
+                .iter()
+                .position(|held| !held.message.is_handshake_message())
+            else {
+                warn!(convo = %self.convo_id, "dropping message for a later epoch, as only commits are held");
+                return;
+            };
+            self.held_messages.remove(oldest);
+            warn!(convo = %self.convo_id, "dropping the oldest application message held for a later epoch");
+        }
+        self.held_messages.push_back(HeldMessage {
+            message_id,
+            message,
+        });
+    }
+
     /// Handle MLS ProcessedMessage. Send Commits and Application messages down to different parsers
     fn handle_mls_msg<S: ExternalServices>(
         &mut self,
@@ -84,7 +158,8 @@ impl GroupV3Convo {
         message_id: Option<MessageId>,
         processed: ProcessedMessage,
     ) -> Result<ConvoOutcome, ChatError> {
-        // Resolved before `into_content` consumes the message.
+        // Resolved before `into_content` consumes the message. Members are only added, so the
+        // sender of a message from a past epoch still holds its leaf.
         let sender = match processed.sender() {
             Sender::Member(index) => self.mls_group.member_at(*index),
             _ => None,

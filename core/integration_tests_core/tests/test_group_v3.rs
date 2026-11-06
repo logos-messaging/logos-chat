@@ -109,3 +109,202 @@ fn groupv3_resend_heals_a_lost_message() {
         .collect();
     assert_eq!(contents, [b"m1", b"m2"]);
 }
+
+#[test]
+fn groupv3_creator_opens_a_late_resend() {
+    let mut harness = TestHarness::<2>::new(|_, _| {});
+    let convo_id = create_group(&mut harness);
+
+    harness
+        .raya()
+        .send_content(&convo_id, b"lost")
+        .expect("raya send lost");
+    harness.saro().drop_pending_payloads();
+    // A second on, so Raya's SDS log orders Saro's next messages after "lost".
+    harness.process(Duration::from_secs(1));
+
+    // Ten newer entries, a message's whole causal history, so Raya's next messages no longer
+    // name "lost" and SDS hands them to Saro without it.
+    for i in 0..10 {
+        harness
+            .saro()
+            .send_content(&convo_id, format!("s{i}").as_bytes())
+            .expect("saro send");
+    }
+    harness.process_until_label("raya gets saro's", |h| {
+        h.raya().received_messages().len() == 10
+    });
+    // Past OpenMLS's default window of 5 keys per sender, within the 32 a joiner keeps.
+    for i in 0..8 {
+        harness
+            .raya()
+            .send_content(&convo_id, format!("r{i}").as_bytes())
+            .expect("raya send");
+    }
+    harness.process_until_label("saro gets raya's", |h| {
+        h.saro().received_messages().len() == 8
+    });
+
+    // Raya resends "lost" after 60 s without an acknowledgement.
+    harness.process(Duration::from_secs(61));
+    harness.process_until_label("saro opens the resend", |h| {
+        h.saro().check(&convo_id, b"lost")
+    });
+}
+
+/// Saro creates a group with Raya and settles until Raya has joined.
+fn create_group_for_adds(harness: &mut TestHarness<4>) -> String {
+    let participants = &[harness.raya().account()];
+    let convo_id = harness
+        .saro()
+        .create_group_convo_v3(participants, "", "")
+        .expect("saro create group");
+    harness.process_until_label("Raya join", |h| h.raya().convo_count() == 1);
+    convo_id
+}
+
+#[test]
+fn groupv3_members_added_later_receive_the_next_message() {
+    let mut harness = TestHarness::<4>::new(|_, _| {});
+    let convo_id = create_group_for_adds(&mut harness);
+    // One more than a message's causal history, so an invite must carry the newest.
+    for i in 0..11 {
+        harness
+            .saro()
+            .send_content(&convo_id, format!("m{i}").as_bytes())
+            .expect("saro send");
+    }
+    harness.process_until(|h| h.raya().received_messages().len() == 11);
+
+    let pax = harness.pax().account();
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &[pax])
+        .expect("saro adds pax");
+    harness.process_until_label("Pax join", |h| {
+        h.pax().convo_count() == 1 && h.raya().group_signers(&convo_id).map_or(0, |s| s.len()) == 3
+    });
+    // Pax's next invite then mixes their seed with a message of their own.
+    harness
+        .pax()
+        .send_content(&convo_id, b"p1")
+        .expect("pax send p1");
+    harness.process_until(|h| h.saro().check(&convo_id, b"p1") && h.raya().check(&convo_id, b"p1"));
+    let mira = harness.mira().account();
+    harness
+        .pax()
+        .group_add_participants(&convo_id, &[mira])
+        .expect("pax adds mira");
+    harness.process_until_label("Saro and Raya apply both adds", |h| {
+        h.mira().convo_count() == 1
+            && h.saro().group_signers(&convo_id).map_or(0, |s| s.len()) == 4
+            && h.raya().group_signers(&convo_id).map_or(0, |s| s.len()) == 4
+    });
+
+    // Both name m2..m10 and p1: the newcomers received none of m2..m10, and Mira not p1 either.
+    harness
+        .saro()
+        .send_content(&convo_id, b"from saro")
+        .expect("saro send");
+    harness
+        .raya()
+        .send_content(&convo_id, b"from raya")
+        .expect("raya send");
+    harness.process_until_label("newcomers get both", |h| {
+        h.pax().check(&convo_id, b"from saro")
+            && h.pax().check(&convo_id, b"from raya")
+            && h.mira().check(&convo_id, b"from saro")
+            && h.mira().check(&convo_id, b"from raya")
+    });
+}
+
+#[test]
+fn groupv3_message_crossing_an_add_opens() {
+    let mut harness = TestHarness::<4>::new(|_, _| {});
+    let convo_id = create_group_for_adds(&mut harness);
+
+    // Raya sends before applying Saro's add, at the epoch Saro just left.
+    let pax = harness.pax().account();
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &[pax])
+        .expect("saro adds pax");
+    harness
+        .raya()
+        .send_content(&convo_id, b"to saro")
+        .expect("raya send");
+    harness.process_until_label("Saro opens it", |h| h.saro().check(&convo_id, b"to saro"));
+
+    // The same at a joiner, whose group comes from the join config, not the create config.
+    harness.process_until_label("Pax join", |h| {
+        h.pax().convo_count() == 1 && h.raya().group_signers(&convo_id).map_or(0, |s| s.len()) == 3
+    });
+    let mira = harness.mira().account();
+    harness
+        .raya()
+        .group_add_participants(&convo_id, &[mira])
+        .expect("raya adds mira");
+    harness
+        .saro()
+        .send_content(&convo_id, b"to raya")
+        .expect("saro send");
+    harness.process_until_label("Raya opens it", |h| h.raya().check(&convo_id, b"to raya"));
+}
+
+#[test]
+fn groupv3_message_ahead_of_its_commits_opens_after_them() {
+    let mut harness = TestHarness::<4>::new(|_, _| {});
+    let convo_id = create_group_for_adds(&mut harness);
+
+    let pax = harness.pax().account();
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &[pax])
+        .expect("saro adds pax");
+    // The first add's commit reaches Raya after the second add's commit and after Saro's next
+    // message, sent at the newest epoch.
+    harness.raya().delay_pending_payloads();
+    let mira = harness.mira().account();
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &[mira])
+        .expect("saro adds mira");
+    harness
+        .saro()
+        .send_content(&convo_id, b"ahead")
+        .expect("saro send");
+    harness.process_until_label("Raya opens it", |h| h.raya().check(&convo_id, b"ahead"));
+}
+
+#[test]
+fn groupv3_holds_at_most_500_messages_for_a_later_epoch() {
+    let mut harness = TestHarness::<4>::new(|_, _| {});
+    let convo_id = create_group_for_adds(&mut harness);
+
+    let pax = harness.pax().account();
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &[pax])
+        .expect("saro adds pax");
+    // The first add's commit reaches Raya after the second add's commit and 501 messages at the
+    // newest epoch, so a commit is among the messages Raya holds.
+    harness.raya().delay_pending_payloads();
+    let mira = harness.mira().account();
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &[mira])
+        .expect("saro adds mira");
+    for i in 0..501 {
+        harness
+            .saro()
+            .send_content(&convo_id, format!("{i}").as_bytes())
+            .expect("saro send");
+    }
+    harness.process_until_label("Raya opens the held ones", |h| {
+        h.raya().received_messages().len() == 499
+    });
+    assert!(
+        !harness.raya().check(&convo_id, b"0") && !harness.raya().check(&convo_id, b"1"),
+        "the oldest held messages are dropped, not the commit"
+    );
+}
