@@ -3,29 +3,34 @@
 //! ```text
 //! AddressedEnvelope                        delivery address + convo id
 //! └── GroupV3Payload                       protobuf
-//!     ├── encrypted_header                 bytes; placeholder
-//!     └── encrypted_frame                  bytes; TLS-serialized
+//!     ├── encrypted_header                 bytes; SDS header
+//!     └── encrypted_frame                  bytes; TLS-serialized; empty for an SDS sync
 //!         └── MlsMessage                   Commit | ApplicationMessage
 //!             └── GroupV3Frame             protobuf; ApplicationMessage only
 //!                 └── GroupV3FrameType     Content
 //! ```
 //!
-//! `FrameId` hashes the encoded `GroupV3Frame`, so sender and receivers derive the same id from
-//! plaintext. `GroupV3Frame` tags 1–5 are reserved for frame parameters.
+//! Application messages travel through SDS, which orders them and resends what goes
+//! unacknowledged. The SDS message id, `message_id`, hashes the MLS message, so two sends of
+//! the same content get different ids, and receivers read it from the SDS header. `GroupV3Frame`
+//! tags 1–5 are reserved for frame parameters.
 
-use openmls::framing::MlsMessageOut;
+use openmls::framing::{MlsMessageOut, ProtocolMessage};
+use openmls::prelude::MlsMessageIn;
+use openmls::prelude::tls_codec::DeserializeBytes as _;
 use prost::{Message, Oneof, bytes::Bytes};
+use sds::SDSRecord;
 
 use crate::{
-    AddressedEnvelope,
+    AddressedEnvelope, ChatError, MessageId,
     errors::SendError,
     utils::{blake2b_hex, hash_size},
 };
 
-use super::{FrameId, delivery_address_from_id};
+use super::delivery_address_from_id;
 
-pub(super) fn frame_id(frame_bytes: &[u8]) -> FrameId {
-    blake2b_hex::<hash_size::MessageId>(&["logos-chat|message_id|".as_bytes(), frame_bytes])
+pub(super) fn message_id(mls_message: &[u8]) -> MessageId {
+    blake2b_hex::<hash_size::MessageId>(&["logos-chat|message_id|".as_bytes(), mls_message])
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -53,23 +58,29 @@ impl GroupV3Frame {
     }
 }
 
-fn to_payload(msg: MlsMessageOut) -> Result<Vec<u8>, SendError> {
+/// Commits travel outside SDS, with an empty header.
+pub fn commit_payload(msg: MlsMessageOut) -> Result<GroupV3Payload, SendError> {
     let bytes = msg.to_bytes()?;
 
-    let payload = GroupV3Payload {
-        encrypted_header: vec![0, 0, 0, 0].into(),
+    Ok(GroupV3Payload {
+        encrypted_header: Bytes::new(),
         encrypted_frame: bytes.into(),
-    };
-
-    Ok(payload.encode_to_vec())
+    })
 }
 
-pub fn to_envelope(convo_id: String, msg: MlsMessageOut) -> Result<AddressedEnvelope, SendError> {
-    Ok(AddressedEnvelope::new(
+pub fn to_envelope(convo_id: String, payload: GroupV3Payload) -> AddressedEnvelope {
+    AddressedEnvelope::new(
         delivery_address_from_id(&convo_id),
         convo_id,
-        to_payload(msg)?.as_slice(),
-    ))
+        payload.encode_to_vec().as_slice(),
+    )
+}
+
+pub fn protocol_message(mls_message: &[u8]) -> Result<ProtocolMessage, ChatError> {
+    MlsMessageIn::tls_deserialize_exact_bytes(mls_message)
+        .map_err(ChatError::generic)?
+        .try_into_protocol_message()
+        .map_err(ChatError::generic)
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -78,4 +89,23 @@ pub struct GroupV3Payload {
     pub encrypted_header: Bytes,
     #[prost(bytes = "bytes", tag = "2")]
     pub encrypted_frame: Bytes,
+}
+
+impl From<SDSRecord> for GroupV3Payload {
+    fn from(record: SDSRecord) -> Self {
+        Self {
+            encrypted_header: record.header.into(),
+            encrypted_frame: record.content.unwrap_or_default().into(),
+        }
+    }
+}
+
+impl From<GroupV3Payload> for SDSRecord {
+    fn from(payload: GroupV3Payload) -> Self {
+        let content = payload.encrypted_frame;
+        Self {
+            header: payload.encrypted_header.into(),
+            content: (!content.is_empty()).then(|| content.into()),
+        }
+    }
 }
