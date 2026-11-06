@@ -196,3 +196,140 @@ fn groupv3_resend_heals_a_lost_commit() {
         h.raya().group_signers(&convo_id).map_or(0, |s| s.len()) == 3
     });
 }
+
+#[test]
+fn groupv3_message_crossing_an_add_opens() {
+    let mut harness = TestHarness::<4>::new(|_, _| {});
+    let convo_id = create_group_for_adds(&mut harness);
+
+    // Raya sends before applying Saro's add, at the epoch Saro just left.
+    let pax = harness.pax().account();
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &[pax])
+        .expect("saro adds pax");
+    harness
+        .raya()
+        .send_content(&convo_id, b"to saro")
+        .expect("raya send");
+    harness.process_until_label("Saro opens it", |h| h.saro().check(&convo_id, b"to saro"));
+
+    // The same at a joiner, whose group comes from the join config, not the create config.
+    harness.process_until_label("Pax join", |h| {
+        h.pax().convo_count() == 1 && h.raya().group_signers(&convo_id).map_or(0, |s| s.len()) == 3
+    });
+    let mira = harness.mira().account();
+    harness
+        .raya()
+        .group_add_participants(&convo_id, &[mira])
+        .expect("raya adds mira");
+    harness
+        .saro()
+        .send_content(&convo_id, b"to raya")
+        .expect("saro send");
+    harness.process_until_label("Raya opens it", |h| h.raya().check(&convo_id, b"to raya"));
+}
+
+#[test]
+fn groupv3_message_ahead_of_its_commit_opens_after_it() {
+    let mut harness = TestHarness::<4>::new(|_, _| {});
+    let convo_id = create_group_for_adds(&mut harness);
+
+    let pax = harness.pax().account();
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &[pax])
+        .expect("saro adds pax");
+    harness.raya().drop_pending_payloads();
+    harness.process_until_label("Pax join", |h| h.pax().convo_count() == 1);
+
+    // Pax's history never names the commit that added Pax, so SDS hands "ahead" to Raya before
+    // Saro resends the commit, 60 s after sending it.
+    harness
+        .pax()
+        .send_content(&convo_id, b"ahead")
+        .expect("pax send");
+    harness.process(Duration::from_secs(61));
+    harness.process_until_label("Raya opens it", |h| h.raya().check(&convo_id, b"ahead"));
+}
+
+#[test]
+fn groupv3_message_released_with_its_commit_opens_before_held_commits() {
+    // By index, as only harnesses of up to four clients have named accessors.
+    const SARO: usize = 0;
+    const RAYA: usize = 1;
+    const PAX: usize = 2;
+    let mut harness = TestHarness::<5>::new(|_, _| {});
+    let raya = harness.client(RAYA).account();
+    let convo_id = harness
+        .client_mut(SARO)
+        .create_group_convo_v3(&[raya], "", "")
+        .expect("saro create group");
+    harness.process_until_label("Raya join", |h| h.client(RAYA).convo_count() == 1);
+
+    let pax = harness.client(PAX).account();
+    harness
+        .client_mut(SARO)
+        .group_add_participants(&convo_id, &[pax])
+        .expect("saro adds pax");
+    harness.client_mut(RAYA).drop_pending_payloads();
+    harness.process_until_label("Pax join", |h| h.client(PAX).convo_count() == 1);
+
+    // Pax's history never names the commit that added Pax, so Raya holds Pax's two adds. Saro's
+    // message, sent before Saro applied them, names that commit, and SDS releases it in the same
+    // batch as the commit's resend: applying the held adds first would leave it two epochs behind.
+    for i in 3..5 {
+        let member = harness.client(i).account();
+        harness
+            .client_mut(PAX)
+            .group_add_participants(&convo_id, &[member])
+            .expect("pax adds a member");
+    }
+    harness
+        .client_mut(SARO)
+        .send_content(&convo_id, b"between")
+        .expect("saro send");
+    harness.process(Duration::from_secs(61));
+    harness.process_until_label("Raya opens it", |h| {
+        h.client(RAYA).check(&convo_id, b"between")
+    });
+}
+
+#[test]
+fn groupv3_holds_at_most_500_messages_for_a_later_epoch() {
+    let mut harness = TestHarness::<4>::new(|_, _| {});
+    let convo_id = create_group_for_adds(&mut harness);
+
+    let pax = harness.pax().account();
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &[pax])
+        .expect("saro adds pax");
+    harness.raya().drop_pending_payloads();
+    harness.process_until_label("Pax join", |h| h.pax().convo_count() == 1);
+
+    // Pax's add and 501 messages after it reach Raya before Saro resends the commit that added
+    // Pax, so a commit is among the messages Raya holds. Sent 2 s on, so that resend, 60 s after
+    // the commit, comes before Pax's own: SDS logs only the newest 500 and would release the
+    // oldest of Pax's again.
+    harness.process(Duration::from_secs(2));
+    let mira = harness.mira().account();
+    harness
+        .pax()
+        .group_add_participants(&convo_id, &[mira])
+        .expect("pax adds mira");
+    for i in 0..501 {
+        harness
+            .pax()
+            .send_content(&convo_id, format!("{i}").as_bytes())
+            .expect("pax send");
+    }
+    harness.process(Duration::from_secs(59));
+    harness.process_until_label("Raya opens the held ones", |h| {
+        h.raya().received_messages().len() == 499
+    });
+    assert!(
+        !harness.raya().check(&convo_id, b"0") && !harness.raya().check(&convo_id, b"1"),
+        "the oldest held messages are dropped, not the commit"
+    );
+}
