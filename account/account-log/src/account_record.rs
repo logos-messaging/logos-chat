@@ -110,6 +110,12 @@ impl AccountRecord {
     }
 }
 
+impl AsRef<AccountLog> for AccountRecord {
+    fn as_ref(&self) -> &AccountLog {
+        self.log()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

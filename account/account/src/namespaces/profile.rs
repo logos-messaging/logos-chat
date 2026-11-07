@@ -4,7 +4,7 @@
 //!
 //! Specification: <https://lip.logos.co/identity/raw/profile.html>
 
-use account_log::{AccountRecord, Context};
+use account_log::{AccountLog, Context};
 
 use crate::{AccountProvider, AccountPublisher, AccountUpdate};
 
@@ -20,16 +20,16 @@ pub trait ProfileRead {
     fn previous_aliases(&self) -> Vec<&str>;
 }
 
-impl ProfileRead for AccountRecord {
+impl<T: AsRef<AccountLog>> ProfileRead for T {
     fn display_name(&self) -> Option<&str> {
-        self.log()
+        self.as_ref()
             .text_for(&PROFILE_DISPLAYNAME)
             .into_iter()
             .next_back()
     }
 
     fn previous_aliases(&self) -> Vec<&str> {
-        let mut aliases = self.log().text_for(&PROFILE_DISPLAYNAME);
+        let mut aliases = self.as_ref().text_for(&PROFILE_DISPLAYNAME);
         aliases.pop();
         aliases
     }
