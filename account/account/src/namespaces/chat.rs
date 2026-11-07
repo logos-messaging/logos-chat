@@ -4,7 +4,7 @@
 //! Given accounts are durable, high frequency data ought to be referrered to
 //! indirectly.
 
-use account_log::{AccountRecord, Context, Ed25519VerifyingKey};
+use account_log::{AccountLog, Context, Ed25519VerifyingKey};
 
 use crate::{AccountProvider, AccountPublisher, AccountUpdate};
 
@@ -20,13 +20,13 @@ pub trait ChatRead {
     fn revoked_chat_signers(&self) -> Vec<Ed25519VerifyingKey>;
 }
 
-impl ChatRead for AccountRecord {
+impl<T: AsRef<AccountLog>> ChatRead for T {
     fn chat_signers(&self) -> Vec<Ed25519VerifyingKey> {
-        self.log().ed25519_keys_for(&CHATSIGNER_CONTEXT)
+        self.as_ref().ed25519_keys_for(&CHATSIGNER_CONTEXT)
     }
 
     fn revoked_chat_signers(&self) -> Vec<Ed25519VerifyingKey> {
-        self.log().revoked_ed25519_keys_for(&CHATSIGNER_CONTEXT)
+        self.as_ref().revoked_ed25519_keys_for(&CHATSIGNER_CONTEXT)
     }
 }
 

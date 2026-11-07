@@ -243,6 +243,12 @@ impl AccountLog {
     }
 }
 
+impl AsRef<AccountLog> for AccountLog {
+    fn as_ref(&self) -> &AccountLog {
+        self
+    }
+}
+
 /// An entry paired with its position in the log — the index a
 /// [`AccountEntry::Remove`] targets, never a position within a filtered subset.
 ///
