@@ -4,10 +4,12 @@
 //! AddressedEnvelope                        delivery address + convo id
 //! └── GroupV3Payload                       protobuf
 //!     ├── encrypted_header                 bytes; placeholder
-//!     └── encrypted_frame                  bytes; TLS-serialized
-//!         └── MlsMessage                   Commit | ApplicationMessage
-//!             └── GroupV3Frame             protobuf; ApplicationMessage only
-//!                 └── GroupV3FrameType     Content
+//!     ├── encrypted_frame                  bytes; TLS-serialized
+//!     │   └── MlsMessage                   Commit | ApplicationMessage
+//!     │       └── GroupV3Frame             protobuf; ApplicationMessage only
+//!     │           └── GroupV3FrameType     Content
+//!     └── external                         bytes; instead of encrypted_frame
+//!         └── GroupV3External              protobuf; non-MLS frames
 //! ```
 //!
 //! `FrameId` hashes the encoded `GroupV3Frame`, so sender and receivers derive the same id from
@@ -59,16 +61,31 @@ fn to_payload(msg: MlsMessageOut) -> Result<Vec<u8>, SendError> {
     let payload = GroupV3Payload {
         encrypted_header: vec![0, 0, 0, 0].into(),
         encrypted_frame: bytes.into(),
+        external: Bytes::new(),
     };
 
     Ok(payload.encode_to_vec())
 }
 
+/// Address a non-MLS frame to a conversation.
+pub fn to_external_envelope(convo_id: &str, bytes: Vec<u8>) -> AddressedEnvelope {
+    let payload = GroupV3Payload {
+        external: bytes.into(),
+        ..Default::default()
+    };
+
+    AddressedEnvelope::with_payload(
+        delivery_address_from_id(convo_id),
+        convo_id.to_string(),
+        payload.encode_to_vec(),
+    )
+}
+
 pub fn to_envelope(convo_id: String, msg: MlsMessageOut) -> Result<AddressedEnvelope, SendError> {
-    Ok(AddressedEnvelope::new(
+    Ok(AddressedEnvelope::with_payload(
         delivery_address_from_id(&convo_id),
         convo_id,
-        to_payload(msg)?.as_slice(),
+        to_payload(msg)?,
     ))
 }
 
@@ -78,4 +95,7 @@ pub struct GroupV3Payload {
     pub encrypted_header: Bytes,
     #[prost(bytes = "bytes", tag = "2")]
     pub encrypted_frame: Bytes,
+    /// Set instead of `encrypted_frame` for a non-MLS frame.
+    #[prost(bytes = "bytes", tag = "3")]
+    pub external: Bytes,
 }

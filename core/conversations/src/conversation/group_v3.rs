@@ -6,7 +6,11 @@
 //  - Everyone is an "Admin"
 //
 
+mod beacons;
+pub(crate) mod external;
 mod handlers;
+#[cfg(any(test, feature = "test-support"))]
+pub mod inspect;
 mod payloads;
 
 use openmls::framing::MlsMessageOut;
@@ -31,6 +35,7 @@ use crate::{
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
+use self::beacons::Beacons;
 use self::payloads::{GroupV3Payload, frame_id, to_envelope};
 
 // Type Aliases
@@ -45,6 +50,7 @@ fn delivery_address_from_id(convo_id: &str) -> String {
 pub struct GroupV3Convo {
     convo_id: String,
     mls_group: MlsGroup,
+    beacons: Beacons,
 }
 
 impl GroupV3Convo {
@@ -60,10 +66,12 @@ impl GroupV3Convo {
         let mut convo = Self {
             convo_id: hex::encode(mls_group.group_id().as_slice()),
             mls_group,
+            beacons: Beacons::default(),
         };
 
         convo.init(cx)?;
         convo.add_signer(cx, signers)?;
+        convo.enter_epoch(cx);
         Ok(convo)
     }
 
@@ -79,13 +87,14 @@ impl GroupV3Convo {
                 .into_group(&cx.mls_provider)
                 .map_err(ChatError::generic)?;
 
-        // let convo_id = hex::encode(mls_group.group_id().as_slice());
-        let convo = Self {
+        let mut convo = Self {
             convo_id: hex::encode(mls_group.group_id().as_slice()),
             mls_group,
+            beacons: Beacons::default(),
         };
 
         convo.init(cx)?;
+        convo.enter_epoch(cx);
         Ok(convo)
     }
 }
@@ -110,6 +119,8 @@ impl GroupV3Convo {
         let frame = frame.encode();
         let frame_id = frame_id(frame.as_slice());
 
+        // OpenMLS clears the AAD after every message it creates.
+        self.mls_group.set_aad(self.beacons.aad().to_vec());
         let mls_msg =
             self.mls_group
                 .create_message(&cx.mls_provider, &cx.mls_identity, frame.as_slice())?;
@@ -139,6 +150,7 @@ impl GroupV3Convo {
 
         // Update State
         self.mls_group.merge_pending_commit(&cx.mls_provider)?;
+        self.enter_epoch(cx);
 
         // Send Welcomes
         for env in dependent_msgs {
@@ -169,6 +181,14 @@ impl GroupV3Convo {
 
     fn default_outcome(&self) -> ConvoOutcome {
         ConvoOutcome::empty(self.convo_id.clone())
+    }
+}
+
+impl GroupV3Convo {
+    /// Call after merging any commit, ours or a peer's.
+    fn enter_epoch<S: ExternalServices>(&mut self, cx: &mut ServiceContext<S>) {
+        self.beacons
+            .enter_epoch(&self.mls_group, &self.convo_id, cx);
     }
 }
 
@@ -236,6 +256,14 @@ where
     ) -> Result<ConvoOutcome, ChatError> {
         let payload = GroupV3Payload::decode(payload)?;
 
+        if !payload.external.is_empty() {
+            let crypto = cx.mls_provider.crypto();
+            let ours = self.mls_group.ciphersuite();
+            self.beacons
+                .receive_frame(crypto, &self.convo_id, ours, &payload.external);
+            return Ok(self.default_outcome());
+        }
+
         let protocol_message =
             MlsMessageIn::tls_deserialize_exact_bytes(payload.encrypted_frame.as_ref())
                 .map_err(ChatError::generic)?
@@ -245,7 +273,8 @@ where
         self.handle_mls_protocol_msg(cx, protocol_message)
     }
 
-    fn wakeup(&mut self, _cx: &mut ServiceContext<S>) -> Result<crate::ConvoOutcome, ChatError> {
+    fn wakeup(&mut self, cx: &mut ServiceContext<S>) -> Result<crate::ConvoOutcome, ChatError> {
+        self.beacons.wakeup(&self.convo_id, cx);
         Ok(self.default_outcome())
     }
 }

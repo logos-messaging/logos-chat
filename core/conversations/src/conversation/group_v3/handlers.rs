@@ -20,6 +20,14 @@ impl GroupV3Convo {
         cx: &mut ServiceContext<S>,
         protocol_message: ProtocolMessage,
     ) -> Result<ConvoOutcome, ChatError> {
+        // Before anything can reject the message: a forked client still gets
+        // the AAD of messages it cannot decrypt.
+        if let ProtocolMessage::PrivateMessage(msg) = &protocol_message {
+            let ours = self.mls_group.ciphersuite();
+            self.beacons
+                .receive_aad(ours, msg.aad(), protocol_message.epoch().as_u64());
+        }
+
         // Includes our own commits, which return here after we merged them.
         if protocol_message.epoch() < self.mls_group.epoch() {
             debug!(convo = %self.convo_id, epoch = protocol_message.epoch().as_u64(), "dropping message from past epoch");
@@ -114,6 +122,7 @@ impl GroupV3Convo {
         self.mls_group
             .merge_staged_commit(&cx.mls_provider, commit)
             .map_err(ChatError::generic)?;
+        self.enter_epoch(cx);
 
         info!(
             convo = %self.convo_id,
