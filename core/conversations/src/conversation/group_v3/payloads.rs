@@ -5,10 +5,12 @@
 //! └── GroupV3Payload                       protobuf
 //!     ├── encrypted_header                 bytes
 //!     │   └── SdsHeader                    protobuf; the SDS spec's Message without content
-//!     └── encrypted_frame                  bytes; TLS-serialized; empty for an SDS sync
-//!         └── MlsMessage                   Commit | ApplicationMessage
-//!             └── GroupV3Frame             protobuf; ApplicationMessage only
-//!                 └── GroupV3FrameType     Content
+//!     ├── encrypted_frame                  bytes; TLS-serialized; empty for an SDS sync
+//!     │   └── MlsMessage                   Commit | ApplicationMessage
+//!     │       └── GroupV3Frame             protobuf; ApplicationMessage only
+//!     │           └── GroupV3FrameType     Content
+//!     └── external                         bytes; instead of encrypted_frame
+//!         └── GroupV3External              protobuf; non-MLS frames
 //! ```
 //!
 //! Commits and application messages travel through SDS, which orders them and resends what goes
@@ -59,11 +61,20 @@ impl GroupV3Frame {
 }
 
 pub fn to_envelope(convo_id: String, payload: GroupV3Payload) -> AddressedEnvelope {
-    AddressedEnvelope::new(
+    AddressedEnvelope::with_payload(
         delivery_address_from_id(&convo_id),
         convo_id,
-        payload.encode_to_vec().as_slice(),
+        payload.encode_to_vec(),
     )
+}
+
+/// Address a non-MLS frame to a conversation.
+pub fn to_external_envelope(convo_id: &str, bytes: Vec<u8>) -> AddressedEnvelope {
+    let payload = GroupV3Payload {
+        external: bytes.into(),
+        ..Default::default()
+    };
+    to_envelope(convo_id.to_string(), payload)
 }
 
 pub fn protocol_message(mls_message: &[u8]) -> Result<ProtocolMessage, ChatError> {
@@ -79,6 +90,9 @@ pub struct GroupV3Payload {
     pub encrypted_header: Bytes,
     #[prost(bytes = "bytes", tag = "2")]
     pub encrypted_frame: Bytes,
+    /// Set instead of `encrypted_frame` for a non-MLS frame.
+    #[prost(bytes = "bytes", tag = "3")]
+    pub external: Bytes,
 }
 
 impl From<SDSRecord> for GroupV3Payload {
@@ -86,6 +100,7 @@ impl From<SDSRecord> for GroupV3Payload {
         Self {
             encrypted_header: SdsHeader::from(record.header).encode_to_vec().into(),
             encrypted_frame: record.content.unwrap_or_default().into(),
+            external: Bytes::new(),
         }
     }
 }

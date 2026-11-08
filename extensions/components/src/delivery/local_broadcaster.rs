@@ -25,12 +25,26 @@ impl<T> BroadcasterShared<T> {
     }
 }
 
-#[derive(Clone, Debug)]
+/// Decides which publishes a test wants to fail.
+type RejectRule = Rc<dyn Fn(&AddressedEnvelope) -> bool>;
+
+#[derive(Clone)]
 pub struct LocalBroadcaster {
     shared: Rc<RefCell<BroadcasterShared<AddressedEnvelope>>>,
     cursor: usize,
     subscriptions: HashSet<String>,
     outbound_msgs: Vec<u64>,
+    reject: Option<RejectRule>,
+}
+
+impl std::fmt::Debug for LocalBroadcaster {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LocalBroadcaster")
+            .field("cursor", &self.cursor)
+            .field("subscriptions", &self.subscriptions)
+            .field("rejects_publishes", &self.reject.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 /// This is Lightweight DeliveryService which can be used for tests
@@ -49,6 +63,7 @@ impl LocalBroadcaster {
             cursor,
             subscriptions: HashSet::new(),
             outbound_msgs: Vec::new(),
+            reject: None,
         }
     }
 
@@ -63,6 +78,7 @@ impl LocalBroadcaster {
             cursor,
             subscriptions: HashSet::new(),
             outbound_msgs: Vec::new(),
+            reject: None,
         }
     }
 
@@ -90,6 +106,16 @@ impl LocalBroadcaster {
         }
     }
 
+    /// Fail every publish `rule` matches, to simulate a transport that drops
+    /// some frames. Applies to this consumer only.
+    pub fn reject_publishes(&mut self, rule: impl Fn(&AddressedEnvelope) -> bool + 'static) {
+        self.reject = Some(Rc::new(rule));
+    }
+
+    pub fn accept_all_publishes(&mut self) {
+        self.reject = None;
+    }
+
     fn msg_id(msg: &AddressedEnvelope) -> u64 {
         let mut hasher = DefaultHasher::new();
         msg.data.as_slice().hash(&mut hasher);
@@ -112,6 +138,9 @@ impl DeliveryService for LocalBroadcaster {
     type Error = String;
 
     fn publish(&mut self, envelope: AddressedEnvelope) -> Result<(), Self::Error> {
+        if self.reject.as_ref().is_some_and(|rule| rule(&envelope)) {
+            return Err("publish rejected by the test".into());
+        }
         info!(?envelope.delivery_address, len=envelope.data.len(), "DS:Publish");
         self.outbound_msgs.push(Self::msg_id(&envelope));
         self.shared.borrow_mut().messages.push_back(envelope);

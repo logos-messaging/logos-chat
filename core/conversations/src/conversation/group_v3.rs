@@ -6,7 +6,11 @@
 //  - Everyone is an "Admin"
 //
 
+mod beacons;
+pub(crate) mod external;
 mod handlers;
+#[cfg(any(test, feature = "test-support"))]
+pub mod inspect;
 mod payloads;
 
 use std::fmt;
@@ -33,6 +37,7 @@ use crate::{
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
+use self::beacons::Beacons;
 use self::payloads::{GroupV3Payload, message_id, to_envelope};
 
 // Type Aliases
@@ -67,6 +72,7 @@ pub struct GroupV3Convo {
     convo_id: String,
     mls_group: MlsGroup,
     channel: Channel,
+    beacons: Beacons,
 }
 
 // `sds::Channel` implements no `Debug`.
@@ -93,6 +99,7 @@ impl GroupV3Convo {
 
         convo.init(cx)?;
         convo.add_signer(cx, signers)?;
+        convo.enter_epoch(cx);
         Ok(convo)
     }
 
@@ -110,9 +117,10 @@ impl GroupV3Convo {
                 .into_group(&cx.mls_provider)
                 .map_err(ChatError::generic)?;
 
-        let convo = Self::from_group(cx, mls_group, Some(start))?;
+        let mut convo = Self::from_group(cx, mls_group, Some(start))?;
 
         convo.init(cx)?;
+        convo.enter_epoch(cx);
         Ok(convo)
     }
 
@@ -127,6 +135,7 @@ impl GroupV3Convo {
             convo_id,
             mls_group,
             channel,
+            beacons: Beacons::default(),
         })
     }
 }
@@ -152,6 +161,8 @@ impl GroupV3Convo {
     ) -> Result<super::MessageId, SendError> {
         let frame = frame.encode();
 
+        // OpenMLS clears the AAD after every message it creates.
+        self.mls_group.set_aad(self.beacons.aad().to_vec());
         let mls_msg =
             self.mls_group
                 .create_message(&cx.mls_provider, &cx.mls_identity, frame.as_slice())?;
@@ -204,6 +215,7 @@ impl GroupV3Convo {
 
         // Update State
         self.mls_group.merge_pending_commit(&cx.mls_provider)?;
+        self.enter_epoch(cx);
 
         let start = StartPoint {
             message_id: record.header.message_id.clone(),
@@ -241,6 +253,14 @@ impl GroupV3Convo {
 
     fn default_outcome(&self) -> ConvoOutcome {
         ConvoOutcome::empty(self.convo_id.clone())
+    }
+}
+
+impl GroupV3Convo {
+    /// Call after merging any commit, ours or a peer's.
+    fn enter_epoch<S: ExternalServices>(&mut self, cx: &mut ServiceContext<S>) {
+        self.beacons
+            .enter_epoch(&self.mls_group, &self.convo_id, cx);
     }
 }
 
@@ -312,6 +332,14 @@ where
         payload: &[u8],
     ) -> Result<ConvoOutcome, ChatError> {
         let payload = GroupV3Payload::decode(payload)?;
+        if !payload.external.is_empty() {
+            let crypto = cx.mls_provider.crypto();
+            let ours = self.mls_group.ciphersuite();
+            self.beacons
+                .receive_frame(crypto, &self.convo_id, ours, &payload.external);
+            return Ok(self.default_outcome());
+        }
+
         let events = self
             .channel
             .receive(SDSRecord::try_from(payload)?, None, now_ms(cx))
@@ -326,6 +354,7 @@ where
         cx.wakeup_service
             .wakeup_in(SDS_TICK_INTERVAL, self.convo_id.clone());
         let events = self.channel.tick(now_ms(cx), &mut rand_0_10::rng());
+        self.beacons.wakeup(&self.convo_id, cx);
         Ok(ConvoOutcome {
             observations: self.handle_sds_events(cx, events),
             ..self.default_outcome()

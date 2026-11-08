@@ -14,11 +14,24 @@ pub struct AddressedEnvelope {
 
 impl AddressedEnvelope {
     pub fn new(delivery_address: String, convo_id: String, data: &[u8]) -> Self {
+        Self::with_payload(
+            delivery_address,
+            convo_id,
+            proto::Bytes::copy_from_slice(data),
+        )
+    }
+
+    /// Like [`Self::new`], taking the payload rather than copying it.
+    pub(crate) fn with_payload(
+        delivery_address: String,
+        convo_id: String,
+        payload: impl Into<proto::Bytes>,
+    ) -> Self {
         let envelope = proto::EnvelopeV1 {
             // TODO: conversation_id should be obscured
             conversation_hint: convo_id,
             salt: 0,
-            payload: proto::Bytes::copy_from_slice(data),
+            payload: payload.into(),
         };
 
         AddressedEnvelope {
