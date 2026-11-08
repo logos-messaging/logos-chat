@@ -6,8 +6,12 @@
 //  - Everyone is an "Admin"
 //
 
+mod beacons;
+mod external;
 mod finality;
 mod handlers;
+#[cfg(any(test, feature = "test-support"))]
+pub mod inspect;
 mod payloads;
 
 use std::collections::HashMap;
@@ -36,7 +40,8 @@ use crate::{
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
-use self::payloads::{EncryptedSdsMessage, GroupV3Packet};
+use self::beacons::Beacons;
+use self::payloads::{EncryptedSdsMessage, GroupV3External, GroupV3Packet};
 
 // Type Aliases
 type Frame = payloads::GroupV3Frame;
@@ -87,6 +92,7 @@ pub struct GroupV3Convo {
     channel: Channel,
     deferred_commits: HashMap<EpochFingerprint, DeferredCommit>,
     finality: finality::Timeout,
+    beacons: Beacons,
 }
 
 // `sds::Channel` implements no `Debug`.
@@ -130,9 +136,10 @@ impl GroupV3Convo {
                 .into_group(&cx.mls_provider)
                 .map_err(ChatError::generic)?;
 
-        let convo = Self::from_group(cx, mls_group, Some(start))?;
+        let mut convo = Self::from_group(cx, mls_group, Some(start))?;
 
         convo.init(cx)?;
+        convo.enter_epoch(cx);
         Ok(convo)
     }
 
@@ -149,6 +156,7 @@ impl GroupV3Convo {
             channel,
             deferred_commits: HashMap::default(),
             finality: finality::Timeout::new(COMMIT_FINALIZE_TIMEOUT),
+            beacons: Beacons::default(),
         })
     }
 }
@@ -290,6 +298,7 @@ impl GroupV3Convo {
         };
 
         self.drop_expired_deferred_commits();
+        self.enter_epoch(cx);
         info!(
             convo = %self.convo_id,
             epoch = starting_epoch,
@@ -359,6 +368,55 @@ impl GroupV3Convo {
 
     fn default_outcome(&self) -> ConvoOutcome {
         ConvoOutcome::empty(self.convo_id.clone())
+    }
+}
+
+impl GroupV3Convo {
+    /// Call after merging any commit, ours or a peer's.
+    fn enter_epoch<S: ExternalServices>(&mut self, cx: &mut ServiceContext<S>) {
+        self.beacons
+            .enter_epoch(cx, &self.mls_group, &self.convo_id);
+        self.send_beacon(cx);
+    }
+
+    /// Send our beacon once it is due. A failure is retried on a later tick
+    /// rather than failing the operation that changed the epoch.
+    fn send_beacon<S: ExternalServices>(&mut self, cx: &mut ServiceContext<S>) {
+        let now = cx.clock.now();
+        let Some(beacon) = self.beacons.due(now) else {
+            return;
+        };
+        match self.publish_external(cx, GroupV3External::beacon(beacon.clone())) {
+            Ok(()) => self.beacons.sent(),
+            Err(e) => {
+                warn!(convo = %self.convo_id, error = %e, "beacon not sent");
+                self.beacons.failed(now);
+            }
+        }
+    }
+
+    /// Sends a frame outside SDS: nothing orders or resends it, and a forked
+    /// member must still be able to read it.
+    fn publish_external<S: ExternalServices>(
+        &self,
+        cx: &mut ServiceContext<S>,
+        frame: GroupV3External,
+    ) -> Result<(), SendError> {
+        let packet = GroupV3Packet::external(frame);
+        self.publish_payload(cx, EncryptedSdsMessage::outside_sds(&packet))
+            .map(|_| ())
+    }
+
+    fn receive_external<S: ExternalServices>(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        frame: &[u8],
+    ) -> Result<ConvoOutcome, ChatError> {
+        let crypto = cx.mls_provider.crypto();
+        let keys = self.mls_group.members().map(|m| m.signature_key);
+        self.beacons
+            .receive_frame(crypto, &self.convo_id, keys, frame);
+        Ok(self.default_outcome())
     }
 }
 
@@ -437,7 +495,11 @@ where
         payload: &[u8],
         delivery_info: Option<&DeliveryInfo>,
     ) -> Result<ConvoOutcome, ChatError> {
-        let record = EncryptedSdsMessage::decode(payload)?.try_into_record()?;
+        let message = EncryptedSdsMessage::decode(payload)?;
+        if let Some(packet) = message.packet_outside_sds() {
+            return self.receive_external(cx, &packet?.into_external()?);
+        }
+        let record = message.try_into_record()?;
         let retrieval_hint = delivery_info.map(|info| info.delivery_msg_id.as_bytes().to_vec());
         let events = self
             .channel
@@ -464,6 +526,7 @@ where
             }
         }
 
+        self.send_beacon(cx);
         Ok(ConvoOutcome {
             observations,
             ..self.default_outcome()

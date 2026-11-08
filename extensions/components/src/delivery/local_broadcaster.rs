@@ -27,7 +27,10 @@ impl<T> BroadcasterShared<T> {
     }
 }
 
-#[derive(Clone, Debug)]
+/// Decides which publishes a test wants to fail.
+type RejectRule = Rc<dyn Fn(&AddressedEnvelope) -> bool>;
+
+#[derive(Clone)]
 pub struct LocalBroadcaster {
     shared: Rc<RefCell<BroadcasterShared<AddressedEnvelope>>>,
     cursor: usize,
@@ -36,6 +39,17 @@ pub struct LocalBroadcaster {
     fetched: VecDeque<(Vec<u8>, DeliveryInfo)>,
     /// Set by [`Self::report_ids_late`]: the ids `publish` no longer returns.
     reports: Option<VecDeque<(PublishReceipt, DeliveryInfo)>>,
+    reject: Option<RejectRule>,
+}
+
+impl std::fmt::Debug for LocalBroadcaster {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LocalBroadcaster")
+            .field("cursor", &self.cursor)
+            .field("subscriptions", &self.subscriptions)
+            .field("rejects_publishes", &self.reject.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 /// This is Lightweight DeliveryService which can be used for tests
@@ -56,6 +70,7 @@ impl LocalBroadcaster {
             outbound_msgs: Vec::new(),
             fetched: VecDeque::new(),
             reports: None,
+            reject: None,
         }
     }
 
@@ -72,6 +87,7 @@ impl LocalBroadcaster {
             outbound_msgs: Vec::new(),
             fetched: VecDeque::new(),
             reports: None,
+            reject: None,
         }
     }
 
@@ -114,6 +130,16 @@ impl LocalBroadcaster {
         self.reports.as_mut()?.pop_front()
     }
 
+    /// Fail every publish `rule` matches, to simulate a transport that drops
+    /// some frames. Applies to this consumer only.
+    pub fn reject_publishes(&mut self, rule: impl Fn(&AddressedEnvelope) -> bool + 'static) {
+        self.reject = Some(Rc::new(rule));
+    }
+
+    pub fn accept_all_publishes(&mut self) {
+        self.reject = None;
+    }
+
     fn msg_id(msg: &AddressedEnvelope) -> u64 {
         let mut hasher = DefaultHasher::new();
         msg.data.as_slice().hash(&mut hasher);
@@ -152,6 +178,9 @@ impl DeliveryService for LocalBroadcaster {
     type Error = String;
 
     fn publish(&mut self, envelope: AddressedEnvelope) -> Result<PublishedId, Self::Error> {
+        if self.reject.as_ref().is_some_and(|rule| rule(&envelope)) {
+            return Err("publish rejected by the test".into());
+        }
         info!(?envelope.delivery_address, len=envelope.data.len(), "DS:Publish");
         self.outbound_msgs.push(Self::msg_id(&envelope));
         let mut shared = self.shared.borrow_mut();
