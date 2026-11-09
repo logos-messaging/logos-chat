@@ -7,10 +7,11 @@ description = "A default store for chat messages, over a SQLite connection the a
 
 [dependencies]
 # External dependencies (sorted)
-# No features: the application picks the SQLite build it links.
-rusqlite = "0.35"
+# No SQLite build features: the application picks the SQLite build it links.
+# fallible_uint restores the `usize` conversions rusqlite 0.35 had built in.
+rusqlite = { version = "0.41.1", features = ["fallible_uint"] }
 
 [dev-dependencies]
 # External dependencies (sorted)
-rusqlite = { version = "0.35", features = ["bundled-sqlcipher-vendored-openssl"] }
+rusqlite = { version = "0.41.1", features = ["bundled-sqlcipher-vendored-openssl"] }
 tempfile = "3"
