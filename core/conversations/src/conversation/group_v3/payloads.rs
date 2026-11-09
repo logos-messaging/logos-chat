@@ -11,7 +11,7 @@
 //!         │       └── GroupV3Frame         protobuf; ApplicationMessage only
 //!         │           └── GroupV3FrameType Content
 //!         └── external                     bytes; outside SDS, with an empty header
-//!             └── GroupV3External          protobuf; non-MLS frames: Beacon
+//!             └── GroupV3External          protobuf; non-MLS frames: Beacon | Sealed
 //! ```
 //!
 //! Commits and application messages travel through SDS, which orders them and resends what goes
@@ -32,6 +32,7 @@ use crate::{
 
 use super::delivery_address_from_id;
 use super::external::EpochBeacon;
+use super::sealed::SealedMessage;
 
 pub(super) fn message_id(mls_message: &[u8]) -> MessageId {
     blake2b_hex::<hash_size::MessageId>(&["logos-chat|message_id|".as_bytes(), mls_message])
@@ -132,7 +133,7 @@ impl TryFrom<GroupV3Payload> for SDSRecord {
 /// A frame on the delivery address that is not an MLS message.
 #[derive(Clone, PartialEq, Message)]
 pub struct GroupV3External {
-    #[prost(oneof = "GroupV3ExternalKind", tags = "1")]
+    #[prost(oneof = "GroupV3ExternalKind", tags = "1, 2")]
     pub kind: Option<GroupV3ExternalKind>,
 }
 
@@ -140,12 +141,20 @@ pub struct GroupV3External {
 pub enum GroupV3ExternalKind {
     #[prost(message, tag = "1")]
     Beacon(EpochBeacon),
+    #[prost(message, tag = "2")]
+    Sealed(SealedMessage),
 }
 
 impl GroupV3External {
     pub fn beacon(beacon: EpochBeacon) -> Self {
         Self {
             kind: Some(GroupV3ExternalKind::Beacon(beacon)),
+        }
+    }
+
+    pub fn sealed(msg: SealedMessage) -> Self {
+        Self {
+            kind: Some(GroupV3ExternalKind::Sealed(msg)),
         }
     }
 }

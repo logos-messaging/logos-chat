@@ -1,7 +1,7 @@
 use openmls::framing::{ApplicationMessage, ProtocolMessage};
 use openmls::prelude::{
-    Member, ProcessMessageError, ProcessedMessage, ProcessedMessageContent, Sender, StagedCommit,
-    ValidationError,
+    LeafNodeIndex, Member, ProcessMessageError, ProcessedMessage, ProcessedMessageContent, Sender,
+    StagedCommit, ValidationError,
 };
 use prost::Message as _;
 use sds::Event;
@@ -84,17 +84,18 @@ impl GroupV3Convo {
         processed: ProcessedMessage,
     ) -> Result<ConvoOutcome, ChatError> {
         // Resolved before `into_content` consumes the message.
-        let sender = match processed.sender() {
-            Sender::Member(index) => self.mls_group.member_at(*index),
+        let sender_index = match processed.sender() {
+            Sender::Member(index) => Some(*index),
             _ => None,
         };
+        let sender = sender_index.and_then(|index| self.mls_group.member_at(index));
 
         match processed.into_content() {
             ProcessedMessageContent::ApplicationMessage(msg) => {
                 self.handle_mls_application_message(cx, sender, msg, message_id)
             }
             ProcessedMessageContent::StagedCommitMessage(commit) => {
-                self.handle_mls_commit(cx, *commit)
+                self.handle_mls_commit(cx, *commit, sender_index)
             }
             other => {
                 debug!(convo = %self.convo_id, ?other, "ignoring mls message");
@@ -143,20 +144,22 @@ impl GroupV3Convo {
         &mut self,
         cx: &mut ServiceContext<S>,
         commit: StagedCommit,
+        committer: Option<LeafNodeIndex>,
     ) -> Result<ConvoOutcome, ChatError> {
         let epoch = self.mls_group.epoch().as_u64();
-        let fingerprint = EpochFingerprint::from(&commit);
+        let fingerprint = EpochFingerprint::of_commit(&commit);
 
         self.mls_group
             .merge_staged_commit(&cx.mls_provider, commit)
             .map_err(ChatError::generic)?;
+        self.committer = committer;
         self.enter_epoch(cx);
 
         info!(
             convo = %self.convo_id,
             epoch,
             new_epoch = self.mls_group.epoch().as_u64(),
-            epochfingerprint = fingerprint.as_str(),
+            epochfingerprint = fingerprint.as_ref().map(EpochFingerprint::as_str),
             "incoming commit merged"
         );
         Ok(ConvoOutcome {
