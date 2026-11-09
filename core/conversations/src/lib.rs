@@ -1,4 +1,5 @@
 mod causal_history;
+mod clock;
 mod conversation;
 mod core;
 mod errors;
@@ -16,7 +17,8 @@ mod types;
 mod utils;
 
 pub use causal_history::{DeliveryAck, Frontier, MissingMessage};
-pub use conversation::{GroupV2Clock, GroupV2Frame, GroupV2Payload, MessageId};
+pub use clock::{Clock, MockClock};
+pub use conversation::{GroupV2Frame, GroupV2Payload, MessageId};
 pub use core::{ConversationId, Core};
 /// Timing/policy for GroupV2 conversations (de-mls's per-conversation config).
 /// Defaults to the de-mls library defaults; inject via
@@ -25,7 +27,6 @@ pub use core::{ConversationId, Core};
 /// consensus timeout) travel to joiners with the welcome and overwrite
 /// theirs; vote delays and the policy fields stay local to each member.
 pub use de_mls::ConversationConfig as GroupV2Config;
-pub use de_mls::MockClock;
 pub use errors::ChatError;
 pub use identity::{AuthenticatedSigner, ParticipantId, Signer, SignerError, SignerKey, SignerRef};
 pub use inbox_v2::{InboxV2Frame, InviteType};
