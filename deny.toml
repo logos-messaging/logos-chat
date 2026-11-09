@@ -53,6 +53,11 @@ crate = "chat-proto"
 expression = "MIT OR Apache-2.0"
 license-files = []
 
+# Vendored C: SQLite (blessing), libtomcrypt (public domain / WTFPL).
+[[licenses.exceptions]]
+crate = "sqlcipher-src"
+allow = ["blessing", "WTFPL"]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "allow"
