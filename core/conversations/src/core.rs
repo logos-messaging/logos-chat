@@ -9,8 +9,7 @@ use crate::service_traits::AuthService;
 use crate::storage::{ConversationKind, ConversationMeta, ConversationStore};
 use crate::types::ConvoMetadata;
 use crate::{
-    DeliveryService, GroupV2Clock, GroupV2Config, IdentityProvider, RegistrationService,
-    WakeupService,
+    Clock, DeliveryService, GroupV2Config, IdentityProvider, RegistrationService, WakeupService,
 };
 use crate::{
     conversation::{Convo, ConvoBase, GroupConvo, mls_trace::record},
@@ -79,8 +78,10 @@ where
         Ok(core)
     }
 
-    pub fn set_group_v2_clock(&mut self, clock: GroupV2Clock) {
-        self.services.demls_clock = clock;
+    /// Sets the time source conversations measure their timers against. A GroupV2 conversation
+    /// keeps the clock it was created or joined with.
+    pub fn set_clock(&mut self, clock: Clock) {
+        self.services.clock = clock;
     }
 
     /// Overrides the GroupV2 (de-mls) timing/policy config. Applies to
@@ -116,7 +117,7 @@ where
                 mls_provider,
                 causal,
                 wakeup_service,
-                demls_clock: GroupV2Clock::default(),
+                clock: Clock::default(),
                 demls_config: GroupV2Config::default(),
             },
             pq_inbox,

@@ -122,4 +122,6 @@ pub enum SendError {
     MlsMessageError(#[from] MlsMessageError),
     #[error("mls merge commit: {0}")]
     MlsMergeCommit(#[from] MergePendingCommitError<MemoryStorageError>),
+    #[error("sds: {0}")]
+    Sds(#[from] sds::Error),
 }

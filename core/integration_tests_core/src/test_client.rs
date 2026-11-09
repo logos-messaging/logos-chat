@@ -1,7 +1,7 @@
 use crate::test_ident::{AcceptAllAuth, TestIdent};
 use libchat::test_support::MemStore;
+use libchat::{Clock, GroupV2Config};
 use libchat::{ConversationId, Core, IdentityProvider, PayloadOutcome};
-use libchat::{GroupV2Clock, GroupV2Config};
 use libchat::{ParticipantId, SignerKey};
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -206,7 +206,7 @@ impl<const N: usize> TestHarness<N> {
                 MemStore::new(),
             )
             .unwrap();
-            core_client.set_group_v2_clock(GroupV2Clock::Mock(ws.clock()));
+            core_client.set_clock(Clock::Mock(ws.clock()));
             core_client.set_group_v2_config(fast_group_v2_config());
 
             let client = TestClient::init(core_client, account);
