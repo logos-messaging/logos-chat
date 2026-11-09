@@ -116,6 +116,31 @@ pub(crate) trait GroupConvo<S: ExternalServices>: Convo<S> + std::fmt::Debug + S
         cx: &mut ServiceContext<S>,
         signer: &[SignerRef],
     ) -> Result<(), ChatError>;
+
+    /// Ask to be re-added after a fork. `next_answerer` asks the next member.
+    fn request_readd(
+        &mut self,
+        _cx: &mut ServiceContext<S>,
+        _next_answerer: bool,
+    ) -> Result<usize, ChatError> {
+        Err(ChatError::UnsupportedFunction(
+            self.id().into(),
+            "Re-add".into(),
+        ))
+    }
+
+    /// Remove and add `signer` in one commit, unasked, as an attacker could.
+    #[cfg(feature = "test-support")]
+    fn force_readd(
+        &mut self,
+        _cx: &mut ServiceContext<S>,
+        _signer: SignerRef,
+    ) -> Result<(), ChatError> {
+        Err(ChatError::UnsupportedFunction(
+            self.id().into(),
+            "Re-add".into(),
+        ))
+    }
 }
 
 pub(crate) trait Identified {

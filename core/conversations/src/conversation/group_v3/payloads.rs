@@ -16,7 +16,7 @@
 //!                 │       └── GroupV3Frame          protobuf; ApplicationMessage only
 //!                 │           └── GroupV3FrameType  Content
 //!                 └── external                      bytes; outside SDS
-//!                     └── GroupV3External           protobuf; non-MLS frames: Beacon
+//!                     └── GroupV3External           protobuf; non-MLS frames: Beacon | Sealed
 //! ```
 //!
 //! `GroupV3Packet` goes to SDS as bytes, so the SDS message id is a deterministic hash of them.
@@ -36,6 +36,8 @@ use crate::{
     errors::SendError,
     utils::{blake2b_hex, hash_size},
 };
+
+use super::sealed::SealedMessage;
 
 mod sds_message;
 
@@ -150,7 +152,7 @@ impl GroupV3Packet {
 /// A frame on the delivery address that is not an MLS message.
 #[derive(Clone, PartialEq, Message)]
 pub struct GroupV3External {
-    #[prost(oneof = "GroupV3ExternalKind", tags = "1")]
+    #[prost(oneof = "GroupV3ExternalKind", tags = "1, 2")]
     pub kind: Option<GroupV3ExternalKind>,
 }
 
@@ -158,12 +160,20 @@ pub struct GroupV3External {
 pub enum GroupV3ExternalKind {
     #[prost(message, tag = "1")]
     Beacon(EpochBeacon),
+    #[prost(message, tag = "2")]
+    Sealed(SealedMessage),
 }
 
 impl GroupV3External {
     pub fn beacon(beacon: EpochBeacon) -> Self {
         Self {
             kind: Some(GroupV3ExternalKind::Beacon(beacon)),
+        }
+    }
+
+    pub fn sealed(msg: SealedMessage) -> Self {
+        Self {
+            kind: Some(GroupV3ExternalKind::Sealed(msg)),
         }
     }
 }

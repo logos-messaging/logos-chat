@@ -1,5 +1,8 @@
 //! Bundles the services a conversation operation needs into one [`ServiceContext`].
 
+use std::collections::HashMap;
+use std::time::Duration;
+
 use crate::IdentityProvider;
 use crate::causal_history::CausalHistoryStore;
 use crate::clock::Clock;
@@ -53,4 +56,16 @@ pub(crate) struct ServiceContext<S: ExternalServices> {
     /// create/join. The creator's phase durations reach joiners inside the
     /// welcome's `ConversationSync`.
     pub(crate) demls_config: de_mls::ConversationConfig,
+    /// GroupV3 conversations that asked to be re-added; only these accept a
+    /// replacing Welcome.
+    pub(crate) readd_pending: HashMap<String, ReAddTarget>,
+}
+
+/// What a re-add request was sealed to.
+#[derive(Debug)]
+pub(crate) struct ReAddTarget {
+    /// The oldest epoch it was sealed to; the repair lands after it.
+    pub epoch: u64,
+    /// When we stop waiting for the Welcome.
+    pub until: Duration,
 }

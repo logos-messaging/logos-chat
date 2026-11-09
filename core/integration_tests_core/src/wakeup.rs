@@ -119,6 +119,16 @@ impl TestWakeupService {
         }
     }
 
+    /// Wakeups `client_index` has pending for `convo_id`.
+    pub fn pending(&self, client_index: usize, convo_id: &str) -> usize {
+        self.inner
+            .borrow()
+            .pending
+            .iter()
+            .filter(|Reverse(w)| w.client_index == client_index && w.convo_id == convo_id)
+            .count()
+    }
+
     // Returns the ConvoIDs that triggered in order
     pub fn advance_time(&mut self, duration: Duration) -> Vec<WakeupRecord> {
         let mut srv = self.inner.borrow_mut();
