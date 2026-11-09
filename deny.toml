@@ -24,6 +24,7 @@ ignore = [
     "RUSTSEC-2024-0436", # paste, unmaintained
     "RUSTSEC-2026-0173", # proc-macro-error2, unmaintained
     "RUSTSEC-2026-0387", # crypto-bigint 0.5 via alloy (GroupV2 + de-mls); patched 0.7 needs alloy on k256 0.14.
+    "RUSTSEC-2026-0441", # pin-utils, unmaintained; wasm-only, via alloy (GroupV2)
 ]
 
 [licenses]
