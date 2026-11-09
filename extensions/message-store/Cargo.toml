@@ -8,9 +8,9 @@ description = "A default store for chat messages, over a SQLite connection the a
 [dependencies]
 # External dependencies (sorted)
 # No features: the application picks the SQLite build it links.
-rusqlite = "0.35"
+rusqlite = "0.41"
 
 [dev-dependencies]
 # External dependencies (sorted)
-rusqlite = { version = "0.35", features = ["bundled-sqlcipher-vendored-openssl"] }
+rusqlite = { version = "0.41", features = ["bundled-sqlcipher-vendored-openssl"] }
 tempfile = "3"
