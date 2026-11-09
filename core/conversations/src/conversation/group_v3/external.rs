@@ -1,4 +1,5 @@
-//! Epoch beacons on the wire, after [draft-mahy-mls-private-external].
+//! The external frames on the wire: epoch beacons and sealed messages, after
+//! [draft-mahy-mls-private-external].
 //!
 //! Each member derives a per-epoch HPKE keypair from the MLS exporter and
 //! publishes the public half, signed with its leaf key. A client that can no
@@ -13,6 +14,7 @@ use openmls_traits::types::{Ciphersuite, HpkeKeyPair, SignatureScheme};
 use prost::bytes::Bytes;
 use prost::{Message, Oneof};
 
+use super::sealed::{MAX_SEALED_LEN, SealedMessage};
 use crate::conversation::mls_utils::EpochFingerprint;
 use crate::inbox_v2::{CIPHER_SUITE, HPKE_PUBLIC_KEY_LEN, check_hpke_public_key};
 
@@ -20,9 +22,9 @@ const EXPORTER_LABEL: &str = "logos-chat private external encryption v1";
 const BEACON_SIG_LABEL: &[u8] = b"logos-chat/beacon-signature/v1";
 
 /// An [`EpochFingerprint`] in hex.
-const EPOCH_ID_LEN: usize = 14;
+pub(super) const EPOCH_ID_LEN: usize = 14;
 
-const ED25519_SIGNATURE_LEN: usize = 64;
+pub(super) const ED25519_SIGNATURE_LEN: usize = 64;
 
 // The length above is Ed25519-specific; fail the build if the ciphersuite moves.
 const _: () = assert!(matches!(
@@ -42,8 +44,14 @@ const MAX_BEACON_LEN: usize = (1 + 10) // epoch
     + (1 + 1 + EPOCH_ID_LEN) // epoch id
     + (1 + 1 + ED25519_SIGNATURE_LEN); // signature
 
-/// [`GroupV3External`] adds a tag and a length prefix around the beacon.
-const MAX_FRAME_LEN: usize = 1 + 2 + MAX_BEACON_LEN;
+/// [`GroupV3External`] adds a tag and a length prefix around its largest kind.
+const MAX_FRAME_LEN: usize = 1
+    + 2
+    + if MAX_BEACON_LEN > MAX_SEALED_LEN {
+        MAX_BEACON_LEN
+    } else {
+        MAX_SEALED_LEN
+    };
 
 /// Published by every member on entering an epoch.
 #[derive(Clone, PartialEq, Message)]
@@ -93,7 +101,7 @@ fn tbs(beacon: &EpochBeacon, convo_id: &str) -> Vec<u8> {
 /// A frame on the delivery address that is not an MLS message.
 #[derive(Clone, PartialEq, Message)]
 pub struct GroupV3External {
-    #[prost(oneof = "GroupV3ExternalKind", tags = "1")]
+    #[prost(oneof = "GroupV3ExternalKind", tags = "1, 2")]
     pub kind: Option<GroupV3ExternalKind>,
 }
 
@@ -101,12 +109,20 @@ pub struct GroupV3External {
 pub enum GroupV3ExternalKind {
     #[prost(message, tag = "1")]
     Beacon(EpochBeacon),
+    #[prost(message, tag = "2")]
+    Sealed(SealedMessage),
 }
 
 impl GroupV3External {
     pub fn beacon(beacon: EpochBeacon) -> Self {
         Self {
             kind: Some(GroupV3ExternalKind::Beacon(beacon)),
+        }
+    }
+
+    pub fn sealed(msg: SealedMessage) -> Self {
+        Self {
+            kind: Some(GroupV3ExternalKind::Sealed(msg)),
         }
     }
 }
@@ -211,20 +227,31 @@ pub fn admit(beacon: EpochBeacon, ours: Ciphersuite) -> Option<Admitted> {
     let well_formed = beacon.ciphersuite == u16::from(ours) as u32
         // RUSTSEC-2026-0331: a short X-Wing key panics in libcrux-kem.
         && check_hpke_public_key(&beacon.external_hpke_pub).is_ok()
-        && beacon.epoch_id.len() == EPOCH_ID_LEN
-        && beacon.epoch_id.bytes().all(|b| b.is_ascii_hexdigit())
+        && is_epoch_id(&beacon.epoch_id)
         && (beacon.signature.is_empty() || beacon.signature.len() == ED25519_SIGNATURE_LEN);
 
     well_formed.then_some(Admitted(beacon))
 }
 
-/// Decode and admit a beacon frame.
-pub fn admit_frame(bytes: &[u8], ours: Ciphersuite) -> Option<Admitted> {
+pub(super) fn is_epoch_id(id: &str) -> bool {
+    id.len() == EPOCH_ID_LEN && id.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// An external frame that passed the shape checks.
+#[derive(Debug)]
+pub enum Inbound {
+    Beacon(Admitted),
+    Sealed(SealedMessage),
+}
+
+/// Decode and admit an external frame.
+pub fn admit_frame(bytes: &[u8], ours: Ciphersuite) -> Option<Inbound> {
     if bytes.len() > MAX_FRAME_LEN {
         return None;
     }
     match GroupV3External::decode(bytes).ok()?.kind? {
-        GroupV3ExternalKind::Beacon(beacon) => admit(beacon, ours),
+        GroupV3ExternalKind::Beacon(beacon) => admit(beacon, ours).map(Inbound::Beacon),
+        GroupV3ExternalKind::Sealed(msg) => msg.is_well_formed().then_some(Inbound::Sealed(msg)),
     }
 }
 
@@ -247,6 +274,10 @@ pub enum ExternalError {
     Derive(String),
     #[error("could not sign a beacon: {0}")]
     Sign(String),
+    #[error("could not seal a private external message: {0}")]
+    Seal(String),
+    #[error("could not open a private external message: {0}")]
+    Open(String),
 }
 
 #[cfg(test)]

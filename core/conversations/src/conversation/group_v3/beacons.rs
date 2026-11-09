@@ -1,18 +1,18 @@
 //! What a member does with beacons: publish its own once per epoch, and keep
 //! the ones it hears.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::time::Duration;
 
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use openmls::group::MlsGroup;
 use openmls_traits::crypto::OpenMlsCrypto;
-use openmls_traits::types::Ciphersuite;
+use openmls_traits::types::{Ciphersuite, HpkePrivateKey};
 use prost::Message as _;
-use tracing::{debug, warn};
+use tracing::warn;
 
-use super::external::{self, Admitted, GroupV3External};
+use super::external::{self, Admitted, EpochBeacon, GroupV3External};
 use super::payloads::to_external_envelope;
 use crate::service_context::ServiceContext;
 use crate::{AddressedEnvelope, DeliveryService, ExternalServices, WakeupService};
@@ -23,12 +23,21 @@ const BEACONS_RETAINED: usize = 8;
 /// Digests of verified frames remembered, so a repeat skips verification.
 const VERIFIED_RETAINED: usize = 64;
 
+/// Epochs whose state id we remember: never to seal to a state we were in,
+/// and to tell an asker that is merely behind.
+const STATES_RETAINED: usize = 16;
+
 const FIRST_RETRY: Duration = Duration::from_secs(1);
 const LAST_RETRY: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Default)]
 pub struct Beacons {
     store: BeaconStore,
+    /// Our external private key, for the current state only: a request sealed
+    /// to an earlier state may be a replay of one already answered.
+    key: Option<HeldKey>,
+    /// The states we were in, newest last.
+    states: VecDeque<(u64, String)>,
     /// Epoch used to prepare the cached beacon and roster.
     epoch: Option<u64>,
     /// Leaf signature keys of this epoch's roster. Taken once per epoch:
@@ -66,6 +75,7 @@ impl Beacons {
         self.verified.clear();
         self.aad.clear();
         self.outgoing = None;
+        self.key = None;
         self.retry_in = FIRST_RETRY;
 
         if let Err(e) = self.prepare(group, convo_id, cx) {
@@ -84,6 +94,7 @@ impl Beacons {
         let keys = external::derive_external_keys(group, &cx.mls_provider)?;
         let mut beacon = external::beacon_for_epoch(group, keys.public.into());
         self.aad = beacon.encode_to_vec();
+        self.hold(beacon.epoch, &beacon.epoch_id, keys.private);
 
         beacon.signature = external::sign_beacon(&beacon, convo_id, &cx.mls_identity)?;
         let frame = GroupV3External::beacon(beacon.clone()).encode_to_vec();
@@ -122,25 +133,63 @@ impl Beacons {
         self.deliver(convo_id, cx);
     }
 
+    fn hold(&mut self, epoch: u64, epoch_id: &str, private: HpkePrivateKey) {
+        self.states.retain(|(e, _)| *e != epoch);
+        if self.states.len() == STATES_RETAINED {
+            self.states.pop_front();
+        }
+        self.states.push_back((epoch, epoch_id.to_string()));
+        self.key = Some(HeldKey {
+            epoch,
+            epoch_id: epoch_id.to_string(),
+            private,
+        });
+    }
+
+    /// Our external key, if `epoch` and `epoch_id` name the state we are in.
+    pub fn key_for(&self, epoch: u64, epoch_id: &str) -> Option<&HpkePrivateKey> {
+        self.key
+            .as_ref()
+            .filter(|k| k.epoch == epoch && k.epoch_id == epoch_id)
+            .map(|k| &k.private)
+    }
+
+    /// The state we were in at `epoch`, if we remember it.
+    pub fn our_epoch_id(&self, epoch: u64) -> Option<&str> {
+        self.states
+            .iter()
+            .find(|(e, _)| *e == epoch)
+            .map(|(_, id)| id.as_str())
+    }
+
+    /// One beacon per state we were never in, verified first.
+    pub fn seal_targets(&self) -> impl Iterator<Item = &EpochBeacon> {
+        let mut seen = HashSet::new();
+        self.store
+            .verified
+            .iter()
+            .chain(&self.store.unverified)
+            .map(Admitted::beacon)
+            .filter(move |b| {
+                self.our_epoch_id(b.epoch) != Some(b.epoch_id.as_str())
+                    && seen.insert((b.epoch, b.epoch_id.as_str()))
+            })
+    }
+
     /// Our own beacon, for a message's AAD. Empty if there is none this epoch.
     pub fn aad(&self) -> &[u8] {
         &self.aad
     }
 
-    /// A beacon frame heard on the wire. Kept even if it fails to verify; see
-    /// [`BeaconStore`].
+    /// A beacon frame heard on the wire, `bytes` being the whole frame. Kept
+    /// even if it fails to verify; see [`BeaconStore`].
     pub fn receive_frame(
         &mut self,
         crypto: &impl OpenMlsCrypto,
         convo_id: &str,
-        ours: Ciphersuite,
+        beacon: Admitted,
         bytes: &[u8],
     ) {
-        let Some(beacon) = external::admit_frame(bytes, ours) else {
-            debug!(convo = convo_id, "refused a malformed beacon frame");
-            return;
-        };
-
         let digest: [u8; 32] = Blake2b::<U32>::digest(bytes).into();
         let cached = self.verified.contains(&digest);
         let verified =
@@ -174,7 +223,8 @@ struct BeaconStore {
 }
 
 impl BeaconStore {
-    /// Keep the beacon, newest epoch first, one per state.
+    /// One per state. Unverified beacons are kept in arrival order, so
+    /// forgeries at a huge epoch can't evict real ones.
     fn remember(&mut self, beacon: Admitted, verified: bool) {
         let bucket = if verified {
             &mut self.verified
@@ -183,10 +233,24 @@ impl BeaconStore {
         };
 
         bucket.retain(|held| !same_state(held, &beacon));
-        bucket.push(beacon);
-        bucket.sort_by_key(|b| std::cmp::Reverse(b.beacon().epoch));
-        bucket.truncate(BEACONS_RETAINED);
+        if verified {
+            bucket.push(beacon);
+            bucket.sort_by_key(|b| std::cmp::Reverse(b.beacon().epoch));
+            bucket.truncate(BEACONS_RETAINED);
+        } else {
+            if bucket.len() == BEACONS_RETAINED {
+                bucket.remove(0);
+            }
+            bucket.push(beacon);
+        }
     }
+}
+
+#[derive(Debug)]
+struct HeldKey {
+    epoch: u64,
+    epoch_id: String,
+    private: HpkePrivateKey,
 }
 
 /// Two branches of a fork share an epoch number, so compare the id too.
@@ -202,6 +266,14 @@ mod tests {
     };
     use crate::inbox_v2::CIPHER_SUITE;
     use openmls_traits::OpenMlsProvider as _;
+
+    fn receive(beacons: &mut Beacons, p: &impl OpenMlsCrypto, bytes: &[u8]) {
+        let Some(external::Inbound::Beacon(beacon)) = external::admit_frame(bytes, CIPHER_SUITE)
+        else {
+            panic!("not a beacon frame");
+        };
+        beacons.receive_frame(p, "convo-a", beacon, bytes);
+    }
 
     fn admitted(epoch: u64, n: u64) -> Admitted {
         external::admit(beacon(epoch, &id(n)), CIPHER_SUITE).expect("well formed")
@@ -219,12 +291,30 @@ mod tests {
             ..Default::default()
         };
 
-        beacons.receive_frame(p.crypto(), "convo-a", CIPHER_SUITE, &bytes);
+        receive(&mut beacons, p.crypto(), &bytes);
         beacons.roster_keys.clear();
-        beacons.receive_frame(p.crypto(), "convo-a", CIPHER_SUITE, &bytes);
+        receive(&mut beacons, p.crypto(), &bytes);
 
         assert_eq!(beacons.store.verified.len(), 1);
         assert!(beacons.store.unverified.is_empty());
+    }
+
+    #[test]
+    fn only_the_current_state_has_a_key() {
+        let mut beacons = Beacons::default();
+        for epoch in 0..STATES_RETAINED as u64 + 1 {
+            beacons.hold(epoch, &id(epoch), vec![epoch as u8; 32].into());
+        }
+        let last = STATES_RETAINED as u64;
+
+        assert!(beacons.key_for(last, &id(last)).is_some());
+        assert!(
+            beacons.key_for(last - 1, &id(last - 1)).is_none(),
+            "an earlier state"
+        );
+        assert!(beacons.key_for(last, &id(99)).is_none(), "another branch");
+        assert_eq!(beacons.our_epoch_id(5), Some(id(5).as_str()));
+        assert_eq!(beacons.our_epoch_id(0), None, "oldest state forgotten");
     }
 
     #[test]
@@ -238,7 +328,7 @@ mod tests {
 
         for epoch in 0..VERIFIED_RETAINED as u64 + 5 {
             let bytes = frame(&signed(&p, beacon(epoch, &id(epoch)), &private));
-            beacons.receive_frame(p.crypto(), "convo-a", CIPHER_SUITE, &bytes);
+            receive(&mut beacons, p.crypto(), &bytes);
         }
 
         assert_eq!(beacons.verified.len(), VERIFIED_RETAINED);
@@ -275,6 +365,20 @@ mod tests {
 
         assert_eq!(store.verified.len(), 1);
         assert_eq!(store.verified[0].beacon().epoch_id, id(7));
+        assert_eq!(store.unverified.len(), BEACONS_RETAINED);
+    }
+
+    /// Anyone can claim any epoch, so a forged huge epoch must not pin the
+    /// unverified bucket.
+    #[test]
+    fn forgeries_at_a_huge_epoch_do_not_pin_the_unverified_bucket() {
+        let mut store = BeaconStore::default();
+        for k in 0..BEACONS_RETAINED as u64 {
+            store.remember(admitted(u64::MAX - k, k), false);
+        }
+        store.remember(admitted(3, 99), false);
+
+        assert!(store.unverified.iter().any(|b| b.beacon().epoch == 3));
         assert_eq!(store.unverified.len(), BEACONS_RETAINED);
     }
 
