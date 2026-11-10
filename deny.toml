@@ -22,9 +22,14 @@ ignore = [
     "RUSTSEC-2026-0330", # libcrux-kem — encapsulate_derand, never called
     "RUSTSEC-2026-0331", # libcrux-kem — reachable: short init_key panics
     "RUSTSEC-2024-0436", # paste, unmaintained
+    "RUSTSEC-2026-0441", # pin-utils, unmaintained; wasm-only, via wasmtimer under alloy
     "RUSTSEC-2026-0173", # proc-macro-error2, unmaintained
     "RUSTSEC-2026-0387", # crypto-bigint 0.5 via alloy (GroupV2 + de-mls); patched 0.7 needs alloy on k256 0.14.
 ]
+# RUSTSEC-2026-0459 (SQLite WAL uninitialized memory) clears by version range,
+# but libsqlite3-sys 0.39's bundled-sqlcipher build pins sqlcipher-src
+# =419.0.6, which still bundles SQLite 3.53.4. The fix is in SQLite 3.54.
+# Revisit when libsqlite3-sys depends on sqlcipher-src >= 420.
 
 [licenses]
 version = 2
@@ -45,6 +50,13 @@ allow = [
     "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
+
+# sqlcipher-src is the bundled SQLCipher source behind rusqlite's
+# bundled-sqlcipher feature. Its license field names the SQLite blessing
+# (public domain) and WTFPL alongside MIT and BSD-3-Clause.
+[[licenses.exceptions]]
+crate = "sqlcipher-src"
+allow = ["blessing", "WTFPL"]
 
 # chat-proto ships no license field yet; treat it as the workspace license.
 [[licenses.clarify]]
