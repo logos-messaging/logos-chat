@@ -285,3 +285,38 @@ fn a_welcome_from_outside_the_chosen_branch_is_refused() {
         .unwrap();
     h.process_until(|h| h.client(1).check(&convo, b"welcome back"));
 }
+
+/// Raya (1) misses 17 of Saro's (0) commits and then hears the 18th with its
+/// beacon. Saro still knows the state it held at her epoch, so she is behind,
+/// not forked.
+#[test]
+fn a_member_far_behind_is_not_readded() {
+    let mut h = TestHarness::<20>::new(|_, _| {});
+    let raya = [h.client_mut(1).account()];
+    let convo = h
+        .client_mut(0)
+        .create_group_convo_v3(&raya, "", "")
+        .unwrap();
+    h.process_until(|h| h.client_mut(1).convo_count() == 1);
+    // The commit Raya can't apply.
+    h.tolerate_inbound_errors();
+    for i in 2..20 {
+        h.client_mut(1).drop_pending_payloads();
+        let joiner = [h.client_mut(i).account()];
+        h.client_mut(0)
+            .group_add_participants(&convo, &joiner)
+            .unwrap();
+        if i < 19 {
+            h.client_mut(1).drop_pending_payloads();
+        }
+        h.process(Duration::from_secs(1));
+    }
+
+    let mut wire = h.client_mut(0).ds().new_consumer();
+    wire.subscribe(&group_v3_wire::delivery_address(&convo))
+        .expect("subscribe");
+    assert_eq!(h.client_mut(1).group_request_readd(&convo).unwrap(), 1);
+    h.process(Duration::from_secs(2));
+
+    assert_eq!(commits(&drain(&mut wire)), 0);
+}

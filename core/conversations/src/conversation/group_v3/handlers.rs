@@ -1,7 +1,7 @@
 use openmls::framing::{ApplicationMessage, ProtocolMessage};
 use openmls::prelude::{
-    LeafNodeIndex, Member, ProcessMessageError, ProcessedMessage, ProcessedMessageContent, Sender,
-    StagedCommit, ValidationError,
+    ContentType, LeafNodeIndex, Member, ProcessMessageError, ProcessedMessage,
+    ProcessedMessageContent, Sender, StagedCommit, ValidationError,
 };
 use prost::Message as _;
 use tracing::{debug, info};
@@ -26,6 +26,8 @@ impl GroupV3Convo {
             return Ok(self.default_outcome());
         }
 
+        let epoch = protocol_message.epoch().as_u64();
+        let is_commit = protocol_message.content_type() == ContentType::Commit;
         let processed = match self
             .mls_group
             .process_message(&cx.mls_provider, protocol_message)
@@ -35,7 +37,13 @@ impl GroupV3Convo {
                 debug!(convo = %self.convo_id, "dropping own message");
                 return Ok(self.default_outcome());
             }
-            Err(e) => return Err(ChatError::generic(e)),
+            Err(e) => {
+                // On the branch that made it we would hold this epoch and it would apply.
+                if is_commit && epoch == self.mls_group.epoch().as_u64() {
+                    self.sync.suspect(epoch);
+                }
+                return Err(ChatError::generic(e));
+            }
         };
 
         self.handle_mls_msg(cx, processed)

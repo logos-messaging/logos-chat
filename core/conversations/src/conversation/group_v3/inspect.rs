@@ -10,10 +10,9 @@ use prost::Message as _;
 use super::external::{EpochBeacon, GroupV3External, GroupV3ExternalKind, verify_beacon};
 use super::payloads::{GroupV3Payload, to_external_envelope};
 use super::sealed::{self, ReAddRequest, SealedKind, SealedPayload};
-use crate::AddressedEnvelope;
-use crate::SignerKey;
-use crate::inbox_v2::MlsEphemeralPqProvider;
+use crate::inbox_v2::{CIPHER_SUITE, HPKE_PUBLIC_KEY_LEN, MlsEphemeralPqProvider};
 use crate::proto::EnvelopeV1;
+use crate::{AddressedEnvelope, SignerKey};
 
 /// The address a GroupV3 conversation listens on.
 pub fn delivery_address(convo_id: &str) -> String {
@@ -118,4 +117,36 @@ pub fn unsigned_readd(
         convo_id,
         GroupV3External::sealed(msg).encode_to_vec(),
     ))
+}
+
+/// A well-formed beacon frame for `convo_id` that no member signed.
+pub fn unsigned_beacon(convo_id: &str, epoch: u64, epoch_id: &str) -> AddressedEnvelope {
+    let beacon = EpochBeacon {
+        epoch,
+        ciphersuite: u16::from(CIPHER_SUITE) as u32,
+        external_hpke_pub: vec![9; HPKE_PUBLIC_KEY_LEN].into(),
+        epoch_id: epoch_id.into(),
+        signature: vec![0; 64].into(),
+    };
+    to_external_envelope(convo_id, GroupV3External::beacon(beacon).encode_to_vec())
+}
+
+/// A "commit" for `epoch` built from cleartext alone, as an outsider could.
+pub fn junk_commit(convo_id: &str, epoch: u64) -> AddressedEnvelope {
+    let group_id = hex::decode(convo_id).expect("hex convo id");
+    let mut mls = vec![0, 1, 0, 2]; // mls10, private message
+    mls.push(group_id.len() as u8);
+    mls.extend(group_id);
+    mls.extend(epoch.to_be_bytes());
+    mls.push(3); // commit
+    mls.extend([0, 4, 1, 2, 3, 4, 4, 5, 6, 7, 8]); // aad, sender data, ciphertext
+    let payload = GroupV3Payload {
+        encrypted_frame: mls.into(),
+        ..Default::default()
+    };
+    AddressedEnvelope::with_payload(
+        delivery_address(convo_id),
+        convo_id.to_string(),
+        payload.encode_to_vec(),
+    )
 }
