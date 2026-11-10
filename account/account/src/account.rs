@@ -63,6 +63,15 @@ pub struct AccountUpdate<'a, AP> {
     entries: Vec<AccountEntry>,
 }
 
+impl<AP: AccountProvider + AccountPublisher> std::fmt::Debug for AccountUpdate<'_, AP> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccountUpdate")
+            .field("account", &self.account.addr())
+            .field("entries", &self.entries)
+            .finish()
+    }
+}
+
 impl<AP: AccountProvider + AccountPublisher> AccountUpdate<'_, AP> {
     /// Append `entry`, built anywhere — the extension point for other crates'
     /// context specifications.
