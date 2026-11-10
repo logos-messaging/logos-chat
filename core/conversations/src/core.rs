@@ -1,7 +1,7 @@
 use crate::causal_history::{CausalHistoryStore, DeliveryAck, MissingMessage};
 use crate::conversation::{
     ConversationIdRef, DirectV1Convo, GroupV1Convo, GroupV2Convo, GroupV3Convo, Identified,
-    MessageId,
+    MessageId, SyncState,
 };
 use crate::identity::{AuthenticatedSigner, ParticipantId, Signer, SignerKey, SignerRef};
 use crate::service_context::{ExternalServices, ServiceContext};
@@ -369,6 +369,20 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
             .into_iter()
             .filter_map(|member| member.require_valid(auth))
             .collect())
+    }
+
+    /// Whether this member's group state still agrees with its peers'. A direct
+    /// conversation is always `Unknown`.
+    pub fn group_sync_state(&self, convo_id: &str) -> Result<SyncState, ChatError> {
+        let convo = self
+            .cached_convos
+            .get(convo_id)
+            .ok_or_else(|| ChatError::NoConvo(convo_id.to_string()))?;
+
+        Ok(match convo {
+            ConvoTypeOwned::Group(group_convo) => group_convo.sync_state(),
+            ConvoTypeOwned::Direct(_) => SyncState::Unknown,
+        })
     }
 
     /// Invites sent here whose commit has not landed. A direct conversation has

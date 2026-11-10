@@ -140,7 +140,7 @@ impl GroupV3Convo {
         cx: &mut ServiceContext<S>,
         next_answerer: bool,
     ) -> Result<usize, ChatError> {
-        let Some((to, vouchers)) = self.beacons.seal_target() else {
+        let Some((to, vouchers)) = self.beacons.seal_target(&self.sync.log) else {
             return Ok(0);
         };
         let own = self
@@ -234,7 +234,7 @@ impl GroupV3Convo {
             own: self.mls_group.own_leaf_index(),
             epoch: self.mls_group.epoch().as_u64(),
             committer: self.committer,
-            ours_at: self.beacons.our_epoch_id(req.epoch),
+            ours_at: self.sync.log.at(req.epoch),
             served: &self.served_readds,
             beacons: &self.beacons,
         };

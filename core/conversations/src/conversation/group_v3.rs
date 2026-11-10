@@ -14,6 +14,7 @@ pub mod inspect;
 mod payloads;
 mod readd;
 mod sealed;
+mod sync_state;
 
 use std::collections::VecDeque;
 
@@ -39,10 +40,12 @@ use crate::{
     IdentityProvider, SignerKey,
 };
 
-use super::mls_utils::{fetch_key_packages, member_diff, unique};
+use super::mls_utils::{EpochFingerprint, fetch_key_packages, member_diff, unique};
 
 use self::beacons::Beacons;
 use self::payloads::{GroupV3Payload, frame_id, to_envelope};
+pub use self::sync_state::SyncState;
+use self::sync_state::SyncTracker;
 
 // Type Aliases
 type Frame = payloads::GroupV3Frame;
@@ -62,6 +65,7 @@ pub struct GroupV3Convo {
     committer: Option<LeafNodeIndex>,
     /// Our last re-add request's attempt; it picks the answerer.
     readd_attempt: u32,
+    sync: SyncTracker,
 }
 
 impl GroupV3Convo {
@@ -81,6 +85,7 @@ impl GroupV3Convo {
             beacons: Beacons::default(),
             served_readds: VecDeque::new(),
             readd_attempt: 0,
+            sync: SyncTracker::default(),
         };
 
         convo.init(cx)?;
@@ -114,6 +119,7 @@ impl GroupV3Convo {
             served_readds: VecDeque::new(),
             committer: Some(committer),
             readd_attempt: 0,
+            sync: SyncTracker::default(),
         };
 
         convo.init(cx)?;
@@ -280,8 +286,25 @@ impl GroupV3Convo {
 impl GroupV3Convo {
     /// Call after merging any commit, ours or a peer's.
     fn enter_epoch<S: ExternalServices>(&mut self, cx: &mut ServiceContext<S>) {
+        let epoch = self.mls_group.epoch().as_u64();
+        self.sync
+            .enter_epoch(epoch, EpochFingerprint::from(&self.mls_group).into_string());
         self.beacons
             .enter_epoch(&self.mls_group, &self.convo_id, cx);
+    }
+
+    /// A verified peer beacon: the only evidence that concludes or clears a fork.
+    fn observe_beacon(&mut self, peer: external::Branch) {
+        let own_epoch = self.mls_group.epoch().as_u64();
+        if self.sync.observe(&self.beacons, own_epoch, peer) {
+            self.note_fork();
+        }
+    }
+
+    /// We became `Forked`, or our side of the fork changed. Detection only:
+    /// nothing here or elsewhere triggers a re-add.
+    fn note_fork(&self) {
+        warn!(convo = %self.convo_id, state = ?self.sync.state(), "fork detected");
     }
 }
 
@@ -343,6 +366,10 @@ where
     ) -> Result<(), ChatError> {
         GroupV3Convo::force_readd(self, cx, signer)
     }
+
+    fn sync_state(&self) -> SyncState {
+        self.sync.state().clone()
+    }
 }
 
 impl<S> Convo<S> for GroupV3Convo
@@ -371,8 +398,14 @@ where
             return match external::admit_frame(&payload.external, ours) {
                 Some(external::Inbound::Beacon(beacon)) => {
                     let crypto = cx.mls_provider.crypto();
-                    self.beacons
-                        .receive_frame(crypto, &self.convo_id, beacon, &payload.external);
+                    if let Some(branch) = self.beacons.receive_frame(
+                        crypto,
+                        &self.convo_id,
+                        beacon,
+                        &payload.external,
+                    ) {
+                        self.observe_beacon(branch);
+                    }
                     Ok(self.default_outcome())
                 }
                 Some(external::Inbound::Sealed(msg)) => self.receive_sealed(cx, msg),

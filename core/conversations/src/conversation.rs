@@ -16,9 +16,9 @@ use crate::utils::{blake2b_hex, hash_size};
 pub use direct_v1::DirectV1Convo;
 pub use group_v1::GroupV1Convo;
 pub use group_v2::{GroupV2Clock, GroupV2Convo, GroupV2Frame, GroupV2Payload};
-pub use group_v3::GroupV3Convo;
 #[cfg(any(test, feature = "test-support"))]
 pub use group_v3::inspect as group_v3_wire;
+pub use group_v3::{GroupV3Convo, SyncState};
 
 pub type ConversationId = String;
 pub type ConversationIdRef<'a> = &'a str;
@@ -131,6 +131,11 @@ pub(crate) trait GroupConvo<S: ExternalServices>: Convo<S> + std::fmt::Debug + S
             self.id().into(),
             "Re-add".into(),
         ))
+    }
+
+    /// Only GroupV3 detects forks.
+    fn sync_state(&self) -> SyncState {
+        SyncState::Unknown
     }
 }
 

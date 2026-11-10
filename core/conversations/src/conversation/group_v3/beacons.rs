@@ -18,15 +18,12 @@ use tracing::warn;
 use super::external::{self, Admitted, Branch, EpochBeacon, GroupV3External};
 use super::payloads::to_external_envelope;
 use super::sealed::{EVIDENCE_BRANCHES, EVIDENCE_SIGNATURES, Vouch, Vouches};
+use super::sync_state::FingerprintLog;
 use crate::service_context::ServiceContext;
 use crate::{AddressedEnvelope, DeliveryService, ExternalServices, WakeupService};
 
 /// Digests of verified frames remembered, so a repeat skips verification.
 const VERIFIED_RETAINED: usize = 64;
-
-/// Epochs whose state id we remember: never to seal to a state we were in,
-/// and to tell an asker that is merely behind.
-const STATES_RETAINED: usize = 16;
 
 /// Epochs each signer's vouches are kept for, and branches kept per epoch.
 const SIGNED_EPOCHS_RETAINED: usize = 64;
@@ -41,8 +38,6 @@ pub struct Beacons {
     /// Our external private key, for the current state only: a request sealed
     /// to an earlier state may be a replay of one already answered.
     key: Option<HeldKey>,
-    /// The states we were in, newest last.
-    states: VecDeque<(u64, String)>,
     /// Epoch used to prepare the cached beacon and roster.
     epoch: Option<u64>,
     /// Leaf signature keys of this epoch's roster. Taken once per epoch:
@@ -56,6 +51,8 @@ pub struct Beacons {
     aad: Vec<u8>,
     /// Our own signed beacon frame, until it is delivered.
     outgoing: Option<AddressedEnvelope>,
+    /// Digest of our own signed frame, to tell it apart when it comes back.
+    own: [u8; 32],
     retry_in: Duration,
     /// A retry wakeup is queued. Only scheduling sets it and only a wakeup
     /// clears it: an epoch change or a delivery leaves the wakeup queued.
@@ -106,6 +103,7 @@ impl Beacons {
 
         beacon.signature = external::sign_beacon(&beacon, convo_id, &cx.mls_identity)?;
         let frame = GroupV3External::beacon(beacon.clone()).encode_to_vec();
+        self.own = Blake2b::<U32>::digest(&frame).into();
         self.outgoing = Some(to_external_envelope(convo_id, frame));
 
         // We count among our own branch's signers.
@@ -143,11 +141,6 @@ impl Beacons {
     }
 
     fn hold(&mut self, epoch: u64, epoch_id: &str, private: HpkePrivateKey) {
-        self.states.retain(|(e, _)| *e != epoch);
-        if self.states.len() == STATES_RETAINED {
-            self.states.pop_front();
-        }
-        self.states.push_back((epoch, epoch_id.to_string()));
         self.key = Some(HeldKey {
             epoch,
             epoch_id: epoch_id.to_string(),
@@ -163,25 +156,17 @@ impl Beacons {
             .map(|k| &k.private)
     }
 
-    /// The state we were in at `epoch`, if we remember it.
-    pub fn our_epoch_id(&self, epoch: u64) -> Option<&str> {
-        self.states
-            .iter()
-            .find(|(e, _)| *e == epoch)
-            .map(|(_, id)| id.as_str())
-    }
-
     /// The most-signed head of a branch we were never in, with the key its
     /// signers vouched for, and those signers. A state stops being a head once
     /// one of its signers vouches at a later epoch. Signers choose the id, so
-    /// a tie is no target.
-    pub fn seal_target(&self) -> Option<(EpochBeacon, Vec<Vec<u8>>)> {
+    /// a tie is no target. `log` names the states we held.
+    pub fn seal_target(&self, log: &FingerprintLog) -> Option<(EpochBeacon, Vec<Vec<u8>>)> {
         let mut best: Option<Candidate> = None;
         let mut tied = false;
         for &epoch in self.store.signers.keys() {
             let tally = Tally::of(self.heard(epoch));
             for &id in tally.0.keys() {
-                if self.our_epoch_id(epoch) == Some(id) || self.superseded(epoch, id) {
+                if log.at(epoch) == Some(id) || self.superseded(epoch, id) {
                     continue;
                 }
                 let Some((key, by)) = tally.key(id) else {
@@ -207,6 +192,24 @@ impl Beacons {
         Some((beacon, vouchers))
     }
 
+    /// Whether every key that signed `branch` has since vouched for a state
+    /// `log` says we held. True once its signers are forgotten.
+    pub fn rejoined(&self, branch: &Branch, log: &FingerprintLog) -> bool {
+        let mut signers = self
+            .heard(branch.epoch)
+            .filter(|(id, ..)| *id == branch.epoch_id)
+            .map(|(.., signer)| signer);
+        signers.all(|signer| {
+            self.store
+                .signers
+                .range((Bound::Excluded(branch.epoch), Bound::Unbounded))
+                .any(|(&later, _)| {
+                    self.heard(later)
+                        .any(|(id, _, s)| s == signer && log.at(later) == Some(id))
+                })
+        })
+    }
+
     fn superseded(&self, epoch: u64, id: &str) -> bool {
         let signers: Vec<_> = self
             .heard(epoch)
@@ -224,16 +227,20 @@ impl Beacons {
         &self.aad
     }
 
-    /// A beacon frame heard on the wire, `bytes` being the whole frame. Kept
-    /// only if a member of our roster signed it.
+    /// A beacon frame heard on the wire, `bytes` being the whole frame. Only a
+    /// beacon signed by a member of our roster is kept: anyone can publish to
+    /// the address. Returns the branch of a verified peer beacon.
     pub fn receive_frame(
         &mut self,
         crypto: &impl OpenMlsCrypto,
         convo_id: &str,
         beacon: Admitted,
         bytes: &[u8],
-    ) {
+    ) -> Option<Branch> {
         let digest: [u8; 32] = Blake2b::<U32>::digest(bytes).into();
+        if digest == self.own {
+            return None;
+        }
         let cached = self.verified.iter().find(|(d, _)| *d == digest);
         let signer = match cached {
             Some((_, signer)) => Some(signer.clone()),
@@ -250,9 +257,12 @@ impl Beacons {
                 signer
             }
         };
-        if let Some(signer) = signer {
-            self.store.vouch(beacon.beacon(), signer);
-        }
+        let signer = signer?;
+        self.store.vouch(beacon.beacon(), signer);
+        Some(Branch {
+            epoch: beacon.beacon().epoch,
+            epoch_id: beacon.beacon().epoch_id.clone(),
+        })
     }
 
     /// Every `(branch id, advertised key, signer)` we verified at `epoch`.
@@ -321,6 +331,16 @@ impl Beacons {
         let tally = Tally::of(self.heard(ours.epoch).chain(shown));
         let (m, n) = (tally.count(&ours.epoch_id), tally.count(&theirs.epoch_id));
         n > 0 && (n > m || (n == m && theirs.epoch_id < ours.epoch_id))
+    }
+
+    /// Whether `theirs` has more signers we heard than `ours`. Unlike `yields`,
+    /// a tie stays a tie: signers choose the id.
+    pub fn outranks(&self, ours: &Branch, theirs: &Branch) -> bool {
+        if ours.epoch != theirs.epoch {
+            return false;
+        }
+        let tally = Tally::of(self.heard(ours.epoch));
+        tally.count(&theirs.epoch_id) > tally.count(&ours.epoch_id)
     }
 
     /// The signed beacons we hold at `epoch`, for a request: our own branch
@@ -487,12 +507,12 @@ mod tests {
     use crate::inbox_v2::{CIPHER_SUITE, MlsEphemeralPqProvider};
     use openmls_traits::OpenMlsProvider as _;
 
-    fn receive(beacons: &mut Beacons, p: &impl OpenMlsCrypto, bytes: &[u8]) {
+    fn receive(beacons: &mut Beacons, p: &impl OpenMlsCrypto, bytes: &[u8]) -> Option<Branch> {
         let Some(external::Inbound::Beacon(beacon)) = external::admit_frame(bytes, CIPHER_SUITE)
         else {
             panic!("not a beacon frame");
         };
-        beacons.receive_frame(p, "convo-a", beacon, bytes);
+        beacons.receive_frame(p, "convo-a", beacon, bytes)
     }
 
     fn admitted(epoch: u64, n: u64) -> Admitted {
@@ -646,9 +666,14 @@ mod tests {
     }
 
     /// We were on branch 9 at epoch 41.
+    fn held_9() -> FingerprintLog {
+        let mut log = FingerprintLog::default();
+        log.record(41, id(9));
+        log
+    }
+
     fn on_branch_9(pairs: &[(u64, u64, u8)]) -> Beacons {
         let mut beacons = Beacons::default();
-        beacons.states.push_back((41, id(9)));
         for &(epoch, n, key) in pairs {
             beacons.store.vouch(admitted(epoch, n).beacon(), vec![key]);
         }
@@ -656,7 +681,7 @@ mod tests {
     }
 
     fn target(beacons: &Beacons) -> Option<(u64, String)> {
-        let (to, _) = beacons.seal_target()?;
+        let (to, _) = beacons.seal_target(&held_9())?;
         Some((to.epoch, to.epoch_id.clone()))
     }
 
@@ -734,7 +759,7 @@ mod tests {
     }
 
     fn sealed_key(beacons: &Beacons) -> Option<u8> {
-        Some(beacons.seal_target()?.0.external_hpke_pub[0])
+        Some(beacons.seal_target(&held_9())?.0.external_hpke_pub[0])
     }
 
     /// A member signs branch 1 with key 7. An outsider copies its epoch and id
@@ -776,7 +801,7 @@ mod tests {
         beacons.store.vouch(keyed(41, 1, 6).beacon(), vec![1]);
         beacons.store.vouch(keyed(41, 1, 7).beacon(), vec![2]);
 
-        assert!(beacons.seal_target().is_none());
+        assert!(beacons.seal_target(&held_9()).is_none());
     }
 
     /// Member 9 vouches for many far-future epochs; member 1's count at 41
@@ -869,10 +894,10 @@ mod tests {
     #[test]
     fn only_the_current_state_has_a_key() {
         let mut beacons = Beacons::default();
-        for epoch in 0..STATES_RETAINED as u64 + 1 {
+        for epoch in 0..3 {
             beacons.hold(epoch, &id(epoch), vec![epoch as u8; 32].into());
         }
-        let last = STATES_RETAINED as u64;
+        let last = 2;
 
         assert!(beacons.key_for(last, &id(last)).is_some());
         assert!(
@@ -880,8 +905,53 @@ mod tests {
             "an earlier state"
         );
         assert!(beacons.key_for(last, &id(99)).is_none(), "another branch");
-        assert_eq!(beacons.our_epoch_id(5), Some(id(5).as_str()));
-        assert_eq!(beacons.our_epoch_id(0), None, "oldest state forgotten");
+    }
+
+    /// We were on branch 9 at 41 and have since moved on 40 epochs: its
+    /// signers are still ours, not a branch to ask.
+    #[test]
+    fn a_state_we_held_long_ago_is_never_a_target() {
+        let mut log = held_9();
+        for epoch in 42..=81 {
+            log.record(epoch, id(epoch));
+        }
+        let beacons = on_branch_9(&[(41, 9, 1), (41, 9, 2)]);
+
+        assert!(beacons.seal_target(&log).is_none());
+    }
+
+    #[test]
+    fn only_a_verified_frame_is_reported() {
+        let p = provider();
+        let (private, public) = leaf_key(&p);
+        let (outsider, _) = leaf_key(&p);
+        let mut beacons = Beacons {
+            roster_keys: vec![public],
+            ..Default::default()
+        };
+
+        let forged = frame(&signed(&p, beacon(41, &id(1)), &outsider));
+        let genuine = frame(&signed(&p, beacon(41, &id(2)), &private));
+
+        assert_eq!(receive(&mut beacons, p.crypto(), &forged), None);
+        assert_eq!(
+            receive(&mut beacons, p.crypto(), &genuine),
+            Some(branch(41, 2))
+        );
+    }
+
+    #[test]
+    fn our_own_echoed_frame_is_not_reported() {
+        let p = provider();
+        let (private, public) = leaf_key(&p);
+        let bytes = frame(&signed(&p, beacon(41, &id(1)), &private));
+        let mut beacons = Beacons {
+            roster_keys: vec![public],
+            own: Blake2b::<U32>::digest(&bytes).into(),
+            ..Default::default()
+        };
+
+        assert_eq!(receive(&mut beacons, p.crypto(), &bytes), None);
     }
 
     #[test]
