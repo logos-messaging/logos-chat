@@ -76,7 +76,7 @@ pub fn group_create_config(name: &str, desc: &str) -> MlsGroupCreateConfig {
         .build()
 }
 
-pub fn mls_join_config() -> MlsGroupJoinConfig {
+pub fn group_join_config() -> MlsGroupJoinConfig {
     MlsGroupJoinConfig::builder()
         .sender_ratchet_configuration(sender_ratchet_config())
         .use_ratchet_tree_extension(true)
@@ -110,7 +110,7 @@ mod tests {
     fn creator_and_joiner_configs_match() {
         assert_eq!(
             group_create_config("", "").join_config(),
-            &mls_join_config()
+            &group_join_config()
         );
     }
 }
