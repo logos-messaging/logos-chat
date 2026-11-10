@@ -15,7 +15,7 @@ fn group_of_saro_and_raya() -> (TestHarness<3>, String) {
 
 /// A consumer of the shared wire that sees every frame published to `convo_id`
 /// from now on.
-fn watch(h: &mut TestHarness<3>, convo_id: &str) -> LocalBroadcaster {
+fn watch<const N: usize>(h: &mut TestHarness<N>, convo_id: &str) -> LocalBroadcaster {
     let mut wire = h.client_mut(0).ds().new_consumer();
     wire.subscribe(&group_v3_wire::delivery_address(convo_id))
         .expect("subscribe");
@@ -325,4 +325,172 @@ fn a_retry_reaches_the_next_member() {
     settle(&mut h);
     h.saro().send_content(&convo, b"welcome back").unwrap();
     h.process_until(|h| h.raya().check(&convo, b"welcome back"));
+}
+
+/// After the fork Raya adds Mira, so her branch is an epoch ahead of Saro's.
+/// Saro's branch has more signers at the fork, so Raya is the one who moves:
+/// asking from ahead must still reach it, and Saro's ask must not.
+#[test]
+fn a_fork_whose_branches_drift_apart_is_repaired() {
+    let mut h = TestHarness::<4>::new(|_, _| {});
+    let raya = [h.raya().account()];
+    let convo = h.saro().create_group_convo_v3(&raya, "", "").unwrap();
+    h.process_until(|h| h.raya().convo_count() == 1);
+    fork(&mut h, &convo);
+    let mira = [h.mira().account()];
+    h.raya().group_add_participants(&convo, &mira).unwrap();
+    settle(&mut h);
+
+    let mut wire = watch(&mut h, &convo);
+    assert_eq!(h.saro().group_request_readd(&convo).unwrap(), 1);
+    h.process(Duration::from_secs(2));
+    assert_eq!(commits(&drain(&mut wire)), 0, "Saro's branch stays");
+
+    assert_eq!(h.raya().group_request_readd(&convo).unwrap(), 1);
+    h.process(Duration::from_secs(2));
+    assert_eq!(commits(&drain(&mut wire)), 1, "exactly one repair");
+
+    settle(&mut h);
+    h.saro().send_content(&convo, b"welcome back").unwrap();
+    h.process_until(|h| h.raya().check(&convo, b"welcome back"));
+}
+
+/// After the fork Saro's branch adds Mira, and Raya's adds two members of its
+/// own. Each side knows only its own joiners: counting what it heard, each
+/// would think itself the stronger and both would repair. Counting what the
+/// asker shows, both see Saro and Pax against Raya, so only Raya moves.
+#[test]
+fn branches_that_grow_after_the_fork_rank_alike() {
+    const SARO: usize = 0;
+    const RAYA: usize = 1;
+    let mut h = TestHarness::<6>::new(|_, _| {});
+    let raya = [h.client(RAYA).account()];
+    let convo = h
+        .client_mut(SARO)
+        .create_group_convo_v3(&raya, "", "")
+        .unwrap();
+    h.process_until(|h| h.client(RAYA).convo_count() == 1);
+    fork(&mut h, &convo);
+    let mira = [h.client(3).account()];
+    let joiners = [h.client(4).account(), h.client(5).account()];
+    h.client_mut(SARO)
+        .group_add_participants(&convo, &mira)
+        .unwrap();
+    h.client_mut(RAYA)
+        .group_add_participants(&convo, &joiners)
+        .unwrap();
+    settle(&mut h);
+
+    let mut wire = watch(&mut h, &convo);
+    assert_eq!(h.client_mut(SARO).group_request_readd(&convo).unwrap(), 1);
+    assert_eq!(h.client_mut(RAYA).group_request_readd(&convo).unwrap(), 1);
+    h.process(Duration::from_secs(2));
+
+    assert_eq!(commits(&drain(&mut wire)), 1, "exactly one repair");
+}
+
+/// Saro, Raya and Pax each add someone in the same epoch: Saro's branch gets
+/// Mira, Pax's gets the fifth client, Raya's stays alone. Both other branches
+/// outrank Raya's, so sealing to each would get her repaired twice.
+fn three_branches() -> (TestHarness<5>, String) {
+    let mut h = TestHarness::<5>::new(|_, _| {});
+    let members = [h.client(1).account(), h.client(2).account()];
+    let convo = h
+        .client_mut(0)
+        .create_group_convo_v3(&members, "", "")
+        .unwrap();
+    h.process_until(|h| h.client(1).convo_count() == 1 && h.client(2).convo_count() == 1);
+
+    let mira = [h.client(3).account()];
+    let fifth = [h.client(4).account()];
+    for i in 0..3 {
+        h.client_mut(i)
+            .ds()
+            .reject_publishes(|e| group_v3_wire::is_commit(&e.data));
+    }
+    h.client_mut(0)
+        .group_add_participants(&convo, &mira)
+        .unwrap();
+    h.client_mut(1)
+        .group_add_participants(&convo, &mira)
+        .unwrap();
+    h.client_mut(2)
+        .group_add_participants(&convo, &fifth)
+        .unwrap();
+    h.tolerate_inbound_errors();
+    // Each branch's commit is finalized before the others are heard, then
+    // Mira's and the fifth client's beacons go out from their joins.
+    settle(&mut h);
+    for i in 0..3 {
+        h.client_mut(i).ds().accept_all_publishes();
+    }
+    settle(&mut h);
+    (h, convo)
+}
+
+#[test]
+fn with_three_branches_exactly_one_repairs() {
+    let (mut h, convo) = three_branches();
+    let mut wire = h.client_mut(0).ds().new_consumer();
+    wire.subscribe(&group_v3_wire::delivery_address(&convo))
+        .expect("subscribe");
+    assert_eq!(h.client_mut(1).group_request_readd(&convo).unwrap(), 1);
+    h.process(Duration::from_secs(2));
+
+    assert_eq!(commits(&drain(&mut wire)), 1, "exactly one repair");
+
+    // Saro's branch (Saro and Mira) has the most signers Raya can verify: the
+    // fifth client isn't in her roster. She rejoins it, and only it.
+    settle(&mut h);
+    h.client_mut(0)
+        .send_content(&convo, b"welcome back")
+        .unwrap();
+    h.process_until(|h| h.client(1).check(&convo, b"welcome back"));
+    h.client_mut(1).send_content(&convo, b"thanks").unwrap();
+    h.process_until(|h| {
+        h.client(0).check(&convo, b"thanks") && h.client(3).check(&convo, b"thanks")
+    });
+    h.process(Duration::from_secs(1));
+    assert!(
+        !h.client(2).check(&convo, b"thanks"),
+        "Pax's branch is another group"
+    );
+}
+
+/// Raya asks Saro's branch, but the member she names misses it. Pax was in
+/// Raya's group before the fork, but didn't vouch for Saro's branch, so his
+/// Welcome to his own branch must not replace her group.
+#[test]
+fn a_welcome_from_outside_the_chosen_branch_is_refused() {
+    const SARO: usize = 0;
+    const MIRA: usize = 3;
+    let (mut h, convo) = three_branches();
+    let named = if h.client(SARO).signer_key().as_bytes() < h.client(MIRA).signer_key().as_bytes() {
+        SARO
+    } else {
+        MIRA
+    };
+    assert_eq!(h.client_mut(1).group_request_readd(&convo).unwrap(), 1);
+    h.client_mut(named).drop_pending_payloads();
+
+    let raya = h.client(1).signer_key();
+    h.client_mut(2).group_force_readd(&convo, &raya).unwrap();
+    settle(&mut h);
+
+    h.client_mut(2)
+        .send_content(&convo, b"wrong group")
+        .unwrap();
+    h.process(Duration::from_secs(2));
+    assert!(
+        !h.client(1).check(&convo, b"wrong group"),
+        "Raya moved to Pax's branch"
+    );
+
+    // Her request still stands, and the named member's answer is accepted.
+    h.client_mut(1).group_request_readd(&convo).unwrap();
+    settle(&mut h);
+    h.client_mut(0)
+        .send_content(&convo, b"welcome back")
+        .unwrap();
+    h.process_until(|h| h.client(1).check(&convo, b"welcome back"));
 }

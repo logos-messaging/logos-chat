@@ -56,16 +56,17 @@ pub(crate) struct ServiceContext<S: ExternalServices> {
     /// create/join. The creator's phase durations reach joiners inside the
     /// welcome's `ConversationSync`.
     pub(crate) demls_config: de_mls::ConversationConfig,
-    /// GroupV3 conversations that asked to be re-added; only these accept a
-    /// replacing Welcome.
+    /// GroupV3 conversations that asked to be re-added, by convo id; only
+    /// these accept a replacing Welcome.
     pub(crate) readd_pending: HashMap<String, ReAddTarget>,
 }
 
-/// What a re-add request was sealed to.
+/// The branch a re-add request was sealed to.
 #[derive(Debug)]
 pub(crate) struct ReAddTarget {
-    /// The oldest epoch it was sealed to; the repair lands after it.
     pub epoch: u64,
+    /// Leaf signature keys of the members who vouched for it.
+    pub vouchers: Vec<Vec<u8>>,
     /// When we stop waiting for the Welcome.
     pub until: Duration,
 }

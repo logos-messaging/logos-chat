@@ -86,6 +86,7 @@ pub fn unsigned_readd(
             epoch_id: epoch_id.into(),
             signature: Default::default(),
             answerer: Default::default(),
+            evidence: Vec::new(),
         })),
     };
     let provider = MlsEphemeralPqProvider::new().ok()?;

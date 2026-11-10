@@ -191,7 +191,8 @@ impl GroupV3Convo {
 const READD_WELCOME_WAIT: Duration = Duration::from_secs(360);
 
 /// A re-add sends a Welcome for a group we hold. Accept it only while we wait
-/// for one, only from a member of that group, and only past the state we asked.
+/// for one, only from a member of that group who vouched for the branch we
+/// asked, and only past that branch's epoch.
 /// Not proof of descent: a member we still list could build a lookalike group.
 /// Read-only, so a Welcome that fails to install leaves the held group and the
 /// pending re-add as they were.
@@ -215,18 +216,24 @@ fn held_group_to_replace<S: ExternalServices>(
             "a Welcome for a re-add we stopped waiting for",
         ));
     }
-    if staged.group_context().epoch().as_u64() <= target.epoch {
-        return Err(ChatError::generic(
-            "a Welcome no later than the state we asked",
-        ));
-    }
+    // Any old member could build a group under this id. Only one who vouched
+    // for the branch we asked could be answering us, and its repair lands on
+    // a later epoch.
     let sender = staged.welcome_sender().map_err(ChatError::generic)?;
-    if !held
-        .members()
-        .any(|m| m.signature_key == sender.signature_key().as_slice())
-    {
+    let sender = sender.signature_key().as_slice();
+    if !held.members().any(|m| m.signature_key == sender) {
         return Err(ChatError::generic(
             "a Welcome for a group we hold, from outside it",
+        ));
+    }
+    if !target.vouchers.iter().any(|v| v == sender) {
+        return Err(ChatError::generic(
+            "a Welcome from a member who did not vouch for the branch we asked",
+        ));
+    }
+    if staged.group_context().epoch().as_u64() <= target.epoch {
+        return Err(ChatError::generic(
+            "a Welcome no later than the branch we asked",
         ));
     }
     Ok(Some(held))

@@ -270,8 +270,10 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         }
     }
 
-    /// Ask a forked group to re-add us. Returns how many requests went out, 0
-    /// if no other branch is known. Repeating it asks the same member.
+    /// Ask a forked group to re-add us. Returns how many requests went out: 0
+    /// when no branch outranks the others, no other member vouched for it, or
+    /// we no longer remember our state at its epoch. Repeating it asks the
+    /// same member.
     pub fn group_request_readd(&mut self, convo_id: &str) -> Result<usize, ChatError> {
         self.request_readd(convo_id, false)
     }
