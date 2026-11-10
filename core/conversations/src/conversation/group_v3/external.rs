@@ -182,28 +182,30 @@ where
         .map_err(|e| ExternalError::Sign(format!("{e:?}")))
 }
 
-/// Whether one of `keys` — the roster's leaf signature keys — signed the beacon.
-pub fn verify_beacon<C, I, K>(crypto: &C, convo_id: &str, beacon: &EpochBeacon, keys: I) -> bool
+/// Which of `keys`, the roster's leaf signature keys, signed the beacon.
+pub fn verify_beacon<C, I, K>(
+    crypto: &C,
+    convo_id: &str,
+    beacon: &EpochBeacon,
+    keys: I,
+) -> Option<K>
 where
     C: OpenMlsCrypto,
     I: IntoIterator<Item = K>,
     K: AsRef<[u8]>,
 {
     if beacon.signature.is_empty() {
-        return false;
+        return None;
     }
     // The publisher picks the scheme, but the key comes from our tree, so a
     // wrong scheme can only fail.
-    let Some(ciphersuite) = u16::try_from(beacon.ciphersuite)
+    let ciphersuite = u16::try_from(beacon.ciphersuite)
         .ok()
-        .and_then(|id| Ciphersuite::try_from(id).ok())
-    else {
-        return false;
-    };
+        .and_then(|id| Ciphersuite::try_from(id).ok())?;
     let scheme = ciphersuite.signature_algorithm();
     let tbs = tbs(beacon, convo_id);
 
-    keys.into_iter().any(|key| {
+    keys.into_iter().find(|key| {
         crypto
             .verify_signature(scheme, &tbs, key.as_ref(), &beacon.signature)
             .is_ok()
@@ -219,6 +221,13 @@ impl Admitted {
     pub fn beacon(&self) -> &EpochBeacon {
         &self.0
     }
+}
+
+/// One state of the group. Branches of a fork share an epoch, so the id too.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Branch {
+    pub epoch: u64,
+    pub epoch_id: String,
 }
 
 /// Shape checks, cheap enough for anything. Every field ends up fixed-size, so
@@ -253,19 +262,6 @@ pub fn admit_frame(bytes: &[u8], ours: Ciphersuite) -> Option<Inbound> {
         GroupV3ExternalKind::Beacon(beacon) => admit(beacon, ours).map(Inbound::Beacon),
         GroupV3ExternalKind::Sealed(msg) => msg.is_well_formed().then_some(Inbound::Sealed(msg)),
     }
-}
-
-/// Decode and admit the beacon in the AAD of a message framed at `epoch`. A
-/// sender at epoch N advertises epoch N's key.
-pub fn admit_aad(aad: &[u8], epoch: u64, ours: Ciphersuite) -> Option<Admitted> {
-    if aad.is_empty() || aad.len() > MAX_BEACON_LEN {
-        return None;
-    }
-    let beacon = EpochBeacon::decode(aad).ok()?;
-    if beacon.epoch != epoch {
-        return None;
-    }
-    admit(beacon, ours)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -352,17 +348,14 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_member_signed_beacon_verifies() {
+    fn a_verified_beacon_names_its_signer() {
         let p = provider();
         let (private, public) = leaf_key(&p);
         let b = signed(&p, beacon(41, &id(1)), &private);
 
-        assert!(verify_beacon(
-            p.crypto(),
-            "convo-a",
-            &b,
-            [public, vec![1; 32]]
-        ));
+        let signer = verify_beacon(p.crypto(), "convo-a", &b, [vec![1; 32], public.clone()]);
+
+        assert_eq!(signer, Some(public));
     }
 
     #[test]
@@ -370,12 +363,7 @@ pub(super) mod tests {
         let p = provider();
         let (_, public) = leaf_key(&p);
 
-        assert!(!verify_beacon(
-            p.crypto(),
-            "convo-a",
-            &beacon(41, &id(1)),
-            [public]
-        ));
+        assert!(verify_beacon(p.crypto(), "convo-a", &beacon(41, &id(1)), [public]).is_none());
     }
 
     #[test]
@@ -385,7 +373,7 @@ pub(super) mod tests {
         let (_, member) = leaf_key(&p);
         let b = signed(&p, beacon(41, &id(2)), &outsider);
 
-        assert!(!verify_beacon(p.crypto(), "convo-a", &b, [member]));
+        assert!(verify_beacon(p.crypto(), "convo-a", &b, [member]).is_none());
     }
 
     #[test]
@@ -407,12 +395,12 @@ pub(super) mod tests {
             let mut tampered = original.clone();
             edit(&mut tampered);
             assert!(
-                !verify_beacon(p.crypto(), "convo-a", &tampered, [&public]),
+                verify_beacon(p.crypto(), "convo-a", &tampered, [&public]).is_none(),
                 "edited {field} still verified"
             );
         }
 
-        assert!(!verify_beacon(p.crypto(), "convo-b", &original, [&public]));
+        assert!(verify_beacon(p.crypto(), "convo-b", &original, [&public]).is_none());
     }
 
     /// A suite id above `u16::MAX` must not truncate onto a real suite. The
@@ -425,7 +413,7 @@ pub(super) mod tests {
         b.ciphersuite |= 0x1_0000;
         let b = signed(&p, b, &private);
 
-        assert!(!verify_beacon(p.crypto(), "convo-a", &b, [public]));
+        assert!(verify_beacon(p.crypto(), "convo-a", &b, [public]).is_none());
         assert!(admit(b, CIPHER_SUITE).is_none());
     }
 
@@ -436,12 +424,12 @@ pub(super) mod tests {
         let unsigned = beacon(41, &id(1));
         let signed = signed(&p, unsigned.clone(), &private);
 
-        assert!(admit_aad(&unsigned.encode_to_vec(), 41, CIPHER_SUITE).is_some());
+        assert!(admit_frame(&frame(&unsigned), CIPHER_SUITE).is_some());
         assert!(admit_frame(&frame(&signed), CIPHER_SUITE).is_some());
     }
 
     #[test]
-    fn a_malformed_beacon_is_refused_on_both_receive_paths() {
+    fn a_malformed_beacon_is_refused() {
         type Edit = fn(&mut EpochBeacon);
         let edits: [(&str, Edit); 6] = [
             ("another ciphersuite", |b| b.ciphersuite = 1),
@@ -459,21 +447,10 @@ pub(super) mod tests {
             let mut b = beacon(41, &id(1));
             edit(&mut b);
             assert!(
-                admit_aad(&b.encode_to_vec(), 41, CIPHER_SUITE).is_none(),
-                "{what} admitted from AAD"
-            );
-            assert!(
                 admit_frame(&frame(&b), CIPHER_SUITE).is_none(),
                 "{what} admitted from a frame"
             );
         }
-    }
-
-    #[test]
-    fn an_aad_beacon_for_another_epoch_is_refused() {
-        let aad = beacon(41, &id(1)).encode_to_vec();
-
-        assert!(admit_aad(&aad, 42, CIPHER_SUITE).is_none());
     }
 
     /// The bound must never refuse a real beacon.
@@ -501,8 +478,6 @@ pub(super) mod tests {
             admit(decoded, CIPHER_SUITE).is_some(),
             "the shape checks alone pass it"
         );
-
-        assert!(admit_aad(&crafted, 41, CIPHER_SUITE).is_none());
 
         let mut frame = Vec::new();
         prost::encoding::encode_key(1, prost::encoding::WireType::LengthDelimited, &mut frame);

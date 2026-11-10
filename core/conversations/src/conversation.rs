@@ -119,6 +119,19 @@ pub(crate) trait GroupConvo<S: ExternalServices>: Convo<S> + std::fmt::Debug + S
             "Re-add".into(),
         ))
     }
+
+    /// Remove and add `signer` in one commit, unasked, as an attacker could.
+    #[cfg(feature = "test-support")]
+    fn force_readd(
+        &mut self,
+        _cx: &mut ServiceContext<S>,
+        _signer: SignerRef,
+    ) -> Result<(), ChatError> {
+        Err(ChatError::UnsupportedFunction(
+            self.id().into(),
+            "Re-add".into(),
+        ))
+    }
 }
 
 pub(crate) trait Identified {

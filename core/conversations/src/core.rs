@@ -20,7 +20,7 @@ use crate::{
     proto::{EnvelopeV1, Message},
 };
 use openmls::group::GroupId;
-use std::collections::{HashMap, HashSet, hash_map::Entry};
+use std::collections::{HashMap, hash_map::Entry};
 use std::fmt::Debug;
 use tracing::{info, instrument};
 
@@ -118,7 +118,7 @@ where
                 wakeup_service,
                 demls_clock: GroupV2Clock::default(),
                 demls_config: GroupV2Config::default(),
-                readd_pending: HashSet::new(),
+                readd_pending: HashMap::new(),
             },
             pq_inbox,
             cached_convos: HashMap::new(),
@@ -277,6 +277,22 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
     /// members asked at once both repair and fork the group again.
     pub fn group_retry_readd(&mut self, convo_id: &str) -> Result<usize, ChatError> {
         self.request_readd(convo_id, true)
+    }
+
+    /// Have this client remove and re-add `signer` unasked, as an attacker in
+    /// the group could.
+    #[cfg(feature = "test-support")]
+    pub fn group_force_readd(
+        &mut self,
+        convo_id: &str,
+        signer: SignerRef,
+    ) -> Result<(), ChatError> {
+        match self.cached_convos.get_mut(convo_id) {
+            Some(ConvoTypeOwned::Group(group_convo)) => {
+                group_convo.force_readd(&mut self.services, signer)
+            }
+            _ => Err(ChatError::NoConvo(convo_id.to_string())),
+        }
     }
 
     fn request_readd(&mut self, convo_id: &str, next_answerer: bool) -> Result<usize, ChatError> {

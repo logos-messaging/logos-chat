@@ -141,18 +141,29 @@ fn held_group_to_replace<S: ExternalServices>(
     else {
         return Ok(None);
     };
-    if !cx.readd_pending.contains(&hex::encode(group_id.as_slice())) {
+    let Some(target) = cx.readd_pending.get(&hex::encode(group_id.as_slice())) else {
         return Err(ChatError::generic(
             "a Welcome for a group we hold, and we did not ask to be re-added",
         ));
-    }
+    };
+    // Any old member could build a group under this id. Only one who vouched
+    // for the branch we asked could be answering us, and its repair lands on
+    // a later epoch.
     let sender = staged.welcome_sender().map_err(ChatError::generic)?;
-    if !held
-        .members()
-        .any(|m| m.signature_key == sender.signature_key().as_slice())
-    {
+    let sender = sender.signature_key().as_slice();
+    if !held.members().any(|m| m.signature_key == sender) {
         return Err(ChatError::generic(
             "a Welcome for a group we hold, from outside it",
+        ));
+    }
+    if !target.vouchers.iter().any(|v| v == sender) {
+        return Err(ChatError::generic(
+            "a Welcome from a member who did not vouch for the branch we asked",
+        ));
+    }
+    if staged.group_context().epoch().as_u64() <= target.epoch {
+        return Err(ChatError::generic(
+            "a Welcome no later than the branch we asked",
         ));
     }
     Ok(Some(held))
@@ -322,6 +333,15 @@ where
         next_answerer: bool,
     ) -> Result<usize, ChatError> {
         GroupV3Convo::request_readd(self, cx, next_answerer)
+    }
+
+    #[cfg(feature = "test-support")]
+    fn force_readd(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        signer: crate::SignerRef,
+    ) -> Result<(), ChatError> {
+        GroupV3Convo::force_readd(self, cx, signer)
     }
 }
 
