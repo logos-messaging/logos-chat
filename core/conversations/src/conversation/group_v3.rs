@@ -292,7 +292,7 @@ where
 
         let events = self
             .channel
-            .receive(SDSRecord::from(payload), None, now_ms(cx))
+            .receive(SDSRecord::try_from(payload)?, None, now_ms(cx))
             .map_err(ChatError::generic)?;
         Ok(ConvoOutcome {
             observations: self.handle_sds_events(cx, events),
