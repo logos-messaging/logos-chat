@@ -21,7 +21,7 @@ use prost::Message;
 use sds::{Channel, Config, OutgoingMessage, SDSRecord};
 use tracing::{instrument, warn};
 
-use crate::conversation::mls_groups::{HasMlsConvo, create_group, mls_join_config};
+use crate::conversation::mls_groups::{HasMlsConvo, create_group, group_join_config};
 use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified};
 use crate::errors::SendError;
 use crate::service_context::ServiceContext;
@@ -99,7 +99,7 @@ impl GroupV3Convo {
         welcome: Welcome,
     ) -> Result<Self, ChatError> {
         let mls_group =
-            StagedWelcome::build_from_welcome(&cx.mls_provider, &mls_join_config(), welcome)
+            StagedWelcome::build_from_welcome(&cx.mls_provider, &group_join_config(), welcome)
                 .map_err(ChatError::generic)?
                 .build()
                 .map_err(ChatError::generic)?
