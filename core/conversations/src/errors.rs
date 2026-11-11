@@ -124,4 +124,6 @@ pub enum SendError {
     MlsMergeCommit(#[from] MergePendingCommitError<MemoryStorageError>),
     #[error("sds: {0}")]
     Sds(#[from] sds::Error),
+    #[error("encode: {0}")]
+    Encode(#[from] tls_codec::Error),
 }
