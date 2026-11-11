@@ -9,11 +9,12 @@
 mod handlers;
 mod payloads;
 
+use std::collections::VecDeque;
 use std::fmt;
 use std::time::Duration;
 
 use openmls::framing::MlsMessageOut;
-use openmls::group::{MlsGroup, StagedWelcome};
+use openmls::group::{GroupEpoch, MlsGroup, StagedWelcome};
 use openmls::key_packages::KeyPackage;
 use openmls::messages::Welcome;
 use openmls_traits::OpenMlsProvider;
@@ -33,6 +34,7 @@ use crate::{
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
+use self::handlers::HeldMessage;
 use self::payloads::{GroupV3Payload, message_id, to_envelope};
 
 // Type Aliases
@@ -41,6 +43,10 @@ type Frame = payloads::GroupV3Frame;
 // Fires SDS's resend and sync deadlines within a second. `wakeup_in` adds a timer rather than
 // replacing one, so only `init` and `wakeup` arm it.
 const SDS_TICK_INTERVAL: Duration = Duration::from_secs(1);
+
+// Messages wait in SDS for a missing dependency, or here for a later epoch; each wait holds at
+// most this many, dropping the oldest, though the wait for an epoch keeps its commits.
+const MAX_WAITING_MESSAGES: usize = 500;
 
 fn delivery_address_from_id(convo_id: &str) -> String {
     blake2b_hex::<hash_size::DeliveryAddr>(&["delivery_addr|", convo_id])
@@ -54,6 +60,7 @@ fn create_sds_channel<S: ExternalServices>(
     // The signer, not the account: two installations of one account would drop each other's
     // messages as their own.
     let mut config = Config::new(cx.mls_identity.signer_key().to_string(), convo_id);
+    config.max_incoming_buffer = MAX_WAITING_MESSAGES;
     config.repair = None;
     config.start = start;
     Channel::new(config).map_err(ChatError::generic)
@@ -66,7 +73,11 @@ fn now_ms<S: ExternalServices>(cx: &ServiceContext<S>) -> u64 {
 pub struct GroupV3Convo {
     convo_id: String,
     mls_group: MlsGroup,
+    /// The epoch we created or joined the group at.
+    joined_epoch: GroupEpoch,
     channel: Channel,
+    /// Held for a later epoch, oldest first.
+    held_messages: VecDeque<HeldMessage>,
 }
 
 // `sds::Channel` implements no `Debug`.
@@ -122,11 +133,14 @@ impl GroupV3Convo {
         start: Option<StartPoint>,
     ) -> Result<Self, ChatError> {
         let convo_id = hex::encode(mls_group.group_id().as_slice());
+        let joined_epoch = mls_group.epoch();
         let channel = create_sds_channel(cx, &convo_id, start)?;
         Ok(Self {
             convo_id,
             mls_group,
+            joined_epoch,
             channel,
+            held_messages: VecDeque::new(),
         })
     }
 }
