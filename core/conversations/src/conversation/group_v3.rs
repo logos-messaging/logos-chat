@@ -9,26 +9,28 @@
 mod handlers;
 mod payloads;
 
+use std::collections::HashMap;
 use std::fmt;
 use std::time::Duration;
 
 use openmls::framing::MlsMessageOut;
-use openmls::group::{MlsGroup, StagedWelcome};
+use openmls::group::{MlsGroup, StagedCommit, StagedWelcome};
 use openmls::key_packages::KeyPackage;
 use openmls::messages::Welcome;
 use openmls_traits::OpenMlsProvider;
 use prost::Message;
 use sds::{Channel, Config, OutgoingMessage, SDSRecord};
-use tracing::{instrument, warn};
+use tracing::{info, instrument, warn};
 
 use crate::conversation::mls_groups::{HasMlsConvo, create_group, group_join_config};
+use crate::conversation::mls_utils::EpochFingerprint;
 use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified};
 use crate::errors::SendError;
 use crate::service_context::ServiceContext;
 use crate::utils::{blake2b_hex, hash_size};
 use crate::{
     AddressedEnvelope, ChatError, ConvoOutcome, DeliveryService, ExternalServices,
-    IdentityProvider, SignerKey, WakeupService,
+    IdentityProvider, Observation, SignerKey, WakeupService,
 };
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
@@ -41,6 +43,7 @@ type Frame = payloads::GroupV3Frame;
 // Fires SDS's resend and sync deadlines within a second. `wakeup_in` adds a timer rather than
 // replacing one, so only `init` and `wakeup` arm it.
 const SDS_TICK_INTERVAL: Duration = Duration::from_secs(1);
+const COMMIT_FINALIZE_DELAY: Duration = Duration::from_secs(30);
 
 fn delivery_address_from_id(convo_id: &str) -> String {
     blake2b_hex::<hash_size::DeliveryAddr>(&["delivery_addr|", convo_id])
@@ -61,10 +64,22 @@ fn now_ms<S: ExternalServices>(cx: &ServiceContext<S>) -> u64 {
     cx.clock.now().as_millis() as u64
 }
 
+/// A commit that has been generated, but not applied. Commits are either `Pending` created by this member, or `Staged`.
+/// PendingCommits are grouped with the outbound payloads, so that welcomes are not sent until the commit is finalized.
+/// openmls holds a `Pending` commit itself, as the group's pending commit.
+enum DeferredCommit {
+    Pending(Vec<AddressedEnvelope>),
+    Staged(StagedCommit),
+}
+
 pub struct GroupV3Convo {
     convo_id: String,
     mls_group: MlsGroup,
     channel: Channel,
+    deferred_commits: HashMap<EpochFingerprint, DeferredCommit>,
+
+    //Temporary
+    next_commit: Option<(Duration, EpochFingerprint)>,
 }
 
 // `sds::Channel` implements no `Debug`.
@@ -122,6 +137,8 @@ impl GroupV3Convo {
             convo_id,
             mls_group,
             channel,
+            deferred_commits: HashMap::default(),
+            next_commit: None,
         })
     }
 }
@@ -170,11 +187,17 @@ impl GroupV3Convo {
         commit_msg: MlsMessageOut,
         dependent_msgs: Vec<AddressedEnvelope>,
     ) -> Result<(), ChatError> {
+        let fingerprint = self
+            .mls_group
+            .pending_commit()
+            .map(EpochFingerprint::from)
+            .ok_or_else(|| ChatError::generic("no pending commit"))?;
+
         // Send Commit
         if let Err(e) =
             commit_payload(commit_msg).and_then(|payload| self.publish_payload(cx, payload))
         {
-            // Discard the staged commit so the group isn't left wedged
+            // Discard the pending commit so the group isn't left wedged
             if let Err(clear_err) = self
                 .mls_group
                 .clear_pending_commit(cx.mls_provider.storage())
@@ -184,14 +207,84 @@ impl GroupV3Convo {
             return Err(e.into());
         }
 
-        // Update State
-        self.mls_group.merge_pending_commit(&cx.mls_provider)?;
+        // openmls keeps the commit pending until it is finalized.
+        self.defer_commit(cx, fingerprint, DeferredCommit::Pending(dependent_msgs));
+        Ok(())
+    }
 
-        // Send Welcomes
-        for env in dependent_msgs {
+    fn defer_commit<S: ExternalServices>(
+        &mut self,
+        cx: &ServiceContext<S>,
+        fingerprint: EpochFingerprint,
+        commit: DeferredCommit,
+    ) {
+        // Simulate some finalization mechanism
+        if self.next_commit.is_none() {
+            self.next_commit = Some((cx.clock.now() + COMMIT_FINALIZE_DELAY, fingerprint.clone()));
+        }
+        self.deferred_commits.insert(fingerprint, commit);
+    }
+
+    /// Incorporate the commit into the group state, and send out any payloads if necessary.
+    ///
+    /// Call after there is confidence that all group members will apply the same commit.
+    fn finalize_deferred_commit<S: ExternalServices>(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        fingerprint: &EpochFingerprint,
+    ) -> Result<ConvoOutcome, ChatError> {
+        let deferred = self
+            .deferred_commits
+            .remove(fingerprint)
+            .ok_or_else(|| ChatError::generic("cannot finalize commit that does not exist"))?;
+        let starting_epoch = self.mls_group.epoch().as_u64();
+
+        let payloads = match deferred {
+            DeferredCommit::Pending(payloads) => {
+                // `merge_pending_commit` silently does nothing once the pending commit is gone.
+                let pending = self.mls_group.pending_commit().map(EpochFingerprint::from);
+                if pending.as_ref() != Some(fingerprint) {
+                    return Err(ChatError::generic("pending commit no longer exists"));
+                }
+                self.mls_group.merge_pending_commit(&cx.mls_provider)?;
+                payloads
+            }
+            DeferredCommit::Staged(commit) => {
+                if commit.epoch().as_u64() != starting_epoch + 1 {
+                    return Err(ChatError::generic("commit is not for the next epoch"));
+                }
+                self.mls_group
+                    .merge_staged_commit(&cx.mls_provider, commit)
+                    .map_err(ChatError::generic)?;
+                vec![]
+            }
+        };
+
+        self.drop_expired_deferred_commits();
+        info!(
+            convo = %self.convo_id,
+            epoch = starting_epoch,
+            new_epoch = self.mls_group.epoch().as_u64(),
+            epochfingerprint = fingerprint.as_str(),
+            "commit merged"
+        );
+
+        for env in payloads {
             Self::publish_envelope(cx, env)?;
         }
-        Ok(())
+
+        Ok(ConvoOutcome {
+            observations: vec![Observation::SignersChanged],
+            ..self.default_outcome()
+        })
+    }
+
+    fn drop_expired_deferred_commits(&mut self) {
+        let epoch = self.mls_group.epoch();
+        self.deferred_commits.retain(|_, v| match v {
+            DeferredCommit::Staged(commit) => commit.epoch() > epoch,
+            DeferredCommit::Pending(_) => false,
+        })
     }
 
     fn publish_payload<S: ExternalServices>(
@@ -300,12 +393,24 @@ where
         })
     }
 
-    fn wakeup(&mut self, cx: &mut ServiceContext<S>) -> Result<crate::ConvoOutcome, ChatError> {
+    fn wakeup(&mut self, cx: &mut ServiceContext<S>) -> Result<ConvoOutcome, ChatError> {
         cx.wakeup_service
             .wakeup_in(SDS_TICK_INTERVAL, self.convo_id.clone());
         let events = self.channel.tick(now_ms(cx), &mut rand_0_10::rng());
+        let mut observations = self.handle_sds_events(cx, events);
+
+        let now = cx.clock.now();
+        if let Some((_, fingerprint)) = self.next_commit.take_if(|(due, _)| *due <= now) {
+            match self.finalize_deferred_commit(cx, &fingerprint) {
+                Ok(outcome) => observations.extend(outcome.observations),
+                Err(e) => {
+                    warn!(convo = %self.convo_id, error = %e, "failed to finalize deferred commit")
+                }
+            }
+        }
+
         Ok(ConvoOutcome {
-            observations: self.handle_sds_events(cx, events),
+            observations,
             ..self.default_outcome()
         })
     }
