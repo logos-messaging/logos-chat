@@ -93,7 +93,7 @@ fn validate_keypackage<S: ExternalServices>(
     }
 }
 
-#[derive(Debug, PartialEq, Clone, TlsSerialize, TlsDeserializeBytes, TlsSize)]
+#[derive(Debug, PartialEq, Clone, Eq, Hash, TlsSerialize, TlsDeserializeBytes, TlsSize)]
 pub struct EpochFingerprint([u8; 7]);
 
 impl fmt::Display for EpochFingerprint {

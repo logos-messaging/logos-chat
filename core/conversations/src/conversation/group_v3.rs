@@ -22,6 +22,7 @@ use prost::Message;
 use sds::{Channel, Config, OutgoingMessage, SDSRecord};
 use tracing::{info, instrument, warn};
 
+use crate::conversation::group_v3::payloads::EpochData;
 use crate::conversation::mls_groups::{HasMlsConvo, create_group, group_join_config};
 use crate::conversation::mls_utils::EpochFingerprint;
 use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified};
@@ -77,9 +78,8 @@ pub struct GroupV3Convo {
     mls_group: MlsGroup,
     channel: Channel,
     deferred_commits: HashMap<EpochFingerprint, DeferredCommit>,
-
-    //Temporary
-    next_commit: Option<(Duration, EpochFingerprint)>,
+    next_commit: Option<(Duration, EpochFingerprint)>, //Temporary
+    epoch_data: EpochData,
 }
 
 // `sds::Channel` implements no `Debug`.
@@ -133,12 +133,14 @@ impl GroupV3Convo {
     ) -> Result<Self, ChatError> {
         let convo_id = hex::encode(mls_group.group_id().as_slice());
         let channel = create_sds_channel(cx, &convo_id)?;
+        let epoch = mls_group.epoch().as_u64();
         Ok(Self {
             convo_id,
             mls_group,
             channel,
             deferred_commits: HashMap::default(),
             next_commit: None,
+            epoch_data: EpochData::starting_at(epoch),
         })
     }
 }
@@ -265,7 +267,7 @@ impl GroupV3Convo {
             convo = %self.convo_id,
             epoch = starting_epoch,
             new_epoch = self.mls_group.epoch().as_u64(),
-            epochfingerprint = fingerprint.as_str(),
+            epochfingerprint = %fingerprint,
             "commit merged"
         );
 

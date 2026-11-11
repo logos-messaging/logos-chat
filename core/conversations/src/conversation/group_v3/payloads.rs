@@ -7,7 +7,7 @@
 //!     └── encrypted_frame                  bytes; TLS-serialized; empty for an SDS sync
 //!         └── MlsMessage                   Commit | ApplicationMessage
 //!             └── GroupV3Frame             protobuf; ApplicationMessage only
-//!                 └── GroupV3FrameType     Content
+//!                 └── GroupV3FrameType     Content | Noop
 //! ```
 //!
 //! Application messages travel through SDS, which orders them and resends what goes
@@ -46,12 +46,24 @@ pub struct GroupV3Frame {
 pub enum GroupV3FrameType {
     #[prost(bytes = "bytes", tag = "6")]
     Content(Bytes),
+    #[prost(message, tag = "7")]
+    Noop(Noop),
 }
+
+/// A frame with no content.
+#[derive(Clone, PartialEq, Message)]
+pub struct Noop {}
 
 impl GroupV3Frame {
     pub fn from_content(bytes: &[u8]) -> GroupV3Frame {
         GroupV3Frame {
             payload: Some(GroupV3FrameType::Content(Bytes::copy_from_slice(bytes))),
+        }
+    }
+
+    pub fn noop() -> GroupV3Frame {
+        GroupV3Frame {
+            payload: Some(GroupV3FrameType::Noop(Noop {})),
         }
     }
 
@@ -63,6 +75,8 @@ impl GroupV3Frame {
 /// Commits travel outside SDS, with an empty header.
 pub fn commit_payload(msg: MlsMessageOut) -> Result<GroupV3Payload, SendError> {
     let bytes = msg.to_bytes()?;
+
+    // let header = GroupV3Header::new(sds_header, self.e)
 
     Ok(GroupV3Payload {
         encrypted_header: Bytes::new(),
@@ -101,6 +115,15 @@ pub enum GroupV3Header {
     V1(GroupV3HeaderV1),
 }
 
+impl GroupV3Header {
+    pub fn new(sds_header: Vec<u8>, epoch_data: EpochData) -> Self {
+        Self::V1(GroupV3HeaderV1 {
+            sds_header: sds_header.into(),
+            epoch_data,
+        })
+    }
+}
+
 #[derive(Debug, PartialEq, TlsSerialize, TlsDeserializeBytes, TlsSize)]
 pub struct GroupV3HeaderV1 {
     sds_header: VLBytes,
@@ -111,6 +134,20 @@ pub struct GroupV3HeaderV1 {
 pub struct EpochData {
     epoch_num: u64,
     history: Vec<EpochFingerprint>,
+}
+
+impl EpochData {
+    pub fn starting_at(epoch_num: u64) -> Self {
+        Self {
+            epoch_num: epoch_num,
+            history: vec![],
+        }
+    }
+
+    pub fn update(&mut self, epoch: u64, fingerprint: EpochFingerprint) {
+        self.epoch_num = epoch;
+        self.history.push(fingerprint);
+    }
 }
 
 impl From<SDSRecord> for GroupV3Payload {
