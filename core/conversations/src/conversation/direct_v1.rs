@@ -1,7 +1,7 @@
 use crate::identity::SignerKey;
 
 use crate::{
-    ChatError, ConvoMetadata, ExternalServices, MessageId, Signer,
+    ChatError, ConvoMetadata, DeliveryInfo, ExternalServices, MessageId, Signer,
     conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, GroupV1Convo, Identified},
     service_context::ServiceContext,
 };
@@ -50,8 +50,9 @@ where
         &mut self,
         cx: &mut ServiceContext<S>,
         payload: &[u8],
+        delivery_info: Option<&DeliveryInfo>,
     ) -> Result<crate::ConvoOutcome, ChatError> {
-        self.inner_group.handle_payload(cx, payload)
+        self.inner_group.handle_payload(cx, payload, delivery_info)
     }
 
     fn wakeup(

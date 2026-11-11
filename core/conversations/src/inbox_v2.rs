@@ -103,6 +103,7 @@ pub fn invite_user_v2<DS: DeliveryService>(
         data: envelope.encode_to_vec(),
     })
     .map_err(ChatError::generic)
+    .map(drop)
 }
 
 pub fn create_invite_v3(

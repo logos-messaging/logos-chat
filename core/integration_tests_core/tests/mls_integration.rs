@@ -196,12 +196,15 @@ fn burst_delivered_out_of_order_is_read_whole() {
     }
 
     // The newest message arrives first, the rest after it.
-    let mut burst: Vec<Vec<u8>> = std::iter::from_fn(|| harness.raya().ds().poll()).collect();
+    let mut burst: Vec<_> = std::iter::from_fn(|| harness.raya().ds().poll()).collect();
     burst.rotate_right(1);
 
     let mut read = Vec::new();
-    for payload in &burst {
-        let outcome = harness.raya().handle_payload(payload).expect("raya reads");
+    for (payload, info) in &burst {
+        let outcome = harness
+            .raya()
+            .handle_payload(payload, Some(info))
+            .expect("raya reads");
         let PayloadOutcome::Convo(ConvoOutcome { observations, .. }) = &outcome else {
             panic!("expected content, got {outcome:?}");
         };

@@ -29,7 +29,7 @@ use crate::errors::SendError;
 use crate::service_context::ServiceContext;
 use crate::utils::{blake2b_hex, hash_size};
 use crate::{
-    AddressedEnvelope, ChatError, ConvoOutcome, DeliveryService, ExternalServices,
+    AddressedEnvelope, ChatError, ConvoOutcome, DeliveryInfo, DeliveryService, ExternalServices,
     IdentityProvider, Observation, SignerKey, WakeupService,
 };
 
@@ -419,6 +419,7 @@ where
         &mut self,
         cx: &mut ServiceContext<S>,
         payload: &[u8],
+        _delivery_info: Option<&DeliveryInfo>,
     ) -> Result<ConvoOutcome, ChatError> {
         let payload = GroupV3Payload::decode(payload)?;
         let events = self

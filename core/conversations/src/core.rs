@@ -9,7 +9,8 @@ use crate::service_traits::AuthService;
 use crate::storage::{ConversationKind, ConversationMeta, ConversationStore};
 use crate::types::ConvoMetadata;
 use crate::{
-    Clock, DeliveryService, GroupV2Config, IdentityProvider, RegistrationService, WakeupService,
+    Clock, DeliveryInfo, DeliveryService, GroupV2Config, IdentityProvider, RegistrationService,
+    WakeupService,
 };
 use crate::{
     conversation::{Convo, ConvoBase, GroupConvo, mls_trace::record},
@@ -435,7 +436,11 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     // Decode bytes and send to protocol for processing.
     #[instrument(name = "core.handle_frame", skip_all, fields(user_id = %self.services.mls_identity.display_name()))]
-    pub fn handle_payload(&mut self, payload: &[u8]) -> Result<PayloadOutcome, ChatError> {
+    pub fn handle_payload(
+        &mut self,
+        payload: &[u8],
+        delivery_info: Option<&DeliveryInfo>,
+    ) -> Result<PayloadOutcome, ChatError> {
         let env = EnvelopeV1::decode(payload)?;
 
         // TODO: Impl Conversation hinting
@@ -443,12 +448,12 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
         match convo_id {
             c if c == self.pq_inbox.id() => self.dispatch_to_inbox2(&env.payload),
-            c if self.cached_convos.contains_key(&c) => {
-                self.dispatch_to_convo(&c, &env.payload).map(Into::into)
-            }
-            c if self.services.store.has_conversation(&c)? => {
-                self.dispatch_to_convo(&c, &env.payload).map(Into::into)
-            }
+            c if self.cached_convos.contains_key(&c) => self
+                .dispatch_to_convo(&c, &env.payload, delivery_info)
+                .map(Into::into),
+            c if self.services.store.has_conversation(&c)? => self
+                .dispatch_to_convo(&c, &env.payload, delivery_info)
+                .map(Into::into),
             _ => Ok(PayloadOutcome::Empty),
         }
     }
@@ -478,6 +483,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         &mut self,
         convo_id: &str,
         enc_payload_bytes: &[u8],
+        delivery_info: Option<&DeliveryInfo>,
     ) -> Result<ConvoOutcome, ChatError> {
         if self.cached_convos.contains_key(convo_id) {
             let convo_type = self
@@ -485,10 +491,10 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
                 .get_mut(convo_id)
                 .ok_or_else(|| ChatError::NoConvo(convo_id.to_string()))?;
 
-            convo_type.handle_payload(&mut self.services, enc_payload_bytes)
+            convo_type.handle_payload(&mut self.services, enc_payload_bytes, delivery_info)
         } else {
             let mut convo = self.load_convo(convo_id)?;
-            convo.handle_payload(&mut self.services, enc_payload_bytes)
+            convo.handle_payload(&mut self.services, enc_payload_bytes, delivery_info)
         }
     }
 
@@ -629,10 +635,13 @@ impl<S: ExternalServices> Convo<S> for ConvoTypeOwned<S> {
         &mut self,
         cx: &mut ServiceContext<S>,
         payload: &[u8],
+        delivery_info: Option<&DeliveryInfo>,
     ) -> Result<ConvoOutcome, ChatError> {
         match self {
-            ConvoTypeOwned::Group(group_convo) => group_convo.handle_payload(cx, payload),
-            ConvoTypeOwned::Direct(convo) => convo.handle_payload(cx, payload),
+            ConvoTypeOwned::Group(group_convo) => {
+                group_convo.handle_payload(cx, payload, delivery_info)
+            }
+            ConvoTypeOwned::Direct(convo) => convo.handle_payload(cx, payload, delivery_info),
         }
     }
 
