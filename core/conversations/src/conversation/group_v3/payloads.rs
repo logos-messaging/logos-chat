@@ -9,7 +9,7 @@
 //!     └── encrypted_frame                  bytes; TLS-serialized; empty for an SDS sync
 //!         └── MlsMessage                   Commit | ApplicationMessage
 //!             └── GroupV3Frame             protobuf; ApplicationMessage only
-//!                 └── GroupV3FrameType     Content | Noop
+//!                 └── GroupV3FrameType     Content
 //! ```
 //!
 //! Application messages travel through SDS, which orders them and resends what goes
@@ -48,13 +48,7 @@ pub struct GroupV3Frame {
 pub enum GroupV3FrameType {
     #[prost(bytes = "bytes", tag = "6")]
     Content(Bytes),
-    #[prost(message, tag = "7")]
-    Noop(Noop),
 }
-
-/// A frame with no content.
-#[derive(Clone, PartialEq, Message)]
-pub struct Noop {}
 
 impl GroupV3Frame {
     pub fn from_content(bytes: &[u8]) -> GroupV3Frame {
