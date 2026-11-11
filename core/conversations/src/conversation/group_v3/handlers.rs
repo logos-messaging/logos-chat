@@ -30,7 +30,7 @@ impl GroupV3Convo {
                     content,
                     ..
                 } => match protocol_message(&content)
-                    .and_then(|message| self.handle_mls_protocol_msg(cx, Some(message_id), message))
+                    .and_then(|message| self.handle_mls_protocol_msg(cx, message_id, message))
                 {
                     Ok(outcome) => observations.extend(outcome.observations),
                     Err(e) => {
@@ -49,14 +49,13 @@ impl GroupV3Convo {
     }
 
     /// Handle inbound mls encrypted messages. Accepts a successfully decoded ProtocolMessage
-    /// and its SDS id when SDS released it.
-    pub(super) fn handle_mls_protocol_msg<S: ExternalServices>(
+    /// and the id SDS released it under.
+    fn handle_mls_protocol_msg<S: ExternalServices>(
         &mut self,
         cx: &mut ServiceContext<S>,
-        message_id: Option<MessageId>,
+        message_id: MessageId,
         protocol_message: ProtocolMessage,
     ) -> Result<ConvoOutcome, ChatError> {
-        // Includes our own commits, which return here after we merged them.
         if protocol_message.epoch() < self.mls_group.epoch() {
             debug!(convo = %self.convo_id, epoch = protocol_message.epoch().as_u64(), "dropping message from past epoch");
             return Ok(self.default_outcome());
@@ -81,7 +80,7 @@ impl GroupV3Convo {
     fn handle_mls_msg<S: ExternalServices>(
         &mut self,
         cx: &mut ServiceContext<S>,
-        message_id: Option<MessageId>,
+        message_id: MessageId,
         processed: ProcessedMessage,
     ) -> Result<ConvoOutcome, ChatError> {
         // Resolved before `into_content` consumes the message.
@@ -90,16 +89,14 @@ impl GroupV3Convo {
             _ => None,
         };
 
-        // Commits travel outside SDS and application messages through it; either one arriving the
-        // other way is ignored.
-        match (processed.into_content(), message_id) {
-            (ProcessedMessageContent::ApplicationMessage(msg), Some(message_id)) => {
+        match processed.into_content() {
+            ProcessedMessageContent::ApplicationMessage(msg) => {
                 self.handle_mls_application_message(cx, sender, msg, message_id)
             }
-            (ProcessedMessageContent::StagedCommitMessage(commit), None) => {
+            ProcessedMessageContent::StagedCommitMessage(commit) => {
                 self.handle_mls_commit(cx, *commit)
             }
-            (other, _) => {
+            other => {
                 debug!(convo = %self.convo_id, ?other, "ignoring mls message");
                 Ok(self.default_outcome())
             }

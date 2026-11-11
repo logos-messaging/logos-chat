@@ -18,7 +18,7 @@ use openmls::key_packages::KeyPackage;
 use openmls::messages::Welcome;
 use openmls_traits::OpenMlsProvider;
 use prost::Message;
-use sds::{Channel, Config, OutgoingMessage, SDSRecord};
+use sds::{Channel, Config, OutgoingMessage, SDSRecord, StartPoint};
 use tracing::{instrument, warn};
 
 use crate::conversation::mls_groups::{HasMlsConvo, create_group, group_join_config};
@@ -33,7 +33,7 @@ use crate::{
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
-use self::payloads::{GroupV3Payload, commit_payload, message_id, protocol_message, to_envelope};
+use self::payloads::{GroupV3Payload, message_id, to_envelope};
 
 // Type Aliases
 type Frame = payloads::GroupV3Frame;
@@ -49,11 +49,13 @@ fn delivery_address_from_id(convo_id: &str) -> String {
 fn create_sds_channel<S: ExternalServices>(
     cx: &ServiceContext<S>,
     convo_id: &str,
+    start: Option<StartPoint>,
 ) -> Result<Channel, ChatError> {
     // The signer, not the account: two installations of one account would drop each other's
     // messages as their own.
     let mut config = Config::new(cx.mls_identity.signer_key().to_string(), convo_id);
     config.repair = None;
+    config.start = start;
     Channel::new(config).map_err(ChatError::generic)
 }
 
@@ -87,16 +89,18 @@ impl GroupV3Convo {
         // Create MlsGroup
         let mls_group = create_group(cx, name, desc)?;
 
-        let mut convo = Self::from_group(cx, mls_group)?;
+        let mut convo = Self::from_group(cx, mls_group, None)?;
 
         convo.init(cx)?;
         convo.add_signer(cx, signers)?;
         Ok(convo)
     }
 
+    /// Joins from a Welcome, starting our SDS channel at `start`, the commit that added us.
     pub fn new_from_welcome<S: ExternalServices>(
         cx: &mut ServiceContext<S>,
         welcome: Welcome,
+        start: StartPoint,
     ) -> Result<Self, ChatError> {
         let mls_group =
             StagedWelcome::build_from_welcome(&cx.mls_provider, &group_join_config(), welcome)
@@ -106,7 +110,7 @@ impl GroupV3Convo {
                 .into_group(&cx.mls_provider)
                 .map_err(ChatError::generic)?;
 
-        let convo = Self::from_group(cx, mls_group)?;
+        let convo = Self::from_group(cx, mls_group, Some(start))?;
 
         convo.init(cx)?;
         Ok(convo)
@@ -115,9 +119,10 @@ impl GroupV3Convo {
     fn from_group<S: ExternalServices>(
         cx: &ServiceContext<S>,
         mls_group: MlsGroup,
+        start: Option<StartPoint>,
     ) -> Result<Self, ChatError> {
         let convo_id = hex::encode(mls_group.group_id().as_slice());
-        let channel = create_sds_channel(cx, &convo_id)?;
+        let channel = create_sds_channel(cx, &convo_id, start)?;
         Ok(Self {
             convo_id,
             mls_group,
@@ -164,34 +169,54 @@ impl GroupV3Convo {
         Ok(message_id)
     }
 
+    /// Sends the pending commit through SDS and merges it. Returns the commit's place in the SDS
+    /// channel, where a member it adds starts.
     fn send_pending_commit<S: ExternalServices>(
         &mut self,
         cx: &mut ServiceContext<S>,
         commit_msg: MlsMessageOut,
-        dependent_msgs: Vec<AddressedEnvelope>,
-    ) -> Result<(), ChatError> {
+    ) -> Result<StartPoint, ChatError> {
         // Send Commit
-        if let Err(e) =
-            commit_payload(commit_msg).and_then(|payload| self.publish_payload(cx, payload))
-        {
-            // Discard the staged commit so the group isn't left wedged
-            if let Err(clear_err) = self
-                .mls_group
-                .clear_pending_commit(cx.mls_provider.storage())
-            {
-                warn!(convo = %self.convo_id, error = %clear_err, "failed to clear pending commit");
+        let sent = commit_msg
+            .to_bytes()
+            .map_err(SendError::from)
+            .and_then(|commit| {
+                let message = OutgoingMessage {
+                    message_id: message_id(&commit),
+                    content: commit,
+                    retrieval_hint: None,
+                };
+                Ok(self.channel.send(message, now_ms(cx))?)
+            });
+        let record = match sent {
+            Ok(record) => record,
+            Err(e) => {
+                // Discard the staged commit so the group isn't left wedged
+                if let Err(clear_err) = self
+                    .mls_group
+                    .clear_pending_commit(cx.mls_provider.storage())
+                {
+                    warn!(convo = %self.convo_id, error = %clear_err, "failed to clear pending commit");
+                }
+                return Err(e.into());
             }
-            return Err(e.into());
-        }
+        };
 
         // Update State
         self.mls_group.merge_pending_commit(&cx.mls_provider)?;
 
-        // Send Welcomes
-        for env in dependent_msgs {
-            Self::publish_envelope(cx, env)?;
+        let start = StartPoint {
+            message_id: record.header.message_id.clone(),
+            lamport_timestamp: record
+                .header
+                .lamport_timestamp
+                .ok_or_else(|| ChatError::generic("sds sent the commit without a timestamp"))?,
+        };
+        // SDS keeps the commit and resends it, so a failed publish heals as a lost one does.
+        if let Err(e) = self.publish_payload(cx, record.into()) {
+            warn!(convo = %self.convo_id, error = %e, "failed to publish commit");
         }
-        Ok(())
+        Ok(start)
     }
 
     fn publish_payload<S: ExternalServices>(
@@ -243,12 +268,17 @@ where
             .add_members(&cx.mls_provider, &cx.mls_identity, key_packages.as_slice())
             .map_err(ChatError::generic)?;
 
-        let invites: Result<Vec<AddressedEnvelope>, SendError> = key_packages
-            .iter()
-            .map(|s| crate::inbox_v2::create_invite_v3(&SignerKey::from(s.leaf_node()), &welcome))
-            .collect();
+        let commit = self.send_pending_commit(cx, commit_msg)?;
 
-        self.send_pending_commit(cx, commit_msg, invites?)?;
+        // Send Welcomes
+        for key_package in &key_packages {
+            let invite = crate::inbox_v2::create_invite_v3(
+                &SignerKey::from(key_package.leaf_node()),
+                &welcome,
+                &commit,
+            )?;
+            Self::publish_envelope(cx, invite)?;
+        }
 
         Ok(())
     }
@@ -282,17 +312,9 @@ where
         payload: &[u8],
     ) -> Result<ConvoOutcome, ChatError> {
         let payload = GroupV3Payload::decode(payload)?;
-        if payload.encrypted_header.is_empty() {
-            return self.handle_mls_protocol_msg(
-                cx,
-                None,
-                protocol_message(&payload.encrypted_frame)?,
-            );
-        }
-
         let events = self
             .channel
-            .receive(SDSRecord::from(payload), None, now_ms(cx))
+            .receive(SDSRecord::try_from(payload)?, None, now_ms(cx))
             .map_err(ChatError::generic)?;
         Ok(ConvoOutcome {
             observations: self.handle_sds_events(cx, events),
