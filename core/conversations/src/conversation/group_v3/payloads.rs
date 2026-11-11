@@ -154,9 +154,12 @@ pub struct GroupV3HeaderV1 {
     epoch_data: EpochData,
 }
 
+const MAX_EPOCH_HISTORY: usize = 3;
+
 #[derive(Debug, Clone, PartialEq, TlsSerialize, TlsDeserializeBytes, TlsSize)]
 pub struct EpochData {
     epoch_num: u64,
+    /// Newest first: `history[i]` is the fingerprint from `i` epochs back.
     history: Vec<EpochFingerprint>,
 }
 
@@ -170,7 +173,8 @@ impl EpochData {
 
     pub fn update(&mut self, epoch: u64, fingerprint: EpochFingerprint) {
         self.epoch_num = epoch;
-        self.history.push(fingerprint);
+        self.history.insert(0, fingerprint);
+        self.history.truncate(MAX_EPOCH_HISTORY);
     }
 }
 
