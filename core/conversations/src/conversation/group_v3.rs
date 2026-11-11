@@ -18,10 +18,10 @@ use openmls::group::{MlsGroup, StagedCommit, StagedWelcome};
 use openmls::key_packages::KeyPackage;
 use openmls::messages::Welcome;
 use openmls_traits::OpenMlsProvider;
-use prost::Message;
 use sds::{Channel, Config, OutgoingMessage, SDSRecord};
 use tracing::{info, instrument, warn};
 
+use crate::conversation::group_v3::payloads::EpochData;
 use crate::conversation::mls_groups::{HasMlsConvo, create_group, group_join_config};
 use crate::conversation::mls_utils::EpochFingerprint;
 use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified};
@@ -35,7 +35,7 @@ use crate::{
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
-use self::payloads::{GroupV3Payload, commit_payload, message_id, protocol_message, to_envelope};
+use self::payloads::{GroupV3Payload, commit_record, message_id, protocol_message, to_envelope};
 
 // Type Aliases
 type Frame = payloads::GroupV3Frame;
@@ -77,9 +77,8 @@ pub struct GroupV3Convo {
     mls_group: MlsGroup,
     channel: Channel,
     deferred_commits: HashMap<EpochFingerprint, DeferredCommit>,
-
-    //Temporary
-    next_commit: Option<(Duration, EpochFingerprint)>,
+    next_commit: Option<(Duration, EpochFingerprint)>, //Temporary
+    epoch_data: EpochData,
 }
 
 // `sds::Channel` implements no `Debug`.
@@ -133,12 +132,14 @@ impl GroupV3Convo {
     ) -> Result<Self, ChatError> {
         let convo_id = hex::encode(mls_group.group_id().as_slice());
         let channel = create_sds_channel(cx, &convo_id)?;
+        let epoch = mls_group.epoch().as_u64();
         Ok(Self {
             convo_id,
             mls_group,
             channel,
             deferred_commits: HashMap::default(),
             next_commit: None,
+            epoch_data: EpochData::starting_at(epoch),
         })
     }
 }
@@ -176,7 +177,7 @@ impl GroupV3Convo {
             retrieval_hint: None,
         };
         let record = self.channel.send(message, now_ms(cx))?;
-        self.publish_payload(cx, record.into())?;
+        self.publish_payload(cx, record)?;
 
         Ok(message_id)
     }
@@ -195,7 +196,7 @@ impl GroupV3Convo {
 
         // Send Commit
         if let Err(e) =
-            commit_payload(commit_msg).and_then(|payload| self.publish_payload(cx, payload))
+            commit_record(commit_msg).and_then(|record| self.publish_payload(cx, record))
         {
             // Discard the pending commit so the group isn't left wedged
             if let Err(clear_err) = self
@@ -260,12 +261,14 @@ impl GroupV3Convo {
             }
         };
 
+        self.epoch_data
+            .advance_to(self.mls_group.epoch().as_u64(), fingerprint.clone());
         self.drop_expired_deferred_commits();
         info!(
             convo = %self.convo_id,
             epoch = starting_epoch,
             new_epoch = self.mls_group.epoch().as_u64(),
-            epochfingerprint = fingerprint.as_str(),
+            epochfingerprint = %fingerprint,
             "commit merged"
         );
 
@@ -287,11 +290,13 @@ impl GroupV3Convo {
         })
     }
 
+    /// Every outbound payload goes through here, so every one carries the epoch data.
     fn publish_payload<S: ExternalServices>(
         &self,
         cx: &mut ServiceContext<S>,
-        payload: GroupV3Payload,
+        record: SDSRecord,
     ) -> Result<(), SendError> {
+        let payload = GroupV3Payload::new(record, self.epoch_data.clone())?;
         let env = to_envelope(self.convo_id.to_string(), payload);
         Self::publish_envelope(cx, env)
     }
@@ -374,18 +379,17 @@ where
         cx: &mut ServiceContext<S>,
         payload: &[u8],
     ) -> Result<ConvoOutcome, ChatError> {
-        let payload = GroupV3Payload::decode(payload)?;
-        if payload.encrypted_header.is_empty() {
-            return self.handle_mls_protocol_msg(
-                cx,
-                None,
-                protocol_message(&payload.encrypted_frame)?,
-            );
+        let (record, _epoch_data) = GroupV3Payload::parse(payload)?;
+
+        // TODO: remove once commits travel through SDS.
+        if record.header.is_empty() {
+            let commit = record.content.unwrap_or_default();
+            return self.handle_mls_protocol_msg(cx, None, protocol_message(&commit)?);
         }
 
         let events = self
             .channel
-            .receive(SDSRecord::from(payload), None, now_ms(cx))
+            .receive(record, None, now_ms(cx))
             .map_err(ChatError::generic)?;
         Ok(ConvoOutcome {
             observations: self.handle_sds_events(cx, events),

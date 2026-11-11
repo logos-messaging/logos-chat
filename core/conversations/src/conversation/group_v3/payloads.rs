@@ -3,7 +3,9 @@
 //! ```text
 //! AddressedEnvelope                        delivery address + convo id
 //! └── GroupV3Payload                       protobuf
-//!     ├── encrypted_header                 bytes; SDS header
+//!     ├── encrypted_header                 bytes; encrypted GroupV3Header
+//!     │   ├── sds_header                   bytes
+//!     │   └── epoch_data                   the sender's epoch and its history
 //!     └── encrypted_frame                  bytes; TLS-serialized; empty for an SDS sync
 //!         └── MlsMessage                   Commit | ApplicationMessage
 //!             └── GroupV3Frame             protobuf; ApplicationMessage only
@@ -20,7 +22,9 @@ use openmls::prelude::MlsMessageIn;
 use openmls::prelude::tls_codec::DeserializeBytes as _;
 use prost::{Message, Oneof, bytes::Bytes};
 use sds::SDSRecord;
+use tls_codec::{Serialize as _, TlsDeserializeBytes, TlsSerialize, TlsSize, VLBytes};
 
+use crate::conversation::mls_utils::EpochFingerprint;
 use crate::{
     AddressedEnvelope, ChatError, MessageId,
     errors::SendError,
@@ -58,13 +62,12 @@ impl GroupV3Frame {
     }
 }
 
+// TODO: remove once commits travel through SDS.
 /// Commits travel outside SDS, with an empty header.
-pub fn commit_payload(msg: MlsMessageOut) -> Result<GroupV3Payload, SendError> {
-    let bytes = msg.to_bytes()?;
-
-    Ok(GroupV3Payload {
-        encrypted_header: Bytes::new(),
-        encrypted_frame: bytes.into(),
+pub fn commit_record(msg: MlsMessageOut) -> Result<SDSRecord, SendError> {
+    Ok(SDSRecord {
+        header: Vec::new(),
+        content: Some(msg.to_bytes()?),
     })
 }
 
@@ -85,27 +88,167 @@ pub fn protocol_message(mls_message: &[u8]) -> Result<ProtocolMessage, ChatError
 
 #[derive(Clone, PartialEq, Message)]
 pub struct GroupV3Payload {
+    // TODO: encrypt and authenticate the header; it is plaintext for now.
     #[prost(bytes = "bytes", tag = "1")]
-    pub encrypted_header: Bytes,
+    encrypted_header: Bytes,
     #[prost(bytes = "bytes", tag = "2")]
-    pub encrypted_frame: Bytes,
+    encrypted_frame: Bytes,
 }
 
-impl From<SDSRecord> for GroupV3Payload {
-    fn from(record: SDSRecord) -> Self {
-        Self {
-            encrypted_header: record.header.into(),
+impl GroupV3Payload {
+    pub fn new(record: SDSRecord, epoch_data: EpochData) -> Result<Self, SendError> {
+        let header = GroupV3Header::new(record.header, epoch_data);
+
+        Ok(Self {
+            encrypted_header: header.tls_serialize_detached()?.into(),
             encrypted_frame: record.content.unwrap_or_default().into(),
-        }
+        })
+    }
+
+    pub fn parse(bytes: &[u8]) -> Result<(SDSRecord, EpochData), ChatError> {
+        let payload = Self::decode(bytes)?;
+        let GroupV3Header::V1(mut header) =
+            GroupV3Header::tls_deserialize_exact_bytes(&payload.encrypted_header)?;
+        header.epoch_data.history.truncate(MAX_EPOCH_HISTORY);
+        let frame = payload.encrypted_frame;
+
+        let record = SDSRecord {
+            header: header.sds_header.into(),
+            content: (!frame.is_empty()).then(|| frame.into()),
+        };
+        Ok((record, header.epoch_data))
     }
 }
 
-impl From<GroupV3Payload> for SDSRecord {
-    fn from(payload: GroupV3Payload) -> Self {
-        let content = payload.encrypted_frame;
+/// TLS-encoded for canonical bytes.
+#[derive(Debug, PartialEq, TlsSerialize, TlsDeserializeBytes, TlsSize)]
+#[repr(u8)]
+pub enum GroupV3Header {
+    #[tls_codec(discriminant = 1)]
+    V1(GroupV3HeaderV1),
+}
+
+impl GroupV3Header {
+    pub fn new(sds_header: Vec<u8>, epoch_data: EpochData) -> Self {
+        Self::V1(GroupV3HeaderV1 {
+            sds_header: sds_header.into(),
+            epoch_data,
+        })
+    }
+}
+
+#[derive(Debug, PartialEq, TlsSerialize, TlsDeserializeBytes, TlsSize)]
+pub struct GroupV3HeaderV1 {
+    sds_header: VLBytes,
+    epoch_data: EpochData,
+}
+
+const MAX_EPOCH_HISTORY: usize = 3;
+
+#[derive(Debug, Clone, PartialEq, TlsSerialize, TlsDeserializeBytes, TlsSize)]
+pub struct EpochData {
+    epoch_num: u64,
+    /// Newest first: `history[i]` is the fingerprint from `i` epochs back.
+    history: Vec<EpochFingerprint>,
+}
+
+impl EpochData {
+    pub fn starting_at(epoch_num: u64) -> Self {
         Self {
-            header: payload.encrypted_header.into(),
-            content: (!content.is_empty()).then(|| content.into()),
+            epoch_num,
+            history: vec![],
         }
+    }
+
+    pub fn advance_to(&mut self, epoch: u64, fingerprint: EpochFingerprint) {
+        self.epoch_num = epoch;
+        self.history.insert(0, fingerprint);
+        self.history.truncate(MAX_EPOCH_HISTORY);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tls_codec::{DeserializeBytes, Serialize};
+
+    use super::*;
+
+    #[test]
+    fn header_bytes_are_pinned() {
+        let fingerprint = EpochFingerprint::tls_deserialize_exact_bytes(&[7; 7]).unwrap();
+        let header = GroupV3Header::V1(GroupV3HeaderV1 {
+            sds_header: vec![1, 2, 3].into(),
+            epoch_data: EpochData {
+                epoch_num: 9,
+                history: vec![fingerprint],
+            },
+        });
+
+        let bytes = header.tls_serialize_detached().unwrap();
+        assert_eq!(
+            hex::encode(&bytes),
+            "01" // V1
+                .to_owned()
+                + "03010203" // sds_header
+                + "0000000000000009" // epoch_num
+                + "0707070707070707" // history: len 7, one fingerprint
+        );
+        assert_eq!(
+            GroupV3Header::tls_deserialize_exact_bytes(&bytes).unwrap(),
+            header
+        );
+
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert!(GroupV3Header::tls_deserialize_exact_bytes(&trailing).is_err());
+    }
+
+    fn assert_round_trips(record: SDSRecord) {
+        let epoch_data = EpochData::starting_at(9);
+        let bytes = GroupV3Payload::new(record.clone(), epoch_data.clone())
+            .unwrap()
+            .encode_to_vec();
+
+        assert_eq!(GroupV3Payload::parse(&bytes).unwrap(), (record, epoch_data));
+    }
+
+    #[test]
+    fn sds_message_round_trips() {
+        assert_round_trips(SDSRecord {
+            header: vec![1, 2, 3],
+            content: Some(vec![4, 5]),
+        });
+    }
+
+    #[test]
+    fn sds_sync_round_trips_without_content() {
+        assert_round_trips(SDSRecord {
+            header: vec![1, 2, 3],
+            content: None,
+        });
+    }
+
+    #[test]
+    fn history_keeps_the_newest_first() {
+        let fingerprint =
+            |byte: u8| EpochFingerprint::tls_deserialize_exact_bytes(&[byte; 7]).unwrap();
+        let mut data = EpochData::starting_at(0);
+        for epoch in 1..=4 {
+            data.advance_to(epoch, fingerprint(epoch as u8));
+        }
+
+        assert_eq!(
+            data.history,
+            [fingerprint(4), fingerprint(3), fingerprint(2)]
+        );
+    }
+
+    #[test]
+    fn malformed_header_is_rejected() {
+        let payload = GroupV3Payload {
+            encrypted_header: vec![0xff].into(),
+            encrypted_frame: Bytes::new(),
+        };
+        assert!(GroupV3Payload::parse(&payload.encode_to_vec()).is_err());
     }
 }

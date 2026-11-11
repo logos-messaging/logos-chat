@@ -38,7 +38,7 @@ impl GroupV3Convo {
                     }
                 },
                 Event::Resend(record) | Event::Sync(record) | Event::Repair(record) => {
-                    if let Err(e) = self.publish_payload(cx, record.into()) {
+                    if let Err(e) = self.publish_payload(cx, record) {
                         warn!(convo = %self.convo_id, error = %e, "failed to publish sds record");
                     }
                 }
