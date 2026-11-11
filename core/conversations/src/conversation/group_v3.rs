@@ -262,7 +262,7 @@ impl GroupV3Convo {
         };
 
         self.epoch_data
-            .update(self.mls_group.epoch().as_u64(), fingerprint.clone());
+            .advance_to(self.mls_group.epoch().as_u64(), fingerprint.clone());
         self.drop_expired_deferred_commits();
         info!(
             convo = %self.convo_id,

@@ -63,12 +63,6 @@ impl GroupV3Frame {
         }
     }
 
-    pub fn noop() -> GroupV3Frame {
-        GroupV3Frame {
-            payload: Some(GroupV3FrameType::Noop(Noop {})),
-        }
-    }
-
     pub fn encode(self) -> Vec<u8> {
         self.encode_to_vec()
     }
@@ -102,9 +96,9 @@ pub fn protocol_message(mls_message: &[u8]) -> Result<ProtocolMessage, ChatError
 pub struct GroupV3Payload {
     // TODO: encrypt and authenticate the header; it is plaintext for now.
     #[prost(bytes = "bytes", tag = "1")]
-    pub encrypted_header: Bytes,
+    encrypted_header: Bytes,
     #[prost(bytes = "bytes", tag = "2")]
-    pub encrypted_frame: Bytes,
+    encrypted_frame: Bytes,
 }
 
 impl GroupV3Payload {
@@ -119,8 +113,9 @@ impl GroupV3Payload {
 
     pub fn parse(bytes: &[u8]) -> Result<(SDSRecord, EpochData), ChatError> {
         let payload = Self::decode(bytes)?;
-        let GroupV3Header::V1(header) =
+        let GroupV3Header::V1(mut header) =
             GroupV3Header::tls_deserialize_exact_bytes(&payload.encrypted_header)?;
+        header.epoch_data.history.truncate(MAX_EPOCH_HISTORY);
         let frame = payload.encrypted_frame;
 
         let record = SDSRecord {
@@ -166,12 +161,12 @@ pub struct EpochData {
 impl EpochData {
     pub fn starting_at(epoch_num: u64) -> Self {
         Self {
-            epoch_num: epoch_num,
+            epoch_num,
             history: vec![],
         }
     }
 
-    pub fn update(&mut self, epoch: u64, fingerprint: EpochFingerprint) {
+    pub fn advance_to(&mut self, epoch: u64, fingerprint: EpochFingerprint) {
         self.epoch_num = epoch;
         self.history.insert(0, fingerprint);
         self.history.truncate(MAX_EPOCH_HISTORY);
@@ -237,6 +232,21 @@ mod tests {
             header: vec![1, 2, 3],
             content: None,
         });
+    }
+
+    #[test]
+    fn history_keeps_the_newest_first() {
+        let fingerprint =
+            |byte: u8| EpochFingerprint::tls_deserialize_exact_bytes(&[byte; 7]).unwrap();
+        let mut data = EpochData::starting_at(0);
+        for epoch in 1..=4 {
+            data.advance_to(epoch, fingerprint(epoch as u8));
+        }
+
+        assert_eq!(
+            data.history,
+            [fingerprint(4), fingerprint(3), fingerprint(2)]
+        );
     }
 
     #[test]
