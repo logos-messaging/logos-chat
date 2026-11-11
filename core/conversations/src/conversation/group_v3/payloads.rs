@@ -20,7 +20,9 @@ use openmls::prelude::MlsMessageIn;
 use openmls::prelude::tls_codec::DeserializeBytes as _;
 use prost::{Message, Oneof, bytes::Bytes};
 use sds::SDSRecord;
+use tls_codec::{TlsDeserializeBytes, TlsSerialize, TlsSize, VLBytes};
 
+use crate::conversation::mls_utils::EpochFingerprint;
 use crate::{
     AddressedEnvelope, ChatError, MessageId,
     errors::SendError,
@@ -91,6 +93,26 @@ pub struct GroupV3Payload {
     pub encrypted_frame: Bytes,
 }
 
+/// TLS-encoded for canonical bytes.
+#[derive(Debug, PartialEq, TlsSerialize, TlsDeserializeBytes, TlsSize)]
+#[repr(u8)]
+pub enum GroupV3Header {
+    #[tls_codec(discriminant = 1)]
+    V1(GroupV3HeaderV1),
+}
+
+#[derive(Debug, PartialEq, TlsSerialize, TlsDeserializeBytes, TlsSize)]
+pub struct GroupV3HeaderV1 {
+    sds_header: VLBytes,
+    epoch_data: EpochData,
+}
+
+#[derive(Debug, PartialEq, TlsSerialize, TlsDeserializeBytes, TlsSize)]
+pub struct EpochData {
+    epoch_num: u64,
+    history: Vec<EpochFingerprint>,
+}
+
 impl From<SDSRecord> for GroupV3Payload {
     fn from(record: SDSRecord) -> Self {
         Self {
@@ -107,5 +129,42 @@ impl From<GroupV3Payload> for SDSRecord {
             header: payload.encrypted_header.into(),
             content: (!content.is_empty()).then(|| content.into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tls_codec::{DeserializeBytes, Serialize};
+
+    use super::*;
+
+    #[test]
+    fn header_bytes_are_pinned() {
+        let fingerprint = EpochFingerprint::tls_deserialize_exact_bytes(&[7; 7]).unwrap();
+        let header = GroupV3Header::V1(GroupV3HeaderV1 {
+            sds_header: vec![1, 2, 3].into(),
+            epoch_data: EpochData {
+                epoch_num: 9,
+                history: vec![fingerprint],
+            },
+        });
+
+        let bytes = header.tls_serialize_detached().unwrap();
+        assert_eq!(
+            hex::encode(&bytes),
+            "01" // V1
+                .to_owned()
+                + "03010203" // sds_header
+                + "0000000000000009" // epoch_num
+                + "0707070707070707" // history: len 7, one fingerprint
+        );
+        assert_eq!(
+            GroupV3Header::tls_deserialize_exact_bytes(&bytes).unwrap(),
+            header
+        );
+
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert!(GroupV3Header::tls_deserialize_exact_bytes(&trailing).is_err());
     }
 }

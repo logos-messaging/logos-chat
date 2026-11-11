@@ -3399,6 +3399,7 @@ dependencies = [
  "serde",
  "tempfile",
  "thiserror",
+ "tls_codec",
  "tracing",
  "tracing-subscriber",
  "x25519-dalek",

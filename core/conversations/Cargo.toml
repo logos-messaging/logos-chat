@@ -35,6 +35,7 @@ rand_core = { version = "0.6" }
 sds = { git = "https://github.com/logos-messaging/sds-rs", rev = "1d431153ccc561bbf689aa7f3cd6e72563337c1f" }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "2.0.17"
+tls_codec = { version = "0.4.2", features = ["derive"] }
 tracing = "0.1.44"
 zeroize = { version = "1.8.2" }
 x25519-dalek = { version = "2.0.1", features = [
