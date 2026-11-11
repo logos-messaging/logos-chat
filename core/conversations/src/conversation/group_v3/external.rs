@@ -123,7 +123,7 @@ pub fn beacon_for_epoch(group: &MlsGroup, external_hpke_pub: Bytes) -> EpochBeac
     EpochBeacon {
         epoch: group.epoch().as_u64(),
         external_hpke_pub,
-        epoch_id: EpochFingerprint::from(group).into_string(),
+        epoch_id: EpochFingerprint::from(group).to_string(),
         signature: Bytes::new(),
     }
 }

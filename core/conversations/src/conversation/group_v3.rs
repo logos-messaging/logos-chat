@@ -422,7 +422,7 @@ impl GroupV3Convo {
             convo = %self.convo_id,
             epoch = starting_epoch,
             new_epoch = self.mls_group.epoch().as_u64(),
-            epochfingerprint = fingerprint.as_str(),
+            epochfingerprint = %fingerprint,
             "commit merged"
         );
 
