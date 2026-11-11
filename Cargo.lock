@@ -5349,7 +5349,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 [[package]]
 name = "sds"
 version = "0.1.0"
-source = "git+https://github.com/logos-messaging/sds-rs?rev=8b9e17cf95945d29cbfac91c1cf074743ec02a2e#8b9e17cf95945d29cbfac91c1cf074743ec02a2e"
+source = "git+https://github.com/logos-messaging/sds-rs?rev=370c6fbb458f66b42a39f8df948fe5c6b109c896#370c6fbb458f66b42a39f8df948fe5c6b109c896"
 dependencies = [
  "rand_core 0.10.1",
  "sha2 0.11.0",

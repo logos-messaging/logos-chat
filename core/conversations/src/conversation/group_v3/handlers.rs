@@ -9,20 +9,25 @@ use tracing::{debug, warn};
 
 use crate::conversation::mls_utils::EpochFingerprint;
 use crate::service_context::ServiceContext;
-use crate::{ChatError, Content, ConvoOutcome, ExternalServices, MessageId, Observation, Signer};
+use crate::{
+    ChatError, Content, ConvoOutcome, DeliveryMsgId, DeliveryService, ExternalServices, MessageId,
+    Observation, Signer,
+};
 
 use super::payloads::{GroupV3FrameType, protocol_message};
-use super::{DeferredCommit, Frame, GroupV3Convo};
+use super::{DeferredCommit, Frame, GroupV3Convo, delivery_address_from_id};
 
 impl GroupV3Convo {
     /// Act on SDS events in order: a released message goes through MLS, a record is published.
     /// A failure warns and moves on to the next event.
+    /// What SDS reports missing is fetched in one ask, once every event is handled.
     pub(super) fn handle_sds_events<S: ExternalServices>(
         &mut self,
         cx: &mut ServiceContext<S>,
         events: Vec<Event>,
     ) -> Vec<Observation> {
         let mut observations = Vec::new();
+        let mut to_fetch = Vec::new();
         for event in events {
             match event {
                 Event::MessageReady {
@@ -37,15 +42,46 @@ impl GroupV3Convo {
                         warn!(convo = %self.convo_id, error = %e, "dropping released message")
                     }
                 },
-                Event::Resend(record) | Event::Sync(record) | Event::Repair(record) => {
+                Event::Resend(record) | Event::Repair(record) => {
+                    if let Err(e) = self.publish_record(cx, record) {
+                        warn!(convo = %self.convo_id, error = %e, "failed to publish sds record");
+                    }
+                }
+                // SDS logs no sync message, so it has no hint to keep.
+                Event::Sync(record) => {
                     if let Err(e) = self.publish_payload(cx, record.into()) {
                         warn!(convo = %self.convo_id, error = %e, "failed to publish sds record");
                     }
                 }
+                Event::MissingDependencies { missing, .. } => to_fetch.extend(
+                    missing
+                        .into_iter()
+                        .filter_map(|entry| entry.retrieval_hint)
+                        .map(DeliveryMsgId::from),
+                ),
                 other => debug!(convo = %self.convo_id, ?other, "sds event"),
             }
         }
+        self.fetch_missing(cx, to_fetch);
         observations
+    }
+
+    /// Asks the delivery service for the payloads `delivery_msg_ids` name. A failure only warns, as
+    /// the next report naming them asks again.
+    fn fetch_missing<S: ExternalServices>(
+        &self,
+        cx: &mut ServiceContext<S>,
+        delivery_msg_ids: Vec<DeliveryMsgId>,
+    ) {
+        if delivery_msg_ids.is_empty() {
+            return;
+        }
+        if let Err(e) = cx
+            .ds
+            .fetch_messages(&delivery_address_from_id(&self.convo_id), &delivery_msg_ids)
+        {
+            warn!(convo = %self.convo_id, error = %e, "failed to fetch missing messages");
+        }
     }
 
     /// Handle inbound mls encrypted messages. Accepts a successfully decoded ProtocolMessage

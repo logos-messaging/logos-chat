@@ -29,8 +29,8 @@ use crate::errors::SendError;
 use crate::service_context::ServiceContext;
 use crate::utils::{blake2b_hex, hash_size};
 use crate::{
-    AddressedEnvelope, ChatError, ConvoOutcome, DeliveryInfo, DeliveryService, ExternalServices,
-    IdentityProvider, Observation, SignerKey, WakeupService,
+    AddressedEnvelope, ChatError, ConvoOutcome, DeliveryInfo, DeliveryMsgId, DeliveryService,
+    ExternalServices, IdentityProvider, Observation, SignerKey, WakeupService,
 };
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
@@ -181,7 +181,7 @@ impl GroupV3Convo {
             retrieval_hint: None,
         };
         let record = self.channel.send(message, now_ms(cx))?;
-        self.publish_payload(cx, record.into())?;
+        self.publish_record(cx, record)?;
 
         Ok(message_id)
     }
@@ -227,7 +227,7 @@ impl GroupV3Convo {
                 .ok_or_else(|| ChatError::generic("sds sent the commit without a timestamp"))?,
         };
         // SDS keeps the commit and resends it, so a failed publish heals as a lost one does.
-        if let Err(e) = self.publish_payload(cx, record.into()) {
+        if let Err(e) = self.publish_record(cx, record) {
             warn!(convo = %self.convo_id, error = %e, "failed to publish commit");
         }
         Ok(start)
@@ -325,11 +325,29 @@ impl GroupV3Convo {
         })
     }
 
+    /// Publishes a record SDS logged, and gives its message the id the delivery service returned
+    /// as its retrieval hint, which later histories name it by.
+    fn publish_record<S: ExternalServices>(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        record: SDSRecord,
+    ) -> Result<(), SendError> {
+        let message_id = record.header.message_id.clone();
+        if let Some(delivery_msg_id) = self.publish_payload(cx, record.into())?
+            && let Err(e) = self
+                .channel
+                .set_retrieval_hint(&message_id, delivery_msg_id.as_bytes().to_vec())
+        {
+            warn!(convo = %self.convo_id, error = %e, "failed to keep the retrieval hint");
+        }
+        Ok(())
+    }
+
     fn publish_payload<S: ExternalServices>(
         &self,
         cx: &mut ServiceContext<S>,
         payload: GroupV3Payload,
-    ) -> Result<(), SendError> {
+    ) -> Result<Option<DeliveryMsgId>, SendError> {
         let env = to_envelope(self.convo_id.to_string(), payload);
         Self::publish_envelope(cx, env)
     }
@@ -337,12 +355,10 @@ impl GroupV3Convo {
     fn publish_envelope<S: ExternalServices>(
         cx: &mut ServiceContext<S>,
         env: AddressedEnvelope,
-    ) -> Result<(), SendError> {
+    ) -> Result<Option<DeliveryMsgId>, SendError> {
         cx.ds
             .publish(env)
-            .map_err(|e| SendError::Delivery(e.to_string()))?;
-
-        Ok(())
+            .map_err(|e| SendError::Delivery(e.to_string()))
     }
 
     fn default_outcome(&self) -> ConvoOutcome {
@@ -419,12 +435,13 @@ where
         &mut self,
         cx: &mut ServiceContext<S>,
         payload: &[u8],
-        _delivery_info: Option<&DeliveryInfo>,
+        delivery_info: Option<&DeliveryInfo>,
     ) -> Result<ConvoOutcome, ChatError> {
         let payload = GroupV3Payload::decode(payload)?;
+        let retrieval_hint = delivery_info.map(|info| info.delivery_msg_id.as_bytes().to_vec());
         let events = self
             .channel
-            .receive(SDSRecord::try_from(payload)?, None, now_ms(cx))
+            .receive(SDSRecord::try_from(payload)?, retrieval_hint, now_ms(cx))
             .map_err(ChatError::generic)?;
         Ok(ConvoOutcome {
             observations: self.handle_sds_events(cx, events),
