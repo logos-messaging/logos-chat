@@ -6,6 +6,7 @@ use crate::clock::Clock;
 use crate::inbox_v2::{MlsEphemeralPqProvider, MlsIdentityProvider};
 use crate::service_traits::AuthService;
 use crate::service_traits::WakeupService;
+use crate::tracked_delivery::TrackedDelivery;
 use crate::{ConversationStore, DeliveryService, RegistrationService};
 
 /// Bundles the external service types (`DS`, `RS`, `CS`) behind one `S`. The
@@ -38,7 +39,7 @@ where
 
 /// Bundles every service a conversation operation may need.
 pub(crate) struct ServiceContext<S: ExternalServices> {
-    pub(crate) ds: S::DS,
+    pub(crate) ds: TrackedDelivery<S::DS>,
     pub(crate) registry: S::RS,
     pub(crate) store: S::CS,
     pub(crate) mls_identity: MlsIdentityProvider<S::IP>,

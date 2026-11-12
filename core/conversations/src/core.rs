@@ -7,10 +7,11 @@ use crate::identity::{AuthenticatedSigner, ParticipantId, Signer, SignerKey, Sig
 use crate::service_context::{ExternalServices, ServiceContext};
 use crate::service_traits::AuthService;
 use crate::storage::{ConversationKind, ConversationMeta, ConversationStore};
+use crate::tracked_delivery::{TrackedDelivery, TrackedMessage};
 use crate::types::ConvoMetadata;
 use crate::{
-    Clock, DeliveryInfo, DeliveryService, GroupV2Config, IdentityProvider, RegistrationService,
-    WakeupService,
+    Clock, DeliveryInfo, DeliveryService, GroupV2Config, IdentityProvider, PublishReceipt,
+    RegistrationService, WakeupService,
 };
 use crate::{
     conversation::{Convo, ConvoBase, GroupConvo, mls_trace::record},
@@ -110,7 +111,7 @@ where
 
         Ok(Self {
             services: ServiceContext {
-                ds: delivery,
+                ds: TrackedDelivery::new(delivery),
                 registry: registration,
                 store,
                 mls_identity,
@@ -129,7 +130,7 @@ where
 
 impl<'a, S: ExternalServices + 'static> Core<S> {
     pub fn ds(&mut self) -> &mut S::DS {
-        &mut self.services.ds
+        self.services.ds.get_mut()
     }
 
     pub fn store(&self) -> &S::CS {
@@ -498,6 +499,31 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         }
     }
 
+    /// Hands what the delivery service reported under the `receipt` its `publish` returned to the
+    /// conversation that published the payload: the payload's id, or `None` once the service gave
+    /// up on it. A receipt no conversation waits on is ignored, so a service can report every
+    /// payload, and more than once.
+    pub fn handle_delivery_report(
+        &mut self,
+        receipt: &PublishReceipt,
+        info: Option<&DeliveryInfo>,
+    ) -> Result<(), ChatError> {
+        let Some(TrackedMessage {
+            convo_id,
+            message_id,
+        }) = self.services.ds.take_tracked(receipt)
+        else {
+            return Ok(());
+        };
+        let Some(info) = info else {
+            return Ok(());
+        };
+        self.cached_convos
+            .get_mut(convo_id.as_str())
+            .ok_or_else(|| ChatError::NoConvo(convo_id))?
+            .handle_delivery_report(&message_id, info)
+    }
+
     pub fn wakeup(&mut self, convo_id: ConversationIdRef) -> Result<PayloadOutcome, ChatError> {
         info!(convos = ?self.cached_convos.keys().collect::<Vec<_>>(), id = ?self.services.mls_identity.signer_key(), "Cached Convos");
 
@@ -649,6 +675,19 @@ impl<S: ExternalServices> Convo<S> for ConvoTypeOwned<S> {
         match self {
             ConvoTypeOwned::Group(group_convo) => group_convo.wakeup(service_ctx),
             ConvoTypeOwned::Direct(convo) => convo.wakeup(service_ctx),
+        }
+    }
+
+    fn handle_delivery_report(
+        &mut self,
+        message_id: &str,
+        info: &DeliveryInfo,
+    ) -> Result<(), ChatError> {
+        match self {
+            ConvoTypeOwned::Group(group_convo) => {
+                group_convo.handle_delivery_report(message_id, info)
+            }
+            ConvoTypeOwned::Direct(convo) => convo.handle_delivery_report(message_id, info),
         }
     }
 }

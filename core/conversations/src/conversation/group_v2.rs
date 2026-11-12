@@ -436,6 +436,17 @@ where
         let (events, _) = self.after_op(ctx, own_epoch)?; // publish what poll produced + re-arm alarm
         self.outcome_from_events(ctx, &events)
     }
+
+    fn handle_delivery_report(
+        &mut self,
+        _message_id: &str,
+        _info: &DeliveryInfo,
+    ) -> Result<(), ChatError> {
+        Err(ChatError::UnsupportedFunction(
+            self.id().into(),
+            "Delivery Report".into(),
+        ))
+    }
 }
 
 impl<S> GroupConvo<S> for GroupV2Convo

@@ -30,8 +30,8 @@ use crate::errors::SendError;
 use crate::service_context::ServiceContext;
 use crate::utils::{blake2b_hex, hash_size};
 use crate::{
-    AddressedEnvelope, ChatError, ConvoOutcome, DeliveryInfo, DeliveryMsgId, DeliveryService,
-    ExternalServices, IdentityProvider, Observation, SignerKey, WakeupService,
+    AddressedEnvelope, ChatError, ConvoOutcome, DeliveryInfo, DeliveryService, ExternalServices,
+    IdentityProvider, Observation, SignerKey, WakeupService,
 };
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
@@ -328,14 +328,19 @@ impl GroupV3Convo {
     }
 
     /// Publishes a record SDS logged, and gives its message the id the delivery service returned
-    /// as its retrieval hint, which later histories name it by.
+    /// as its retrieval hint, which later histories name it by. An id the service reports later
+    /// comes through `handle_delivery_report`.
     fn publish_record<S: ExternalServices>(
         &mut self,
         cx: &mut ServiceContext<S>,
         record: SDSRecord,
     ) -> Result<(), SendError> {
         let message_id = record.header.message_id.clone();
-        if let Some(delivery_msg_id) = self.publish_payload(cx, record.into())?
+        let env = to_envelope(self.convo_id.to_string(), record.into());
+        if let Some(delivery_msg_id) = cx
+            .ds
+            .publish_tracked(env, &self.convo_id, &message_id)
+            .map_err(|e| SendError::Delivery(e.to_string()))?
             && let Err(e) = self
                 .channel
                 .set_retrieval_hint(&message_id, delivery_msg_id.as_bytes().to_vec())
@@ -349,7 +354,7 @@ impl GroupV3Convo {
         &self,
         cx: &mut ServiceContext<S>,
         payload: GroupV3Payload,
-    ) -> Result<Option<DeliveryMsgId>, SendError> {
+    ) -> Result<(), SendError> {
         let env = to_envelope(self.convo_id.to_string(), payload);
         Self::publish_envelope(cx, env)
     }
@@ -357,10 +362,11 @@ impl GroupV3Convo {
     fn publish_envelope<S: ExternalServices>(
         cx: &mut ServiceContext<S>,
         env: AddressedEnvelope,
-    ) -> Result<Option<DeliveryMsgId>, SendError> {
+    ) -> Result<(), SendError> {
         cx.ds
             .publish(env)
             .map_err(|e| SendError::Delivery(e.to_string()))
+            .map(drop)
     }
 
     fn default_outcome(&self) -> ConvoOutcome {
@@ -473,6 +479,16 @@ where
             observations,
             ..self.default_outcome()
         })
+    }
+
+    fn handle_delivery_report(
+        &mut self,
+        message_id: &str,
+        info: &DeliveryInfo,
+    ) -> Result<(), ChatError> {
+        self.channel
+            .set_retrieval_hint(message_id, info.delivery_msg_id.as_bytes().to_vec())
+            .map_err(ChatError::generic)
     }
 }
 

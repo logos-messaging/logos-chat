@@ -6,7 +6,9 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{Receiver, Sender, bounded};
-use logos_chat::{AddressedEnvelope, DeliveryMsgId, DeliveryService, InboundPayload, Transport};
+use logos_chat::{
+    AddressedEnvelope, DeliveryMsgId, DeliveryService, InboundPayload, PublishedId, Transport,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum FileTransportError {
@@ -48,10 +50,7 @@ impl FileTransport {
 impl DeliveryService for FileTransport {
     type Error = FileTransportError;
 
-    fn publish(
-        &mut self,
-        envelope: AddressedEnvelope,
-    ) -> Result<Option<DeliveryMsgId>, FileTransportError> {
+    fn publish(&mut self, envelope: AddressedEnvelope) -> Result<PublishedId, FileTransportError> {
         let addr_dir = self.transport_dir.join(&envelope.delivery_address);
         fs::create_dir_all(&addr_dir)?;
 
@@ -62,7 +61,7 @@ impl DeliveryService for FileTransport {
         let len = envelope.data.len() as u32;
         file.write_all(&len.to_be_bytes())?;
         file.write_all(&envelope.data)?;
-        Ok(None)
+        Ok(PublishedId::Unknown)
     }
 
     fn subscribe(&mut self, _delivery_address: &str) -> Result<(), Self::Error> {

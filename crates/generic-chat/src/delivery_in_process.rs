@@ -1,5 +1,6 @@
 use crate::{
-    AddressedEnvelope, DeliveryInfo, DeliveryMsgId, DeliveryService, InboundPayload, Transport,
+    AddressedEnvelope, DeliveryInfo, DeliveryMsgId, DeliveryService, InboundPayload, PublishedId,
+    Transport,
 };
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use std::collections::HashMap;
@@ -105,12 +106,9 @@ impl InProcessDelivery {
 impl DeliveryService for InProcessDelivery {
     type Error = Infallible;
 
-    fn publish(
-        &mut self,
-        envelope: AddressedEnvelope,
-    ) -> Result<Option<DeliveryMsgId>, Infallible> {
+    fn publish(&mut self, envelope: AddressedEnvelope) -> Result<PublishedId, Infallible> {
         let id = self.bus.publish(&envelope.delivery_address, envelope.data);
-        Ok(Some(id))
+        Ok(PublishedId::Known(id))
     }
 
     fn subscribe(&mut self, delivery_address: &str) -> Result<(), Self::Error> {
@@ -155,14 +153,12 @@ mod tests {
         let mut raya = InProcessDelivery::new(bus.clone());
         let raya_inbound = raya.inbound();
         raya.subscribe("group").unwrap();
-        let m1 = saro
-            .publish(envelope("group", b"m1"))
-            .unwrap()
-            .expect("delivery message id");
-        let x1 = saro
-            .publish(envelope("elsewhere", b"x1"))
-            .unwrap()
-            .expect("delivery message id");
+        let PublishedId::Known(m1) = saro.publish(envelope("group", b"m1")).unwrap() else {
+            panic!("no delivery message id");
+        };
+        let PublishedId::Known(x1) = saro.publish(envelope("elsewhere", b"x1")).unwrap() else {
+            panic!("no delivery message id");
+        };
         // Raya was there: m1 reaches it live, with the id its publish returned.
         let live = raya_inbound.try_recv().expect("m1");
         assert_eq!(

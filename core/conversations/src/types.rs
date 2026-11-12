@@ -71,6 +71,29 @@ pub struct DeliveryInfo {
     pub delivery_msg_id: DeliveryMsgId,
 }
 
+/// What `publish` returns of the payload's id.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PublishedId {
+    /// The payload's id.
+    Known(DeliveryMsgId),
+    /// The service learns the id later and reports it under this receipt, which the client passes
+    /// to [`Core::handle_delivery_report`](crate::Core::handle_delivery_report).
+    Pending(PublishReceipt),
+    /// The service never learns the id.
+    Unknown,
+}
+
+/// The delivery service's own name for a payload it published. Opaque to chat, which only keeps
+/// the payload's message under it until the service reports the id.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PublishReceipt(Vec<u8>);
+
+impl From<Vec<u8>> for PublishReceipt {
+    fn from(value: Vec<u8>) -> Self {
+        Self(value)
+    }
+}
+
 // Internal type Definitions
 
 // Used by Conversations to attach addresses to outbound encrypted payloads
