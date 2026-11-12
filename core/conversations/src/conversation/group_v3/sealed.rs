@@ -29,7 +29,7 @@ const MAX_PAYLOAD_LEN: usize = 1 + 2 // oneof tag and length
     + (1 + 10) // epoch
     + (1 + 1 + EPOCH_ID_LEN)
     + (1 + 1 + ED25519_SIGNATURE_LEN)
-    + (1 + 5); // attempt
+    + (1 + 1 + SIGNER_KEY_LEN); // answerer
 
 /// Encoded size of the largest well-formed [`SealedMessage`].
 pub const MAX_SEALED_LEN: usize = (1 + 10) // epoch
@@ -73,8 +73,11 @@ pub enum SealedKind {
 
 /// Asks the group to replace the sender's stale leaf with a fresh KeyPackage.
 /// Signed with the sender's leaf key and checked against the answerer's
-/// roster: sealing alone only shows the sender saw a beacon. `attempt` picks
-/// the answerer.
+/// roster: sealing alone only shows the sender saw a beacon.
+///
+/// `answerer` names the one member to repair it: one whose beacon for the
+/// target state the sender verified, so it is on the sender's roster and the
+/// sender accepts its Welcome.
 #[derive(Clone, PartialEq, Message)]
 pub struct ReAddRequest {
     #[prost(bytes = "bytes", tag = "1")]
@@ -85,18 +88,8 @@ pub struct ReAddRequest {
     pub epoch_id: String,
     #[prost(bytes = "bytes", tag = "4")]
     pub signature: Bytes,
-    #[prost(uint32, tag = "5")]
-    pub attempt: u32,
-}
-
-impl ReAddRequest {
-    /// The same sender stuck in the same state. Ignores the signature, which
-    /// differs per target, and the attempt.
-    pub fn asks_the_same(&self, other: &Self) -> bool {
-        self.signer_key == other.signer_key
-            && self.epoch == other.epoch
-            && self.epoch_id == other.epoch_id
-    }
+    #[prost(bytes = "bytes", tag = "5")]
+    pub answerer: Bytes,
 }
 
 /// The bytes a request signature covers, laid out as a beacon's are. Includes
@@ -111,7 +104,7 @@ fn tbs(req: &ReAddRequest, convo_id: &str, to_epoch: u64, to_epoch_id: &str) -> 
     put_bytes(&mut out, req.epoch_id.as_bytes());
     out.extend_from_slice(&to_epoch.to_be_bytes());
     put_bytes(&mut out, to_epoch_id.as_bytes());
-    out.extend_from_slice(&req.attempt.to_be_bytes());
+    put_bytes(&mut out, &req.answerer);
     out
 }
 
@@ -241,7 +234,7 @@ mod tests {
                 epoch: u64::MAX,
                 epoch_id: id(u64::MAX >> 8),
                 signature: Bytes::from_static(&[2; ED25519_SIGNATURE_LEN]),
-                attempt: u32::MAX,
+                answerer: Bytes::from_static(&[3; SIGNER_KEY_LEN]),
             })),
         }
     }
@@ -270,7 +263,7 @@ mod tests {
             epoch: 41,
             epoch_id: id(2),
             signature: Bytes::new(),
-            attempt: 0,
+            answerer: Bytes::from_static(&[3; SIGNER_KEY_LEN]),
         };
         let req = sign_request(req, "convo-a", &to, &LeafSigner(p, private)).expect("signed");
         let msg = SealedMessage {
@@ -289,13 +282,13 @@ mod tests {
             epoch: 41,
             epoch_id: "0123456789abcd".into(),
             signature: Bytes::from_static(&[0xCD; 3]),
-            attempt: 2,
+            answerer: Bytes::from_static(&[0xEF; 2]),
         };
 
         assert_eq!(
             hex::encode(tbs(&req, "convo-a", 42, "dcba9876543210")),
             "0000001d6c6f676f732d636861742f72656164642d7369676e61747572652f763100000007636f6e\
-766f2d6100000002abab00000000000000290000000e3031323334353637383961626364000000000000002a0000000e646362613938373635343332313000000002"
+766f2d6100000002abab00000000000000290000000e3031323334353637383961626364000000000000002a0000000e646362613938373635343332313000000002efef"
         );
     }
 
@@ -330,7 +323,9 @@ mod tests {
         type Change = fn(&mut ReAddRequest, &mut SealedMessage, &mut &str);
         let changes: [(&str, Change); 6] = [
             ("epoch", |r, _, _| r.epoch += 1),
-            ("attempt", |r, _, _| r.attempt += 1),
+            ("answerer", |r, _, _| {
+                r.answerer = Bytes::from_static(&[4; 32])
+            }),
             ("epoch id", |r, _, _| r.epoch_id = id(3)),
             ("sealed to another epoch", |_, m, _| m.epoch += 1),
             ("sealed to another branch", |_, m, _| m.epoch_id = id(4)),

@@ -41,6 +41,8 @@ fn fork(h: &mut TestHarness<3>, convo: &str) {
     h.raya().group_add_participants(convo, &pax).unwrap();
     h.tolerate_inbound_errors();
     h.process(Duration::from_secs(2));
+    // Pax's beacon, sent once he joined, reaches Raya.
+    h.process(Duration::from_secs(1));
 }
 
 #[test]
@@ -64,6 +66,8 @@ fn a_forked_member_is_readded_once_and_everyone_hears_each_other() {
     h.process(Duration::from_secs(2));
     assert_eq!(commits(&drain(&mut wire)), 1, "exactly one repair");
 
+    // Saro merges the repair before she sends, whoever answered.
+    h.process(Duration::from_secs(1));
     h.saro().send_content(&convo, b"welcome back").unwrap();
     h.process_until(|h| h.raya().check(&convo, b"welcome back"));
     h.raya().send_content(&convo, b"thanks").unwrap();
@@ -72,6 +76,70 @@ fn a_forked_member_is_readded_once_and_everyone_hears_each_other() {
     // Raya's Welcome to Pax arrived second, unasked, and must not have moved
     // Pax off Saro's branch.
     h.process_until(|h| h.pax().check(&convo, b"welcome back"));
+}
+
+/// The replaced group's subscription and tick carry over to the new one.
+#[test]
+fn a_readd_keeps_one_tick() {
+    const RAYA: usize = 1;
+    let (mut h, convo) = group_of_saro_and_raya();
+    fork(&mut h, &convo);
+    assert_eq!(h.pending_wakeups(RAYA, &convo), 1);
+
+    h.raya().group_request_readd(&convo).unwrap();
+    h.process(Duration::from_secs(2));
+    h.process(Duration::from_secs(1));
+    h.saro().send_content(&convo, b"welcome back").unwrap();
+    h.process_until(|h| h.raya().check(&convo, b"welcome back"));
+
+    assert_eq!(h.pending_wakeups(RAYA, &convo), 1);
+}
+
+/// After the fork Mira joins Saro's branch and commits last. Raya never knew
+/// her and would refuse her Welcome, so Raya names a member she does know.
+#[test]
+fn the_answerer_is_one_the_asker_knows() {
+    const SARO: usize = 0;
+    const RAYA: usize = 1;
+    const PAX: usize = 2;
+    const MIRA: usize = 3;
+    const NOOR: usize = 4;
+    let mut h = TestHarness::<5>::new(|_, _| {});
+    let raya = [h.client(RAYA).account()];
+    let convo = h
+        .client_mut(SARO)
+        .create_group_convo_v3(&raya, "", "")
+        .unwrap();
+    h.process_until(|h| h.client(RAYA).convo_count() == 1);
+    let pax = [h.client(PAX).account()];
+    h.client_mut(SARO)
+        .group_add_participants(&convo, &pax)
+        .unwrap();
+    h.client_mut(RAYA)
+        .group_add_participants(&convo, &pax)
+        .unwrap();
+    h.tolerate_inbound_errors();
+    h.process(Duration::from_secs(2));
+
+    let mira = [h.client(MIRA).account()];
+    h.client_mut(SARO)
+        .group_add_participants(&convo, &mira)
+        .unwrap();
+    h.process_until(|h| h.client(MIRA).convo_count() == 1);
+    let noor = [h.client(NOOR).account()];
+    h.client_mut(MIRA)
+        .group_add_participants(&convo, &noor)
+        .unwrap();
+    h.process_until(|h| h.client(NOOR).convo_count() == 1);
+    h.process(Duration::from_secs(1));
+
+    assert!(h.client_mut(RAYA).group_request_readd(&convo).unwrap() > 0);
+    h.process(Duration::from_secs(2));
+    h.process(Duration::from_secs(1));
+    h.client_mut(SARO)
+        .send_content(&convo, b"welcome back")
+        .unwrap();
+    h.process_until(|h| h.client(RAYA).check(&convo, b"welcome back"));
 }
 
 #[test]
@@ -168,27 +236,34 @@ fn asking_twice_before_an_answer_gets_one_repair() {
     assert_eq!(commits(&drain(&mut wire)), 1, "exactly one repair");
 }
 
-/// Saro, the answerer, misses the request. Asking again changes nothing; only
-/// a retry reaches Pax, who repairs.
+/// Raya names Saro and Pax in key order. The first misses the request: asking
+/// again changes nothing, and only a retry reaches the other, who repairs.
 #[test]
 fn a_retry_reaches_the_next_member() {
+    const SARO: usize = 0;
+    const PAX: usize = 2;
     let (mut h, convo) = group_of_saro_and_raya();
     fork(&mut h, &convo);
+    let first = if h.saro().signer_key().as_bytes() < h.pax().signer_key().as_bytes() {
+        SARO
+    } else {
+        PAX
+    };
 
     let mut wire = watch(&mut h, &convo);
     for _ in 0..2 {
         h.raya().group_request_readd(&convo).unwrap();
-        h.saro().drop_pending_payloads();
+        h.client_mut(first).drop_pending_payloads();
         h.process(Duration::from_secs(2));
     }
-    assert_eq!(commits(&drain(&mut wire)), 0, "only Saro may answer");
+    assert_eq!(commits(&drain(&mut wire)), 0, "only the first may answer");
 
     h.raya().group_retry_readd(&convo).unwrap();
-    h.saro().drop_pending_payloads();
+    h.client_mut(first).drop_pending_payloads();
     h.process(Duration::from_secs(2));
-    assert_eq!(commits(&drain(&mut wire)), 1, "Pax repairs");
+    assert_eq!(commits(&drain(&mut wire)), 1, "the second repairs");
 
-    // Saro hears Pax's repair on the next round.
+    // Saro hears the repair on the next round.
     h.process(Duration::from_secs(1));
     h.saro().send_content(&convo, b"welcome back").unwrap();
     h.process_until(|h| h.raya().check(&convo, b"welcome back"));

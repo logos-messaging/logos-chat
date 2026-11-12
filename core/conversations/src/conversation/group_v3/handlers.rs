@@ -1,7 +1,7 @@
 use openmls::framing::{ApplicationMessage, ProtocolMessage};
 use openmls::prelude::{
-    LeafNodeIndex, Member, ProcessMessageError, ProcessedMessage, ProcessedMessageContent, Sender,
-    StagedCommit, ValidationError,
+    Member, ProcessMessageError, ProcessedMessage, ProcessedMessageContent, Sender, StagedCommit,
+    ValidationError,
 };
 use prost::Message as _;
 use sds::Event;
@@ -12,7 +12,7 @@ use crate::service_context::ServiceContext;
 use crate::{ChatError, Content, ConvoOutcome, ExternalServices, MessageId, Observation, Signer};
 
 use super::payloads::{GroupV3FrameType, protocol_message};
-use super::{Frame, GroupV3Convo};
+use super::{Frame, GroupV3Convo, readd};
 
 impl GroupV3Convo {
     /// Act on SDS events in order: a released message goes through MLS, a record is published.
@@ -84,18 +84,17 @@ impl GroupV3Convo {
         processed: ProcessedMessage,
     ) -> Result<ConvoOutcome, ChatError> {
         // Resolved before `into_content` consumes the message.
-        let sender_index = match processed.sender() {
-            Sender::Member(index) => Some(*index),
+        let sender = match processed.sender() {
+            Sender::Member(index) => self.mls_group.member_at(*index),
             _ => None,
         };
-        let sender = sender_index.and_then(|index| self.mls_group.member_at(index));
 
         match processed.into_content() {
             ProcessedMessageContent::ApplicationMessage(msg) => {
                 self.handle_mls_application_message(cx, sender, msg, message_id)
             }
             ProcessedMessageContent::StagedCommitMessage(commit) => {
-                self.handle_mls_commit(cx, *commit, sender_index)
+                self.handle_mls_commit(cx, *commit)
             }
             other => {
                 debug!(convo = %self.convo_id, ?other, "ignoring mls message");
@@ -144,15 +143,15 @@ impl GroupV3Convo {
         &mut self,
         cx: &mut ServiceContext<S>,
         commit: StagedCommit,
-        committer: Option<LeafNodeIndex>,
     ) -> Result<ConvoOutcome, ChatError> {
         let epoch = self.mls_group.epoch().as_u64();
         let fingerprint = EpochFingerprint::of_commit(&commit);
+        let readded = readd::readded_signers(&self.mls_group, &commit);
 
         self.mls_group
             .merge_staged_commit(&cx.mls_provider, commit)
             .map_err(ChatError::generic)?;
-        self.committer = committer;
+        self.note_readds(readded);
         self.enter_epoch(cx);
 
         info!(

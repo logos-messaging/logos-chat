@@ -4,6 +4,7 @@
 
 use std::collections::VecDeque;
 
+use openmls::group::{MlsGroup, StagedCommit};
 use openmls::key_packages::KeyPackage;
 use openmls::prelude::LeafNodeIndex;
 use openmls_traits::OpenMlsProvider as _;
@@ -17,31 +18,32 @@ use crate::conversation::mls_utils::{EpochFingerprint, fetch_key_packages};
 use crate::service_context::ServiceContext;
 use crate::{ChatError, ConvoOutcome, ExternalServices, Observation, SignerKey};
 
-/// Requests already repaired, so a copy can't remove the fresh leaf.
-pub(super) const SERVED_RETAINED: usize = 16;
+/// Re-adds remembered, so a later request can't remove the fresh leaf.
+const READDS_RETAINED: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Refusal {
-    Served,
     NotAMember,
     /// We may be the one behind; re-adding the asker would be wrong.
     AskerAhead,
     /// We were in the state the asker names, so it is behind, not forked.
     SameState,
-    /// Another member answers, so the group commits one repair.
+    /// The asker was re-added after the state it names, so the leaf we hold
+    /// for it is the fresh one.
+    Readded,
+    /// The asker named another member, so the group commits one repair.
     NotOurTurn,
 }
 
 /// What a member knows when judging a request.
 pub(super) struct Judging<'a> {
     pub roster: &'a [(LeafNodeIndex, Vec<u8>)],
-    pub own: LeafNodeIndex,
+    /// Our leaf signature key.
+    pub own: &'a [u8],
     pub epoch: u64,
-    /// Who committed `epoch`, if we know.
-    pub committer: Option<LeafNodeIndex>,
     /// Our state at the asker's epoch, if we still know it.
     pub ours_at: Option<&'a str>,
-    pub served: &'a VecDeque<ReAddRequest>,
+    pub readds: &'a VecDeque<(Vec<u8>, u64)>,
 }
 
 /// The asker's stale leaf if we should repair it. With no record of the
@@ -51,13 +53,9 @@ pub(super) fn judge(req: &ReAddRequest, at: &Judging) -> Result<LeafNodeIndex, R
         roster,
         own,
         epoch,
-        committer,
         ours_at,
-        served,
+        readds,
     } = *at;
-    if served.iter().any(|s| s.asks_the_same(req)) {
-        return Err(Refusal::Served);
-    }
     let stale = roster
         .iter()
         .find(|(_, key)| key.as_slice() == req.signer_key.as_ref())
@@ -69,38 +67,57 @@ pub(super) fn judge(req: &ReAddRequest, at: &Judging) -> Result<LeafNodeIndex, R
     if ours_at == Some(req.epoch_id.as_str()) {
         return Err(Refusal::SameState);
     }
-    if answerer(roster, committer, stale, req.attempt) != Some(own) {
+    if readds
+        .iter()
+        .any(|(key, at)| key.as_slice() == req.signer_key.as_ref() && *at > req.epoch)
+    {
+        return Err(Refusal::Readded);
+    }
+    if req.answerer.as_ref() != own {
         return Err(Refusal::NotOurTurn);
     }
     Ok(stale)
 }
 
-/// The committer answers attempt 0, then each next leaf, never the asker.
-/// Every member of a branch picks the same one.
-fn answerer(
-    roster: &[(LeafNodeIndex, Vec<u8>)],
-    committer: Option<LeafNodeIndex>,
-    asker: LeafNodeIndex,
-    attempt: u32,
-) -> Option<LeafNodeIndex> {
-    let mut leaves: Vec<_> = roster
+/// Who answers `attempt` among a state's verified signers, never ourselves.
+/// The order is fixed, so a retry moves to the next one.
+fn answerer<'a>(signers: &'a [Vec<u8>], own: &[u8], attempt: u32) -> Option<&'a [u8]> {
+    let mut others: Vec<_> = signers
         .iter()
-        .map(|(i, _)| *i)
-        .filter(|i| *i != asker)
+        .map(Vec::as_slice)
+        .filter(|key| *key != own)
         .collect();
-    leaves.sort();
-    let start = committer
-        .and_then(|c| leaves.iter().position(|l| *l >= c))
-        .unwrap_or(0);
-    let len = leaves.len().max(1);
-    let turn = (start + attempt as usize % len) % len;
-    leaves.get(turn).copied()
+    others.sort_unstable();
+    let len = others.len();
+    (len > 0).then(|| others[attempt as usize % len])
+}
+
+/// Signers `commit` re-adds: removed, and added again under the same key.
+pub(super) fn readded_signers(group: &MlsGroup, commit: &StagedCommit) -> Vec<Vec<u8>> {
+    let removed: Vec<Vec<u8>> = commit
+        .remove_proposals()
+        .filter_map(|p| group.member_at(p.remove_proposal().removed()))
+        .map(|m| m.signature_key)
+        .collect();
+    commit
+        .add_proposals()
+        .map(|p| {
+            p.add_proposal()
+                .key_package()
+                .leaf_node()
+                .signature_key()
+                .as_slice()
+                .to_vec()
+        })
+        .filter(|key| removed.contains(key))
+        .collect()
 }
 
 impl GroupV3Convo {
-    /// Seal a re-add request to every other branch we heard. Returns how many
-    /// went out. Asking again reaches the same answerer; `next_answerer` moves
-    /// on, and only once a repair would have landed, or two members repair.
+    /// Seal a re-add request to the newest other states we heard, each naming
+    /// one of that state's verified signers to answer. Returns how many went
+    /// out. Asking again names the same answerer; `next_answerer` moves on, and
+    /// only once a repair would have landed, or two members repair.
     pub(super) fn request_readd<S: ExternalServices>(
         &mut self,
         cx: &mut ServiceContext<S>,
@@ -110,13 +127,14 @@ impl GroupV3Convo {
             .mls_group
             .own_leaf_node()
             .ok_or_else(|| ChatError::generic("not a member of this group"))?;
-        let epoch_id = EpochFingerprint::from(&self.mls_group).into_string();
+        let own_key = own.signature_key().as_slice();
+        let attempt = self.readd_attempt.saturating_add(u32::from(next_answerer));
         let req = ReAddRequest {
-            signer_key: Bytes::copy_from_slice(own.signature_key().as_slice()),
+            signer_key: Bytes::copy_from_slice(own_key),
             epoch: self.mls_group.epoch().as_u64(),
-            epoch_id,
+            epoch_id: EpochFingerprint::from(&self.mls_group).into_string(),
             signature: Bytes::new(),
-            attempt: self.readd_attempt.saturating_add(u32::from(next_answerer)),
+            answerer: Bytes::new(),
         };
 
         let ciphersuite = self.mls_group.ciphersuite();
@@ -124,9 +142,16 @@ impl GroupV3Convo {
         let sealed: Vec<SealedMessage> = self
             .beacons
             .seal_targets()
-            .map(|to| {
-                let signed =
-                    sealed::sign_request(req.clone(), &self.convo_id, to, &cx.mls_identity)?;
+            .filter_map(|state| {
+                let answerer = answerer(state.signers(), own_key, attempt)?;
+                Some((state.beacon(), Bytes::copy_from_slice(answerer)))
+            })
+            .map(|(to, answerer)| {
+                let req = ReAddRequest {
+                    answerer,
+                    ..req.clone()
+                };
+                let signed = sealed::sign_request(req, &self.convo_id, to, &cx.mls_identity)?;
                 let payload = SealedPayload {
                     kind: Some(SealedKind::ReAdd(signed)),
                 };
@@ -150,7 +175,7 @@ impl GroupV3Convo {
             _ => {}
         }
 
-        self.readd_attempt = req.attempt;
+        self.readd_attempt = attempt;
         // The Welcome that answers this replaces the group; see `held_group_to_replace`.
         cx.readd_pending.insert(self.convo_id.clone());
         info!(convo = %self.convo_id, sent, "asked to be re-added");
@@ -158,7 +183,7 @@ impl GroupV3Convo {
     }
 
     /// Anyone can publish a sealed message, so failing to open one is not an
-    /// error. Only our current state opens, so a served request can't replay.
+    /// error. Only our current state opens, so an answered request can't replay.
     pub(super) fn receive_sealed<S: ExternalServices>(
         &mut self,
         cx: &mut ServiceContext<S>,
@@ -202,13 +227,19 @@ impl GroupV3Convo {
             .members()
             .map(|m| (m.index, m.signature_key))
             .collect();
+        let own = self
+            .mls_group
+            .own_leaf_node()
+            .ok_or_else(|| ChatError::generic("not a member of this group"))?
+            .signature_key()
+            .as_slice()
+            .to_vec();
         let at = Judging {
             roster: &roster,
-            own: self.mls_group.own_leaf_index(),
+            own: &own,
             epoch: self.mls_group.epoch().as_u64(),
-            committer: self.committer,
             ours_at: self.beacons.our_epoch_id(req.epoch),
-            served: &self.served_readds,
+            readds: &self.readds,
         };
         let verdict = judge(&req, &at);
         let stale = match verdict {
@@ -229,16 +260,24 @@ impl GroupV3Convo {
         };
 
         self.readd(cx, stale, key_packages)?;
-        if self.served_readds.len() == SERVED_RETAINED {
-            self.served_readds.pop_front();
-        }
-        self.served_readds.push_back(req);
         info!(convo = %self.convo_id, %signer, "re-added a forked member");
 
         Ok(ConvoOutcome {
             observations: vec![Observation::SignersChanged],
             ..self.default_outcome()
         })
+    }
+
+    /// Remember who `readded` names, after merging the commit that re-added
+    /// them.
+    pub(super) fn note_readds(&mut self, readded: Vec<Vec<u8>>) {
+        let epoch = self.mls_group.epoch().as_u64();
+        for key in readded {
+            if self.readds.len() == READDS_RETAINED {
+                self.readds.pop_front();
+            }
+            self.readds.push_back((key, epoch));
+        }
     }
 
     /// `Remove` and `Add` in one commit, so the member is never out of the
@@ -291,74 +330,76 @@ mod tests {
         LeafNodeIndex::new(i)
     }
 
+    fn key(n: u8) -> Vec<u8> {
+        vec![n; 32]
+    }
+
+    /// Asks leaf 2 to answer.
     fn request(epoch: u64, epoch_id: &str) -> ReAddRequest {
         ReAddRequest {
             signer_key: Bytes::from_static(ASKER),
             epoch,
             epoch_id: epoch_id.to_string(),
             signature: Bytes::new(),
-            attempt: 0,
+            answerer: key(2).into(),
         }
     }
 
-    /// Leaves 0, 1 (the asker), 2 and 3; epoch 5, committed by leaf 2.
+    /// Leaves 0, 1 (the asker), 2 and 3, each keyed by its index; epoch 5.
     fn roster() -> Vec<(LeafNodeIndex, Vec<u8>)> {
         vec![
-            (leaf(0), vec![0; 32]),
+            (leaf(0), key(0)),
             (leaf(1), ASKER.to_vec()),
-            (leaf(2), vec![2; 32]),
-            (leaf(3), vec![3; 32]),
+            (leaf(2), key(2)),
+            (leaf(3), key(3)),
         ]
     }
 
     fn judge_as(
-        own: u32,
+        own: u8,
         req: &ReAddRequest,
         ours_at: Option<&str>,
-        served: &VecDeque<ReAddRequest>,
+        readds: &VecDeque<(Vec<u8>, u64)>,
     ) -> Result<LeafNodeIndex, Refusal> {
         let roster = roster();
+        let own = key(own);
         let at = Judging {
             roster: &roster,
-            own: leaf(own),
+            own: &own,
             epoch: 5,
-            committer: Some(leaf(2)),
             ours_at,
-            served,
+            readds,
         };
         judge(req, &at)
     }
 
-    fn committer_judges(
-        req: &ReAddRequest,
-        ours_at: Option<&str>,
-    ) -> Result<LeafNodeIndex, Refusal> {
+    fn named_judges(req: &ReAddRequest, ours_at: Option<&str>) -> Result<LeafNodeIndex, Refusal> {
         judge_as(2, req, ours_at, &VecDeque::new())
     }
 
     #[test]
-    fn the_epochs_committer_repairs_a_forked_member() {
+    fn the_named_member_repairs_a_forked_member() {
         assert_eq!(
-            committer_judges(&request(5, "theirs"), Some("ours")),
+            named_judges(&request(5, "theirs"), Some("ours")),
             Ok(leaf(1))
         );
     }
 
     #[test]
     fn with_no_record_of_the_epoch_we_accept() {
-        assert_eq!(committer_judges(&request(2, "theirs"), None), Ok(leaf(1)));
+        assert_eq!(named_judges(&request(2, "theirs"), None), Ok(leaf(1)));
     }
 
     #[test]
     fn an_asker_in_a_state_we_were_in_is_behind() {
-        let refused = committer_judges(&request(3, "shared"), Some("shared"));
+        let refused = named_judges(&request(3, "shared"), Some("shared"));
         assert_eq!(refused, Err(Refusal::SameState));
     }
 
     #[test]
     fn an_asker_ahead_of_us_is_refused() {
         assert_eq!(
-            committer_judges(&request(6, "theirs"), None),
+            named_judges(&request(6, "theirs"), None),
             Err(Refusal::AskerAhead)
         );
     }
@@ -367,14 +408,11 @@ mod tests {
     fn a_stranger_is_refused() {
         let mut req = request(5, "theirs");
         req.signer_key = Bytes::from_static(&[9; 32]);
-        assert_eq!(
-            committer_judges(&req, Some("ours")),
-            Err(Refusal::NotAMember)
-        );
+        assert_eq!(named_judges(&req, Some("ours")), Err(Refusal::NotAMember));
     }
 
     #[test]
-    fn only_the_answerer_repairs() {
+    fn only_the_named_member_repairs() {
         let req = request(5, "theirs");
         for own in [0, 3] {
             let verdict = judge_as(own, &req, Some("ours"), &VecDeque::new());
@@ -382,36 +420,210 @@ mod tests {
         }
     }
 
-    /// The committer first, then each next leaf, wrapping, never the asker.
+    /// Any member that merged the re-add refuses, not just the one that
+    /// answered: the leaf it holds for the asker is the fresh one.
     #[test]
-    fn each_attempt_moves_to_the_next_answerer() {
+    fn an_asker_readded_since_its_state_is_refused() {
+        let readds = VecDeque::from([(ASKER.to_vec(), 4)]);
+        let verdict = judge_as(2, &request(3, "theirs"), Some("ours"), &readds);
+        assert_eq!(verdict, Err(Refusal::Readded));
+    }
+
+    /// A fork after the re-add is a new one.
+    #[test]
+    fn an_asker_stuck_after_its_readd_is_repaired() {
+        let readds = VecDeque::from([(ASKER.to_vec(), 4)]);
+        let verdict = judge_as(2, &request(4, "theirs"), Some("ours"), &readds);
+        assert_eq!(verdict, Ok(leaf(1)));
+    }
+
+    /// In key order, wrapping, never ourselves.
+    #[test]
+    fn each_attempt_names_the_next_signer() {
+        let signers = [key(3), key(0), ASKER.to_vec(), key(2)];
         let answers: Vec<_> = (0..4)
-            .map(|attempt| answerer(&roster(), Some(leaf(2)), leaf(1), attempt))
+            .map(|attempt| answerer(&signers, ASKER, attempt).map(<[u8]>::to_vec))
             .collect();
-        assert_eq!(answers, [2, 3, 0, 2].map(|i| Some(leaf(i))));
+        assert_eq!(answers, [key(0), key(2), key(3), key(0)].map(Some));
     }
 
     #[test]
-    fn the_asker_never_answers_for_itself() {
-        let asker = leaf(2);
-        assert_ne!(answerer(&roster(), Some(leaf(2)), asker, 0), Some(asker));
-        assert_eq!(answerer(&roster(), Some(leaf(2)), asker, 0), Some(leaf(3)));
+    fn a_state_only_we_signed_has_no_answerer() {
+        assert_eq!(answerer(&[ASKER.to_vec()], ASKER, 0), None);
     }
 
-    #[test]
-    fn with_no_known_committer_the_lowest_leaf_answers() {
-        assert_eq!(answerer(&roster(), None, leaf(1), 0), Some(leaf(0)));
-    }
+    /// Real groups, so the commit is read as a receiver reads it.
+    mod readded {
+        use openmls::credentials::{BasicCredential, CredentialWithKey};
+        use openmls::framing::{
+            MlsMessageBodyIn, MlsMessageIn, MlsMessageOut, ProcessedMessageContent,
+        };
+        use openmls::prelude::StagedWelcome;
+        use openmls::prelude::tls_codec::Deserialize as _;
+        use openmls_traits::crypto::OpenMlsCrypto as _;
+        use openmls_traits::signatures::{Signer, SignerError};
+        use openmls_traits::types::SignatureScheme;
 
-    /// Copies sealed to different targets carry different signatures, and a
-    /// retry a different attempt: neither is a new ask.
-    #[test]
-    fn a_repeat_of_a_served_ask_is_refused() {
-        let served = VecDeque::from([request(5, "theirs")]);
-        let mut repeat = request(5, "theirs");
-        repeat.signature = Bytes::from_static(&[7; 64]);
-        repeat.attempt = 1;
-        let verdict = judge_as(3, &repeat, Some("ours"), &served);
-        assert_eq!(verdict, Err(Refusal::Served));
+        use super::*;
+        use crate::conversation::group_v3::external::tests::{leaf_key, provider};
+        use crate::conversation::mls_extensions::capabilities_with_group_metadata;
+        use crate::conversation::mls_groups::{group_create_config, group_join_config};
+        use crate::inbox_v2::{CIPHER_SUITE, MlsEphemeralPqProvider};
+
+        struct Member {
+            p: MlsEphemeralPqProvider,
+            private: Vec<u8>,
+            public: Vec<u8>,
+        }
+
+        impl Signer for Member {
+            fn sign(&self, payload: &[u8]) -> Result<Vec<u8>, SignerError> {
+                self.p
+                    .crypto()
+                    .sign(SignatureScheme::ED25519, payload, &self.private)
+                    .map_err(|_| SignerError::SigningError)
+            }
+
+            fn signature_scheme(&self) -> SignatureScheme {
+                SignatureScheme::ED25519
+            }
+        }
+
+        impl Member {
+            fn new() -> Self {
+                let p = provider();
+                let (private, public) = leaf_key(&p);
+                Self { p, private, public }
+            }
+
+            fn credential(&self) -> CredentialWithKey {
+                CredentialWithKey {
+                    credential: BasicCredential::new(self.public.clone()).into(),
+                    signature_key: self.public.clone().into(),
+                }
+            }
+
+            fn key_package(&self) -> KeyPackage {
+                KeyPackage::builder()
+                    .leaf_node_capabilities(capabilities_with_group_metadata())
+                    .build(CIPHER_SUITE, &self.p, self, self.credential())
+                    .expect("key package")
+                    .key_package()
+                    .clone()
+            }
+        }
+
+        fn parse(msg: MlsMessageOut) -> MlsMessageBodyIn {
+            let bytes = msg.to_bytes().expect("serialize");
+            MlsMessageIn::tls_deserialize_exact(&bytes)
+                .expect("deserialize")
+                .extract()
+        }
+
+        /// Saro commits, and Pax stages the commit as a receiver.
+        fn received(
+            saro: &Member,
+            group: &mut MlsGroup,
+            pax: &Member,
+            pax_group: &mut MlsGroup,
+            removed: &[LeafNodeIndex],
+            added: &[KeyPackage],
+        ) -> Vec<Vec<u8>> {
+            let bundle = group
+                .commit_builder()
+                .propose_removals(removed.iter().copied())
+                .propose_adds(added.iter().cloned())
+                .load_psks(saro.p.storage())
+                .expect("psks")
+                .build(saro.p.rand(), saro.p.crypto(), saro, |_| true)
+                .expect("commit")
+                .stage_commit(&saro.p)
+                .expect("staged");
+            let (commit, _, _) = bundle.into_messages();
+            group.merge_pending_commit(&saro.p).expect("merged");
+
+            let bytes = commit.to_bytes().expect("serialize");
+            let commit = MlsMessageIn::tls_deserialize_exact(&bytes)
+                .expect("deserialize")
+                .try_into_protocol_message()
+                .expect("a commit");
+            let processed = pax_group
+                .process_message(&pax.p, commit)
+                .expect("processed");
+            let ProcessedMessageContent::StagedCommitMessage(staged) = processed.into_content()
+            else {
+                panic!("a staged commit")
+            };
+            let readded = readded_signers(pax_group, &staged);
+            pax_group
+                .merge_staged_commit(&pax.p, *staged)
+                .expect("merged");
+            readded
+        }
+
+        #[test]
+        fn a_received_commit_names_only_the_readded_signer() {
+            let (saro, raya, pax, mira) =
+                (Member::new(), Member::new(), Member::new(), Member::new());
+            let mut group = MlsGroup::new(
+                &saro.p,
+                &saro,
+                &group_create_config("", ""),
+                saro.credential(),
+            )
+            .expect("group");
+            let (_, welcome, _) = group
+                .add_members(&saro.p, &saro, &[raya.key_package(), pax.key_package()])
+                .expect("added");
+            group.merge_pending_commit(&saro.p).expect("merged");
+            let MlsMessageBodyIn::Welcome(welcome) = parse(welcome) else {
+                panic!("a Welcome")
+            };
+            let mut pax_group =
+                StagedWelcome::build_from_welcome(&pax.p, &group_join_config(), welcome)
+                    .expect("welcome")
+                    .build()
+                    .expect("staged")
+                    .into_group(&pax.p)
+                    .expect("joined");
+            let raya_leaf = |g: &MlsGroup| {
+                g.members()
+                    .find(|m| m.signature_key == raya.public)
+                    .expect("Raya is a member")
+                    .index
+            };
+
+            let adds_only = received(
+                &saro,
+                &mut group,
+                &pax,
+                &mut pax_group,
+                &[],
+                &[mira.key_package()],
+            );
+            assert!(adds_only.is_empty());
+
+            let stale = raya_leaf(&group);
+            let readd = received(
+                &saro,
+                &mut group,
+                &pax,
+                &mut pax_group,
+                &[stale],
+                &[raya.key_package()],
+            );
+            assert_eq!(readd, std::slice::from_ref(&raya.public));
+
+            let stale = raya_leaf(&group);
+            let swapped = received(
+                &saro,
+                &mut group,
+                &pax,
+                &mut pax_group,
+                &[stale],
+                &[Member::new().key_package()],
+            );
+            assert!(swapped.is_empty());
+        }
     }
 }

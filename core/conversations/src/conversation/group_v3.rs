@@ -24,7 +24,7 @@ use openmls::framing::MlsMessageOut;
 use openmls::group::{MlsGroup, StagedWelcome};
 use openmls::key_packages::KeyPackage;
 use openmls::messages::Welcome;
-use openmls::prelude::{GroupId, LeafNodeIndex};
+use openmls::prelude::GroupId;
 use openmls_traits::OpenMlsProvider;
 use openmls_traits::storage::StorageProvider as _;
 use prost::Message;
@@ -79,9 +79,9 @@ pub struct GroupV3Convo {
     mls_group: MlsGroup,
     channel: Channel,
     beacons: Beacons,
-    served_readds: VecDeque<sealed::ReAddRequest>,
-    /// Who committed the current epoch, if we know.
-    committer: Option<LeafNodeIndex>,
+    /// Signers re-added in a commit we merged, with the epoch it started. Kept
+    /// by every member, so a later request can't remove the fresh leaf.
+    readds: VecDeque<(Vec<u8>, u64)>,
     /// Our last re-add request's attempt; it picks the answerer.
     readd_attempt: u32,
 }
@@ -105,9 +105,7 @@ impl GroupV3Convo {
     ) -> Result<Self, ChatError> {
         // Create MlsGroup
         let mls_group = create_group(cx, name, desc)?;
-        let own = mls_group.own_leaf_index();
-
-        let mut convo = Self::from_group(cx, mls_group, None, own)?;
+        let mut convo = Self::from_group(cx, mls_group, None)?;
 
         convo.init(cx)?;
         convo.add_signer(cx, signers)?;
@@ -129,14 +127,16 @@ impl GroupV3Convo {
                 .build()
                 .map_err(ChatError::generic)?;
         let held = held_group_to_replace(cx, &staged)?;
-        let committer = staged.welcome_sender_index();
         let mls_group = staged
             .into_group(&cx.mls_provider)
             .map_err(ChatError::generic)?;
 
-        let mut convo = Self::from_group(cx, mls_group, Some(start), committer)?;
+        let mut convo = Self::from_group(cx, mls_group, Some(start))?;
 
-        convo.init(cx)?;
+        // A replaced group's subscription and tick carry over.
+        if held.is_none() {
+            convo.init(cx)?;
+        }
         if let Some(held) = &held {
             forget_held_group(cx, held, &convo.mls_group)?;
             cx.readd_pending.remove(&convo.convo_id);
@@ -150,7 +150,6 @@ impl GroupV3Convo {
         cx: &ServiceContext<S>,
         mls_group: MlsGroup,
         start: Option<StartPoint>,
-        committer: LeafNodeIndex,
     ) -> Result<Self, ChatError> {
         let convo_id = hex::encode(mls_group.group_id().as_slice());
         let channel = create_sds_channel(cx, &convo_id, start)?;
@@ -159,8 +158,7 @@ impl GroupV3Convo {
             mls_group,
             channel,
             beacons: Beacons::default(),
-            served_readds: VecDeque::new(),
-            committer: Some(committer),
+            readds: VecDeque::new(),
             readd_attempt: 0,
         })
     }
@@ -291,8 +289,13 @@ impl GroupV3Convo {
         };
 
         // Update State
+        let readded = self
+            .mls_group
+            .pending_commit()
+            .map(|commit| readd::readded_signers(&self.mls_group, commit))
+            .unwrap_or_default();
         self.mls_group.merge_pending_commit(&cx.mls_provider)?;
-        self.committer = Some(self.mls_group.own_leaf_index());
+        self.note_readds(readded);
         self.enter_epoch(cx);
 
         let start = StartPoint {

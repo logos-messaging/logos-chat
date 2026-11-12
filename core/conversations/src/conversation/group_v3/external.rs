@@ -147,8 +147,13 @@ where
         .map_err(|e| ExternalError::Sign(format!("{e:?}")))
 }
 
-/// Whether one of `keys`, leaf signature keys, signed the beacon.
-pub fn verify_beacon<C, I, K>(crypto: &C, convo_id: &str, beacon: &EpochBeacon, keys: I) -> bool
+/// Which of `keys`, leaf signature keys, signed the beacon.
+pub fn verify_beacon<C, I, K>(
+    crypto: &C,
+    convo_id: &str,
+    beacon: &EpochBeacon,
+    keys: I,
+) -> Option<K>
 where
     C: OpenMlsCrypto,
     I: IntoIterator<Item = K>,
@@ -157,7 +162,7 @@ where
     let scheme = CIPHER_SUITE.signature_algorithm();
     let tbs = tbs(beacon, convo_id);
 
-    keys.into_iter().any(|key| {
+    keys.into_iter().find(|key| {
         crypto
             .verify_signature(scheme, &tbs, key.as_ref(), &beacon.signature)
             .is_ok()
@@ -295,12 +300,8 @@ pub(super) mod tests {
         let (private, public) = leaf_key(&p);
         let b = signed(&p, beacon(41, &id(1)), &private);
 
-        assert!(verify_beacon(
-            p.crypto(),
-            "convo-a",
-            &b,
-            [public, vec![1; 32]]
-        ));
+        let signer = verify_beacon(p.crypto(), "convo-a", &b, [vec![1; 32], public.clone()]);
+        assert_eq!(signer, Some(public));
     }
 
     #[test]
@@ -308,12 +309,7 @@ pub(super) mod tests {
         let p = provider();
         let (_, public) = leaf_key(&p);
 
-        assert!(!verify_beacon(
-            p.crypto(),
-            "convo-a",
-            &beacon(41, &id(1)),
-            [public]
-        ));
+        assert!(verify_beacon(p.crypto(), "convo-a", &beacon(41, &id(1)), [public]).is_none());
     }
 
     #[test]
@@ -323,7 +319,7 @@ pub(super) mod tests {
         let (_, member) = leaf_key(&p);
         let b = signed(&p, beacon(41, &id(2)), &outsider);
 
-        assert!(!verify_beacon(p.crypto(), "convo-a", &b, [member]));
+        assert!(verify_beacon(p.crypto(), "convo-a", &b, [member]).is_none());
     }
 
     #[test]
@@ -344,12 +340,12 @@ pub(super) mod tests {
             let mut tampered = original.clone();
             edit(&mut tampered);
             assert!(
-                !verify_beacon(p.crypto(), "convo-a", &tampered, [&public]),
+                verify_beacon(p.crypto(), "convo-a", &tampered, [&public]).is_none(),
                 "edited {field} still verified"
             );
         }
 
-        assert!(!verify_beacon(p.crypto(), "convo-b", &original, [&public]));
+        assert!(verify_beacon(p.crypto(), "convo-b", &original, [&public]).is_none());
     }
 
     #[test]

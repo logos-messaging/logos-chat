@@ -1,7 +1,7 @@
 //! What a member does with beacons: make its own once per epoch, and keep the
 //! verified ones it hears. Sending is left to the conversation.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use blake2::digest::consts::U32;
@@ -38,8 +38,8 @@ pub struct Beacons {
     states: VecDeque<(u64, String)>,
     /// Epoch our beacon was made for.
     epoch: Option<u64>,
-    /// Frames already verified this epoch.
-    verified: VecDeque<[u8; 32]>,
+    /// Frames already verified this epoch, with the key that signed each.
+    verified: VecDeque<([u8; 32], Vec<u8>)>,
     /// Our own signed beacon, until it is sent.
     outgoing: Option<EpochBeacon>,
     retry_in: Duration,
@@ -83,8 +83,9 @@ impl Beacons {
         beacon.signature = external::sign_beacon(&beacon, convo_id, &cx.mls_identity)?;
 
         // Kept so a request can later be sealed to every branch *but* ours.
-        if let Some(own) = external::admit(beacon.clone()) {
-            self.store.remember(own);
+        if let (Some(own), Some(leaf)) = (external::admit(beacon.clone()), group.own_leaf_node()) {
+            self.store
+                .remember(own, leaf.signature_key().as_slice().to_vec());
         }
         self.outgoing = Some(beacon);
         Ok(())
@@ -134,17 +135,20 @@ impl Beacons {
             .map(|(_, id)| id.as_str())
     }
 
-    /// One beacon per state we were never in.
-    pub fn seal_targets(&self) -> impl Iterator<Item = &EpochBeacon> {
-        let mut seen = HashSet::new();
-        self.store
-            .beacons
+    /// The newest states we were never in. An older state is likely
+    /// superseded, and a member still in it would answer from behind.
+    pub fn seal_targets(&self) -> impl Iterator<Item = &HeardState> {
+        let mut others = self
+            .store
+            .states
             .iter()
-            .map(Admitted::beacon)
-            .filter(move |b| {
+            .filter(|s| {
+                let b = s.beacon();
                 self.our_epoch_id(b.epoch) != Some(b.epoch_id.as_str())
-                    && seen.insert((b.epoch, b.epoch_id.as_str()))
             })
+            .peekable();
+        let newest = others.peek().map(|s| s.beacon().epoch);
+        others.take_while(move |s| Some(s.beacon().epoch) == newest)
     }
 
     /// A beacon heard on the wire, `bytes` being its whole frame. Kept only if
@@ -162,34 +166,74 @@ impl Beacons {
         K: AsRef<[u8]>,
     {
         let digest: [u8; 32] = Blake2b::<U32>::digest(bytes).into();
-        if !self.verified.contains(&digest) {
-            if !external::verify_beacon(crypto, convo_id, beacon.beacon(), keys) {
-                debug!(convo = convo_id, "refused a beacon no member signed");
-                return;
+        let cached = self.verified.iter().find(|(d, _)| *d == digest);
+        let signer = match cached {
+            Some((_, signer)) => signer.clone(),
+            None => {
+                let Some(key) = external::verify_beacon(crypto, convo_id, beacon.beacon(), keys)
+                else {
+                    debug!(convo = convo_id, "refused a beacon no member signed");
+                    return;
+                };
+                let signer = key.as_ref().to_vec();
+                if self.verified.len() == VERIFIED_RETAINED {
+                    self.verified.pop_front();
+                }
+                self.verified.push_back((digest, signer.clone()));
+                signer
             }
-            if self.verified.len() == VERIFIED_RETAINED {
-                self.verified.pop_front();
-            }
-            self.verified.push_back(digest);
-        }
-        self.store.remember(beacon);
+        };
+        self.store.remember(beacon, signer);
     }
 }
 
-/// Recent verified beacons.
+/// A state we heard, and the members whose beacons for it verified: each is
+/// on our roster and in that state.
+#[derive(Debug)]
+pub struct HeardState {
+    beacon: Admitted,
+    signers: Vec<Vec<u8>>,
+}
+
+impl HeardState {
+    pub fn beacon(&self) -> &EpochBeacon {
+        self.beacon.beacon()
+    }
+
+    /// Leaf signature keys, in the order first heard.
+    pub fn signers(&self) -> &[Vec<u8>] {
+        &self.signers
+    }
+}
+
+/// Recent verified states. Signers come from our roster, so they are bounded
+/// by it.
 #[derive(Debug, Default)]
 struct BeaconStore {
-    beacons: Vec<Admitted>,
+    states: Vec<HeardState>,
 }
 
 impl BeaconStore {
-    /// Keep the beacon, newest epoch first, one per state.
-    fn remember(&mut self, beacon: Admitted) {
-        self.beacons.retain(|held| !same_state(held, &beacon));
-        self.beacons.push(beacon);
-        self.beacons
-            .sort_by_key(|b| std::cmp::Reverse(b.beacon().epoch));
-        self.beacons.truncate(BEACONS_RETAINED);
+    /// Keep the beacon, newest epoch first, one entry per state.
+    fn remember(&mut self, beacon: Admitted, signer: Vec<u8>) {
+        if let Some(held) = self
+            .states
+            .iter_mut()
+            .find(|s| same_state(&s.beacon, &beacon))
+        {
+            held.beacon = beacon;
+            if !held.signers.contains(&signer) {
+                held.signers.push(signer);
+            }
+            return;
+        }
+        self.states.push(HeardState {
+            beacon,
+            signers: vec![signer],
+        });
+        self.states
+            .sort_by_key(|s| std::cmp::Reverse(s.beacon().epoch));
+        self.states.truncate(BEACONS_RETAINED);
     }
 }
 
@@ -219,6 +263,10 @@ mod tests {
 
     const NO_KEYS: [&[u8]; 0] = [];
 
+    fn key(n: u8) -> Vec<u8> {
+        vec![n; 32]
+    }
+
     fn receive<K: AsRef<[u8]>>(
         beacons: &mut Beacons,
         p: &impl OpenMlsCrypto,
@@ -241,10 +289,11 @@ mod tests {
         let mut beacons = Beacons::default();
 
         receive(&mut beacons, p.crypto(), &[&public], &bytes);
-        beacons.store.beacons.clear();
+        beacons.store.states.clear();
         receive(&mut beacons, p.crypto(), &NO_KEYS, &bytes);
 
-        assert_eq!(beacons.store.beacons.len(), 1);
+        assert_eq!(beacons.store.states.len(), 1);
+        assert_eq!(beacons.store.states[0].signers(), [public]);
     }
 
     #[test]
@@ -257,7 +306,7 @@ mod tests {
 
         receive(&mut beacons, p.crypto(), &[&member], &bytes);
 
-        assert!(beacons.store.beacons.is_empty());
+        assert!(beacons.store.states.is_empty());
         assert!(beacons.verified.is_empty());
     }
 
@@ -296,32 +345,59 @@ mod tests {
     #[test]
     fn a_newer_beacon_replaces_one_for_the_same_state() {
         let mut store = BeaconStore::default();
-        store.remember(admitted(41, 4));
+        store.remember(admitted(41, 4), key(1));
         let mut newer = beacon(41, &id(4));
         newer.external_hpke_pub = vec![2; crate::inbox_v2::HPKE_PUBLIC_KEY_LEN].into();
-        store.remember(external::admit(newer).unwrap());
+        store.remember(external::admit(newer).unwrap(), key(1));
 
-        assert_eq!(store.beacons.len(), 1);
-        assert_eq!(store.beacons[0].beacon().external_hpke_pub[0], 2);
+        assert_eq!(store.states.len(), 1);
+        assert_eq!(store.states[0].beacon().external_hpke_pub[0], 2);
+    }
+
+    #[test]
+    fn every_member_heard_in_a_state_is_kept_once() {
+        let mut store = BeaconStore::default();
+        for k in [1, 2, 1] {
+            store.remember(admitted(41, 4), key(k));
+        }
+
+        assert_eq!(store.states[0].signers(), [key(1), key(2)]);
     }
 
     #[test]
     fn both_branches_at_one_epoch_are_kept() {
         let mut store = BeaconStore::default();
-        store.remember(admitted(41, 5));
-        store.remember(admitted(41, 6));
+        store.remember(admitted(41, 5), key(1));
+        store.remember(admitted(41, 6), key(1));
 
-        assert_eq!(store.beacons.len(), 2);
+        assert_eq!(store.states.len(), 2);
+    }
+
+    /// A branch's older states are superseded: a member still in one would
+    /// answer from behind and fork itself.
+    #[test]
+    fn only_the_newest_other_states_are_sealed_to() {
+        let mut beacons = Beacons::default();
+        beacons.hold(7, &id(7), vec![7; 32].into());
+        for (epoch, n) in [(7, 7), (5, 1), (6, 2), (6, 3)] {
+            beacons.store.remember(admitted(epoch, n), key(1));
+        }
+
+        let targets: Vec<_> = beacons
+            .seal_targets()
+            .map(|s| (s.beacon().epoch, s.beacon().epoch_id.clone()))
+            .collect();
+        assert_eq!(targets, [(6, id(2)), (6, id(3))]);
     }
 
     #[test]
     fn the_store_keeps_the_newest_epochs() {
         let mut store = BeaconStore::default();
         for epoch in 0..BEACONS_RETAINED as u64 + 3 {
-            store.remember(admitted(epoch, epoch));
+            store.remember(admitted(epoch, epoch), key(1));
         }
 
-        assert_eq!(store.beacons.len(), BEACONS_RETAINED);
-        assert_eq!(store.beacons[0].beacon().epoch, BEACONS_RETAINED as u64 + 2);
+        assert_eq!(store.states.len(), BEACONS_RETAINED);
+        assert_eq!(store.states[0].beacon().epoch, BEACONS_RETAINED as u64 + 2);
     }
 }

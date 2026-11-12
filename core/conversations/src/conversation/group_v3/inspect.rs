@@ -54,7 +54,7 @@ pub fn is_beacon(data: &[u8]) -> bool {
 pub fn beacon_signed_by(data: &[u8], convo_id: &str, signer: &SignerKey) -> Option<u64> {
     let beacon = beacon_frame(data)?;
     let provider = MlsEphemeralPqProvider::new().ok()?;
-    verify_beacon(provider.crypto(), convo_id, &beacon, [signer.as_bytes()]).then_some(beacon.epoch)
+    verify_beacon(provider.crypto(), convo_id, &beacon, [signer.as_bytes()]).map(|_| beacon.epoch)
 }
 
 /// Whether the envelope is an MLS commit.
@@ -80,7 +80,7 @@ pub fn unsigned_readd(
             epoch: to.epoch,
             epoch_id: epoch_id.into(),
             signature: Default::default(),
-            attempt: 0,
+            answerer: Default::default(),
         })),
     };
     let provider = MlsEphemeralPqProvider::new().ok()?;
