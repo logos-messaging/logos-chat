@@ -180,6 +180,13 @@ impl Admitted {
     }
 }
 
+/// One state of the group. Branches of a fork share an epoch, so the id too.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Branch {
+    pub epoch: u64,
+    pub epoch_id: String,
+}
+
 /// Shape checks, cheap enough for anything. Every field ends up fixed-size, so
 /// a store of admitted beacons is bounded in bytes as well as entries.
 pub fn admit(beacon: EpochBeacon) -> Option<Admitted> {
@@ -295,7 +302,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_member_signed_beacon_verifies() {
+    fn a_verified_beacon_names_its_signer() {
         let p = provider();
         let (private, public) = leaf_key(&p);
         let b = signed(&p, beacon(41, &id(1)), &private);

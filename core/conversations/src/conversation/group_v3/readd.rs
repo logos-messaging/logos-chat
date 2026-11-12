@@ -1,5 +1,5 @@
-//! Putting a forked member back. The member seals a [`ReAddRequest`] to
-//! another branch's external key; one member of that branch repairs it with
+//! Putting a forked member back. The member seals a [`ReAddRequest`] to one
+//! other branch's external key; one member of that branch repairs it with
 //! `Remove(stale leaf) + Add(fresh KeyPackage)` and sends the Welcome.
 
 use std::collections::VecDeque;
@@ -8,14 +8,17 @@ use openmls::group::{MlsGroup, StagedCommit};
 use openmls::key_packages::KeyPackage;
 use openmls::prelude::LeafNodeIndex;
 use openmls_traits::OpenMlsProvider as _;
+use openmls_traits::crypto::OpenMlsCrypto;
 use prost::bytes::Bytes;
 use tracing::{debug, info, warn};
 
 use super::GroupV3Convo;
+use super::beacons::Beacons;
+use super::external::Branch;
 use super::payloads::{GroupV3External, GroupV3Payload};
 use super::sealed::{self, ReAddRequest, SealedKind, SealedMessage, SealedPayload};
 use crate::conversation::mls_utils::{EpochFingerprint, fetch_key_packages};
-use crate::service_context::ServiceContext;
+use crate::service_context::{ReAddTarget, ServiceContext};
 use crate::{ChatError, ConvoOutcome, ExternalServices, Observation, SignerKey};
 
 /// Re-adds remembered, so a later request can't remove the fresh leaf.
@@ -33,6 +36,8 @@ pub(super) enum Refusal {
     Readded,
     /// The asker named another member, so the group commits one repair.
     NotOurTurn,
+    /// The asker's branch outranks ours, so we are the side that moves.
+    Outranked,
 }
 
 /// What a member knows when judging a request.
@@ -44,17 +49,26 @@ pub(super) struct Judging<'a> {
     /// Our state at the asker's epoch, if we still know it.
     pub ours_at: Option<&'a str>,
     pub readds: &'a VecDeque<(Vec<u8>, u64)>,
+    /// Who vouched for which branch, to rank ours against the asker's.
+    pub beacons: &'a Beacons,
 }
 
 /// The asker's stale leaf if we should repair it. With no record of the
-/// asker's epoch we accept, so a real fork is never left stuck.
-pub(super) fn judge(req: &ReAddRequest, at: &Judging) -> Result<LeafNodeIndex, Refusal> {
+/// asker's epoch we accept, so a real fork is never left stuck. Ranking comes
+/// last, so only the answerer verifies the asker's evidence.
+pub(super) fn judge(
+    crypto: &impl OpenMlsCrypto,
+    convo_id: &str,
+    req: &ReAddRequest,
+    at: &Judging,
+) -> Result<LeafNodeIndex, Refusal> {
     let Judging {
         roster,
         own,
         epoch,
         ours_at,
         readds,
+        beacons,
     } = *at;
     let stale = roster
         .iter()
@@ -75,6 +89,17 @@ pub(super) fn judge(req: &ReAddRequest, at: &Judging) -> Result<LeafNodeIndex, R
     }
     if req.answerer.as_ref() != own {
         return Err(Refusal::NotOurTurn);
+    }
+    if let Some(ours) = ours_at {
+        let branch = |id: &str| Branch {
+            epoch: req.epoch,
+            epoch_id: id.to_string(),
+        };
+        let (ours, theirs) = (branch(ours), branch(&req.epoch_id));
+        let keys: Vec<_> = roster.iter().map(|(_, key)| key.as_slice()).collect();
+        if beacons.yields(crypto, convo_id, &keys, &ours, &theirs, &req.evidence) {
+            return Err(Refusal::Outranked);
+        }
     }
     Ok(stale)
 }
@@ -113,73 +138,65 @@ pub(super) fn readded_signers(group: &MlsGroup, commit: &StagedCommit) -> Vec<Ve
         .collect()
 }
 
+/// Wraps rather than saturates, so retries keep moving past `u32::MAX`.
+fn next_attempt(last: u32, next_answerer: bool) -> u32 {
+    last.wrapping_add(u32::from(next_answerer))
+}
+
 impl GroupV3Convo {
-    /// Seal a re-add request to the newest other states we heard, each naming
-    /// one of that state's verified signers to answer. Returns how many went
-    /// out. Asking again names the same answerer; `next_answerer` moves on, and
-    /// only once a repair would have landed, or two members repair.
+    /// Seal a re-add request, with the signed beacons we hold at our epoch, to
+    /// the one branch our ranking picks, naming one of its vouchers to answer.
+    /// Returns 0 or 1. Asking again names the same answerer; `next_answerer`
+    /// moves on, and only once a repair would have landed, or two members
+    /// repair.
     pub(super) fn request_readd<S: ExternalServices>(
         &mut self,
         cx: &mut ServiceContext<S>,
         next_answerer: bool,
     ) -> Result<usize, ChatError> {
+        let Some((to, vouchers)) = self.beacons.seal_target() else {
+            return Ok(0);
+        };
         let own = self
             .mls_group
             .own_leaf_node()
             .ok_or_else(|| ChatError::generic("not a member of this group"))?;
         let own_key = own.signature_key().as_slice();
-        let attempt = self.readd_attempt.saturating_add(u32::from(next_answerer));
+        let attempt = next_attempt(self.readd_attempt, next_answerer);
+        let Some(answerer) = answerer(&vouchers, own_key, attempt) else {
+            return Ok(0);
+        };
+        let epoch = self.mls_group.epoch().as_u64();
+        let epoch_id = EpochFingerprint::from(&self.mls_group).into_string();
         let req = ReAddRequest {
             signer_key: Bytes::copy_from_slice(own_key),
-            epoch: self.mls_group.epoch().as_u64(),
-            epoch_id: EpochFingerprint::from(&self.mls_group).into_string(),
+            epoch,
+            evidence: self.beacons.evidence(epoch, &epoch_id),
+            epoch_id,
             signature: Bytes::new(),
-            answerer: Bytes::new(),
+            answerer: Bytes::copy_from_slice(answerer),
         };
 
         let ciphersuite = self.mls_group.ciphersuite();
         let crypto = cx.mls_provider.crypto();
-        let sealed: Vec<SealedMessage> = self
-            .beacons
-            .seal_targets()
-            .filter_map(|state| {
-                let answerer = answerer(state.signers(), own_key, attempt)?;
-                Some((state.beacon(), Bytes::copy_from_slice(answerer)))
-            })
-            .map(|(to, answerer)| {
-                let req = ReAddRequest {
-                    answerer,
-                    ..req.clone()
-                };
-                let signed = sealed::sign_request(req, &self.convo_id, to, &cx.mls_identity)?;
-                let payload = SealedPayload {
-                    kind: Some(SealedKind::ReAdd(signed)),
-                };
-                sealed::seal(crypto, ciphersuite, &self.convo_id, to, &payload)
-            })
-            .collect::<Result<_, _>>()
+        let signed = sealed::sign_request(req, &self.convo_id, &to, &cx.mls_identity)
             .map_err(ChatError::generic)?;
-
-        let mut sent = 0;
-        let mut failed = None;
-        for msg in sealed {
-            let payload = GroupV3Payload::external(GroupV3External::sealed(msg));
-            match self.publish_payload(cx, payload) {
-                Ok(()) => sent += 1,
-                Err(e) => failed = Some(e),
-            }
-        }
-        match (sent, failed) {
-            (0, Some(e)) => return Err(ChatError::generic(e)),
-            (0, None) => return Ok(0),
-            _ => {}
-        }
+        let payload = SealedPayload {
+            kind: Some(SealedKind::ReAdd(signed)),
+        };
+        let msg = sealed::seal(crypto, ciphersuite, &self.convo_id, &to, &payload)
+            .map_err(ChatError::generic)?;
+        self.publish_payload(cx, GroupV3Payload::external(GroupV3External::sealed(msg)))?;
 
         self.readd_attempt = attempt;
         // The Welcome that answers this replaces the group; see `held_group_to_replace`.
-        cx.readd_pending.insert(self.convo_id.clone());
-        info!(convo = %self.convo_id, sent, "asked to be re-added");
-        Ok(sent)
+        let target = ReAddTarget {
+            epoch: to.epoch,
+            vouchers,
+        };
+        cx.readd_pending.insert(self.convo_id.clone(), target);
+        info!(convo = %self.convo_id, "asked to be re-added");
+        Ok(1)
     }
 
     /// Anyone can publish a sealed message, so failing to open one is not an
@@ -240,8 +257,10 @@ impl GroupV3Convo {
             epoch: self.mls_group.epoch().as_u64(),
             ours_at: self.beacons.our_epoch_id(req.epoch),
             readds: &self.readds,
+            beacons: &self.beacons,
         };
-        let verdict = judge(&req, &at);
+        let crypto = cx.mls_provider.crypto();
+        let verdict = judge(crypto, &self.convo_id, &req, &at);
         let stale = match verdict {
             Ok(stale) => stale,
             Err(refusal) => {
@@ -278,6 +297,22 @@ impl GroupV3Convo {
             }
             self.readds.push_back((key, epoch));
         }
+    }
+
+    #[cfg(feature = "test-support")]
+    pub(super) fn force_readd<S: ExternalServices>(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        signer: &SignerKey,
+    ) -> Result<(), ChatError> {
+        let stale = self
+            .mls_group
+            .members()
+            .find(|m| m.signature_key == signer.as_bytes())
+            .ok_or_else(|| ChatError::generic("not a member"))?
+            .index;
+        let key_packages = fetch_key_packages(cx, std::iter::once(signer))?;
+        self.readd(cx, stale, key_packages)
     }
 
     /// `Remove` and `Add` in one commit, so the member is never out of the
@@ -323,6 +358,7 @@ impl GroupV3Convo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inbox_v2::MlsEphemeralPqProvider;
 
     const ASKER: &[u8] = &[1; 32];
 
@@ -342,6 +378,7 @@ mod tests {
             epoch_id: epoch_id.to_string(),
             signature: Bytes::new(),
             answerer: key(2).into(),
+            evidence: Vec::new(),
         }
     }
 
@@ -360,6 +397,7 @@ mod tests {
         req: &ReAddRequest,
         ours_at: Option<&str>,
         readds: &VecDeque<(Vec<u8>, u64)>,
+        beacons: &Beacons,
     ) -> Result<LeafNodeIndex, Refusal> {
         let roster = roster();
         let own = key(own);
@@ -369,12 +407,49 @@ mod tests {
             epoch: 5,
             ours_at,
             readds,
+            beacons,
         };
-        judge(req, &at)
+        let p = MlsEphemeralPqProvider::new().expect("provider");
+        judge(p.crypto(), "convo-a", req, &at)
     }
 
     fn named_judges(req: &ReAddRequest, ours_at: Option<&str>) -> Result<LeafNodeIndex, Refusal> {
-        judge_as(2, req, ours_at, &VecDeque::new())
+        judge_as(2, req, ours_at, &VecDeque::new(), &Beacons::default())
+    }
+
+    /// Beacons with each `(epoch id, signer)` vouched for at epoch 5.
+    fn vouched(pairs: &[(&str, u8)]) -> Beacons {
+        let mut beacons = Beacons::default();
+        for &(id, k) in pairs {
+            let branch = Branch {
+                epoch: 5,
+                epoch_id: id.to_string(),
+            };
+            beacons.vouch(branch, &key(k));
+        }
+        beacons
+    }
+
+    fn named_ranks(req: &ReAddRequest, beacons: &Beacons) -> Result<LeafNodeIndex, Refusal> {
+        judge_as(2, req, Some("ours"), &VecDeque::new(), beacons)
+    }
+
+    #[test]
+    fn an_asker_on_a_stronger_branch_is_refused() {
+        let beacons = vouched(&[("theirs", 2), ("theirs", 3), ("ours", 0)]);
+
+        assert_eq!(
+            named_ranks(&request(5, "theirs"), &beacons),
+            Err(Refusal::Outranked)
+        );
+    }
+
+    /// Equal signers, and "ours" is the smaller id, so the asker moves.
+    #[test]
+    fn an_asker_that_loses_the_tie_is_repaired() {
+        let beacons = vouched(&[("theirs", 2), ("ours", 0)]);
+
+        assert_eq!(named_ranks(&request(5, "theirs"), &beacons), Ok(leaf(1)));
     }
 
     #[test]
@@ -415,7 +490,13 @@ mod tests {
     fn only_the_named_member_repairs() {
         let req = request(5, "theirs");
         for own in [0, 3] {
-            let verdict = judge_as(own, &req, Some("ours"), &VecDeque::new());
+            let verdict = judge_as(
+                own,
+                &req,
+                Some("ours"),
+                &VecDeque::new(),
+                &Beacons::default(),
+            );
             assert_eq!(verdict, Err(Refusal::NotOurTurn), "leaf {own}");
         }
     }
@@ -425,7 +506,13 @@ mod tests {
     #[test]
     fn an_asker_readded_since_its_state_is_refused() {
         let readds = VecDeque::from([(ASKER.to_vec(), 4)]);
-        let verdict = judge_as(2, &request(3, "theirs"), Some("ours"), &readds);
+        let verdict = judge_as(
+            2,
+            &request(3, "theirs"),
+            Some("ours"),
+            &readds,
+            &Beacons::default(),
+        );
         assert_eq!(verdict, Err(Refusal::Readded));
     }
 
@@ -433,7 +520,13 @@ mod tests {
     #[test]
     fn an_asker_stuck_after_its_readd_is_repaired() {
         let readds = VecDeque::from([(ASKER.to_vec(), 4)]);
-        let verdict = judge_as(2, &request(4, "theirs"), Some("ours"), &readds);
+        let verdict = judge_as(
+            2,
+            &request(4, "theirs"),
+            Some("ours"),
+            &readds,
+            &Beacons::default(),
+        );
         assert_eq!(verdict, Ok(leaf(1)));
     }
 
@@ -450,6 +543,18 @@ mod tests {
     #[test]
     fn a_state_only_we_signed_has_no_answerer() {
         assert_eq!(answerer(&[ASKER.to_vec()], ASKER, 0), None);
+    }
+
+    #[test]
+    fn retries_keep_moving_past_the_last_attempt() {
+        let signers = [key(0), ASKER.to_vec(), key(2), key(3)];
+        let mut attempt = u32::MAX;
+        let mut answers = std::collections::BTreeSet::new();
+        for _ in 0..4 {
+            answers.insert(answerer(&signers, ASKER, attempt));
+            attempt = next_attempt(attempt, true);
+        }
+        assert_eq!(answers.len(), 3, "every other member gets a turn");
     }
 
     /// Real groups, so the commit is read as a receiver reads it.

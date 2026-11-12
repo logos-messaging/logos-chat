@@ -10,7 +10,7 @@ use prost::{Message, Oneof};
 use super::external::{
     ED25519_SIGNATURE_LEN, EPOCH_ID_LEN, EpochBeacon, ExternalError, is_epoch_id, put_bytes,
 };
-use crate::inbox_v2::{CIPHER_SUITE, check_hpke_public_key};
+use crate::inbox_v2::{CIPHER_SUITE, HPKE_PUBLIC_KEY_LEN, check_hpke_public_key};
 
 const HPKE_INFO_LABEL: &[u8] = b"logos-chat/private-external/v1";
 const READD_SIG_LABEL: &[u8] = b"logos-chat/readd-signature/v1";
@@ -23,13 +23,24 @@ const SIGNER_KEY_LEN: usize = 32;
 /// ChaCha20-Poly1305's tag.
 const AEAD_TAG_LEN: usize = 16;
 
+/// Branches a request shows signatures for, and signatures per branch.
+pub const EVIDENCE_BRANCHES: usize = 3;
+pub const EVIDENCE_SIGNATURES: usize = 8;
+
+/// Encoded size of a [`Vouch`] and of the largest [`Vouches`].
+const VOUCH_LEN: usize = (1 + 1 + SIGNER_KEY_LEN) + (1 + 1 + ED25519_SIGNATURE_LEN);
+const MAX_VOUCHES_LEN: usize = (1 + 1 + EPOCH_ID_LEN)
+    + (1 + 2 + HPKE_PUBLIC_KEY_LEN)
+    + EVIDENCE_SIGNATURES * (1 + 1 + VOUCH_LEN);
+
 /// Encoded size of the largest [`SealedPayload`], as for `MAX_BEACON_LEN`.
 const MAX_PAYLOAD_LEN: usize = 1 + 2 // oneof tag and length
     + (1 + 1 + SIGNER_KEY_LEN)
     + (1 + 10) // epoch
     + (1 + 1 + EPOCH_ID_LEN)
     + (1 + 1 + ED25519_SIGNATURE_LEN)
-    + (1 + 1 + SIGNER_KEY_LEN); // answerer
+    + (1 + 1 + SIGNER_KEY_LEN) // answerer
+    + EVIDENCE_BRANCHES * (1 + 2 + MAX_VOUCHES_LEN);
 
 /// Encoded size of the largest well-formed [`SealedMessage`].
 pub const MAX_SEALED_LEN: usize = (1 + 10) // epoch
@@ -77,7 +88,8 @@ pub enum SealedKind {
 ///
 /// `answerer` names the one member to repair it: one whose beacon for the
 /// target state the sender verified, so it is on the sender's roster and the
-/// sender accepts its Welcome.
+/// sender accepts its Welcome. `evidence` is the signed beacons the sender
+/// holds at its epoch, so both sides rank the branches on the same signatures.
 #[derive(Clone, PartialEq, Message)]
 pub struct ReAddRequest {
     #[prost(bytes = "bytes", tag = "1")]
@@ -90,11 +102,38 @@ pub struct ReAddRequest {
     pub signature: Bytes,
     #[prost(bytes = "bytes", tag = "5")]
     pub answerer: Bytes,
+    #[prost(message, repeated, tag = "6")]
+    pub evidence: Vec<Vouches>,
+}
+
+/// Members' signatures over one branch's beacon at the request's epoch.
+#[derive(Clone, PartialEq, Message)]
+pub struct Vouches {
+    #[prost(string, tag = "1")]
+    pub epoch_id: String,
+    #[prost(bytes = "bytes", tag = "2")]
+    pub external_hpke_pub: Bytes,
+    #[prost(message, repeated, tag = "3")]
+    pub vouches: Vec<Vouch>,
+}
+
+/// One member's signature, naming the leaf key that made it.
+#[derive(Clone, PartialEq, Message)]
+pub struct Vouch {
+    #[prost(bytes = "bytes", tag = "1")]
+    pub signer_key: Bytes,
+    #[prost(bytes = "bytes", tag = "2")]
+    pub signature: Bytes,
 }
 
 /// The bytes a request signature covers, laid out as a beacon's are. Includes
 /// the state it is sealed to, so a captured request can't be re-sealed to
 /// another branch or epoch.
+/// A list's length, prefixed as [`put_bytes`] prefixes bytes.
+fn put_count(out: &mut Vec<u8>, n: usize) {
+    out.extend_from_slice(&(n as u32).to_be_bytes());
+}
+
 fn tbs(req: &ReAddRequest, convo_id: &str, to_epoch: u64, to_epoch_id: &str) -> Vec<u8> {
     let mut out = Vec::new();
     put_bytes(&mut out, READD_SIG_LABEL);
@@ -105,6 +144,16 @@ fn tbs(req: &ReAddRequest, convo_id: &str, to_epoch: u64, to_epoch_id: &str) -> 
     out.extend_from_slice(&to_epoch.to_be_bytes());
     put_bytes(&mut out, to_epoch_id.as_bytes());
     put_bytes(&mut out, &req.answerer);
+    put_count(&mut out, req.evidence.len());
+    for branch in &req.evidence {
+        put_bytes(&mut out, branch.epoch_id.as_bytes());
+        put_bytes(&mut out, &branch.external_hpke_pub);
+        put_count(&mut out, branch.vouches.len());
+        for vouch in &branch.vouches {
+            put_bytes(&mut out, &vouch.signer_key);
+            put_bytes(&mut out, &vouch.signature);
+        }
+    }
     out
 }
 
@@ -235,6 +284,20 @@ mod tests {
                 epoch_id: id(u64::MAX >> 8),
                 signature: Bytes::from_static(&[2; ED25519_SIGNATURE_LEN]),
                 answerer: Bytes::from_static(&[3; SIGNER_KEY_LEN]),
+                evidence: vec![
+                    Vouches {
+                        epoch_id: id(u64::MAX >> 8),
+                        external_hpke_pub: vec![3; HPKE_PUBLIC_KEY_LEN].into(),
+                        vouches: vec![
+                            Vouch {
+                                signer_key: Bytes::from_static(&[5; SIGNER_KEY_LEN]),
+                                signature: Bytes::from_static(&[4; ED25519_SIGNATURE_LEN]),
+                            };
+                            EVIDENCE_SIGNATURES
+                        ],
+                    };
+                    EVIDENCE_BRANCHES
+                ],
             })),
         }
     }
@@ -264,6 +327,14 @@ mod tests {
             epoch_id: id(2),
             signature: Bytes::new(),
             answerer: Bytes::from_static(&[3; SIGNER_KEY_LEN]),
+            evidence: vec![Vouches {
+                epoch_id: id(2),
+                external_hpke_pub: vec![3; HPKE_PUBLIC_KEY_LEN].into(),
+                vouches: vec![Vouch {
+                    signer_key: Bytes::from_static(&[5; SIGNER_KEY_LEN]),
+                    signature: Bytes::from_static(&[4; ED25519_SIGNATURE_LEN]),
+                }],
+            }],
         };
         let req = sign_request(req, "convo-a", &to, &LeafSigner(p, private)).expect("signed");
         let msg = SealedMessage {
@@ -283,12 +354,21 @@ mod tests {
             epoch_id: "0123456789abcd".into(),
             signature: Bytes::from_static(&[0xCD; 3]),
             answerer: Bytes::from_static(&[0xEF; 2]),
+            evidence: vec![Vouches {
+                epoch_id: "e".into(),
+                external_hpke_pub: Bytes::from_static(&[0x12]),
+                vouches: vec![Vouch {
+                    signer_key: Bytes::from_static(&[0x34]),
+                    signature: Bytes::from_static(&[0x56]),
+                }],
+            }],
         };
 
         assert_eq!(
             hex::encode(tbs(&req, "convo-a", 42, "dcba9876543210")),
             "0000001d6c6f676f732d636861742f72656164642d7369676e61747572652f763100000007636f6e\
-766f2d6100000002abab00000000000000290000000e3031323334353637383961626364000000000000002a0000000e646362613938373635343332313000000002efef"
+766f2d6100000002abab00000000000000290000000e3031323334353637383961626364000000000000002a0000000e646362613938373635343332313000000002efef\
+00000001000000016500000001120000000100000001340000000156"
         );
     }
 
@@ -321,11 +401,12 @@ mod tests {
     fn every_signed_field_is_covered() {
         let p = provider();
         type Change = fn(&mut ReAddRequest, &mut SealedMessage, &mut &str);
-        let changes: [(&str, Change); 6] = [
+        let changes: [(&str, Change); 7] = [
             ("epoch", |r, _, _| r.epoch += 1),
             ("answerer", |r, _, _| {
                 r.answerer = Bytes::from_static(&[4; 32])
             }),
+            ("evidence", |r, _, _| r.evidence[0].vouches.clear()),
             ("epoch id", |r, _, _| r.epoch_id = id(3)),
             ("sealed to another epoch", |_, m, _| m.epoch += 1),
             ("sealed to another branch", |_, m, _| m.epoch_id = id(4)),
