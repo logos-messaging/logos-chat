@@ -11,8 +11,9 @@ use integration_tests_core::AcceptAllAuth;
 use libchat::ChatError;
 use logos_account::AccountAddr;
 use logos_generic_chat::{
-    AddressedEnvelope, ChatClient, ChatClientBuilder, ConversationClass, DeliveryService, Event,
-    InProcessDelivery, MessageBus, PendingInstallation, Transport,
+    AddressedEnvelope, ChatClient, ChatClientBuilder, ConversationClass, DeliveryMsgId,
+    DeliveryService, Event, InProcessDelivery, InboundPayload, MessageBus, PendingInstallation,
+    Transport,
 };
 
 /// A client for a fresh account: mints the account and an installation, then builds
@@ -392,8 +393,8 @@ fn removing_a_member_is_unsupported_on_a_direct_conversation() {
 
 #[derive(Debug)]
 struct FailingDelivery {
-    inbound_tx: Sender<Vec<u8>>,
-    inbound_rx: Option<Receiver<Vec<u8>>>,
+    inbound_tx: Sender<InboundPayload>,
+    inbound_rx: Option<Receiver<InboundPayload>>,
 }
 
 impl FailingDelivery {
@@ -407,7 +408,7 @@ impl FailingDelivery {
 
     /// A sender into this transport's inbound stream — for tests to feed the
     /// worker, or to hold open so it doesn't see a disconnect.
-    fn inbound_sender(&self) -> Sender<Vec<u8>> {
+    fn inbound_sender(&self) -> Sender<InboundPayload> {
         self.inbound_tx.clone()
     }
 }
@@ -415,17 +416,21 @@ impl FailingDelivery {
 impl DeliveryService for FailingDelivery {
     type Error = &'static str;
 
-    fn publish(&mut self, _: AddressedEnvelope) -> Result<(), Self::Error> {
+    fn publish(&mut self, _: AddressedEnvelope) -> Result<Option<DeliveryMsgId>, Self::Error> {
         Err("simulated transport failure")
     }
 
     fn subscribe(&mut self, _: &str) -> Result<(), Self::Error> {
         Ok(())
     }
+
+    fn fetch_messages(&mut self, _: &str, _: &[DeliveryMsgId]) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 impl Transport for FailingDelivery {
-    fn inbound(&mut self) -> Receiver<Vec<u8>> {
+    fn inbound(&mut self) -> Receiver<InboundPayload> {
         self.inbound_rx
             .take()
             .expect("FailingDelivery::inbound called more than once")
@@ -466,7 +471,12 @@ fn malformed_inbound_surfaces_as_error_event() {
     .build()
     .expect("client create");
 
-    inbound_tx.send(b"not a valid payload".to_vec()).unwrap();
+    inbound_tx
+        .send(InboundPayload {
+            data: b"not a valid payload".to_vec(),
+            delivery_info: None,
+        })
+        .unwrap();
 
     expect_event(&events, "InboundError", |e| match e {
         Event::InboundError { message } => {

@@ -11,7 +11,7 @@ pub use crate::errors::ChatError;
 use crate::identity::{Signer, SignerKey, SignerRef};
 use crate::outcomes::ConvoOutcome;
 use crate::service_context::{ExternalServices, ServiceContext};
-use crate::types::ConvoMetadata;
+use crate::types::{ConvoMetadata, DeliveryInfo};
 use crate::utils::{blake2b_hex, hash_size};
 pub use direct_v1::DirectV1Convo;
 pub use group_v1::GroupV1Convo;
@@ -52,6 +52,7 @@ pub(crate) trait Convo<S: ExternalServices>: Identified + ConvoBase + Send {
         &mut self,
         cx: &mut ServiceContext<S>,
         enc: &[u8],
+        delivery_info: Option<&DeliveryInfo>,
     ) -> Result<ConvoOutcome, ChatError>;
 
     /// Advances any time-driven protocol work (de-mls consensus deadlines) and

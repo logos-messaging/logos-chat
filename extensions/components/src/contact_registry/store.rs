@@ -161,6 +161,7 @@ impl<D: DeliveryService> ContactRegistry<D> {
                 data: submission.encode_to_vec(),
             })
             .map_err(|e| ContactRegistryError::Publish(e.to_string()))
+            .map(drop)
     }
 }
 
@@ -351,7 +352,7 @@ fn jitter_below(max: u64) -> u64 {
 mod tests {
     use super::*;
     use crypto::Ed25519SigningKey;
-    use libchat::{SignerKey, SignerRef};
+    use libchat::{DeliveryMsgId, SignerKey, SignerRef};
 
     #[derive(Debug, Default)]
     struct CapturingDelivery {
@@ -360,11 +361,21 @@ mod tests {
 
     impl DeliveryService for CapturingDelivery {
         type Error = std::convert::Infallible;
-        fn publish(&mut self, envelope: AddressedEnvelope) -> Result<(), Self::Error> {
+        fn publish(
+            &mut self,
+            envelope: AddressedEnvelope,
+        ) -> Result<Option<DeliveryMsgId>, Self::Error> {
             self.published.push(envelope);
-            Ok(())
+            Ok(None)
         }
         fn subscribe(&mut self, _delivery_address: &str) -> Result<(), Self::Error> {
+            Ok(())
+        }
+        fn fetch_messages(
+            &mut self,
+            _delivery_address: &str,
+            _delivery_msg_ids: &[DeliveryMsgId],
+        ) -> Result<(), Self::Error> {
             Ok(())
         }
     }

@@ -6,7 +6,7 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{Receiver, Sender, bounded};
-use logos_chat::{AddressedEnvelope, DeliveryService, Transport};
+use logos_chat::{AddressedEnvelope, DeliveryMsgId, DeliveryService, InboundPayload, Transport};
 
 #[derive(Debug, thiserror::Error)]
 pub enum FileTransportError {
@@ -17,7 +17,7 @@ pub enum FileTransportError {
 #[derive(Clone, Debug)]
 pub struct FileTransport {
     transport_dir: PathBuf,
-    inbound_rx: Option<Receiver<Vec<u8>>>,
+    inbound_rx: Option<Receiver<InboundPayload>>,
 }
 
 impl FileTransport {
@@ -48,7 +48,10 @@ impl FileTransport {
 impl DeliveryService for FileTransport {
     type Error = FileTransportError;
 
-    fn publish(&mut self, envelope: AddressedEnvelope) -> Result<(), FileTransportError> {
+    fn publish(
+        &mut self,
+        envelope: AddressedEnvelope,
+    ) -> Result<Option<DeliveryMsgId>, FileTransportError> {
         let addr_dir = self.transport_dir.join(&envelope.delivery_address);
         fs::create_dir_all(&addr_dir)?;
 
@@ -59,17 +62,26 @@ impl DeliveryService for FileTransport {
         let len = envelope.data.len() as u32;
         file.write_all(&len.to_be_bytes())?;
         file.write_all(&envelope.data)?;
-        Ok(())
+        Ok(None)
     }
 
     fn subscribe(&mut self, _delivery_address: &str) -> Result<(), Self::Error> {
         // FileTransport does not support filtering
         Ok(())
     }
+
+    fn fetch_messages(
+        &mut self,
+        _delivery_address: &str,
+        _delivery_msg_ids: &[DeliveryMsgId],
+    ) -> Result<(), Self::Error> {
+        // It gives no ids: the reader forwards every frame on disk from the first.
+        Ok(())
+    }
 }
 
 impl Transport for FileTransport {
-    fn inbound(&mut self) -> Receiver<Vec<u8>> {
+    fn inbound(&mut self) -> Receiver<InboundPayload> {
         self.inbound_rx
             .take()
             .expect("FileTransport::inbound called more than once")
@@ -85,7 +97,7 @@ fn current_hour() -> u64 {
         / 3600
 }
 
-fn poll_reader(transport_dir: PathBuf, tx: Sender<Vec<u8>>) {
+fn poll_reader(transport_dir: PathBuf, tx: Sender<InboundPayload>) {
     // Maps absolute file path → number of bytes already consumed.
     let mut offsets: BTreeMap<PathBuf, u64> = BTreeMap::new();
 
@@ -114,7 +126,10 @@ fn poll_reader(transport_dir: PathBuf, tx: Sender<Vec<u8>>) {
                 if reader.read_exact(&mut payload).is_err() {
                     break; // partial frame — wait for writer to finish
                 }
-                let _ = tx.try_send(payload);
+                let _ = tx.try_send(InboundPayload {
+                    data: payload,
+                    delivery_info: None,
+                });
                 *offset += (4 + len) as u64;
             }
         }

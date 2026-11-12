@@ -20,7 +20,7 @@ use crate::service_traits::AuthService;
 use crate::types::ConvoMetadata;
 use crate::utils::{blake2b_hex, hash_size};
 use crate::{
-    DeliveryService, IdentityProvider,
+    DeliveryInfo, DeliveryService, IdentityProvider,
     conversation::{ChatError, Convo, ConvoBase, GroupConvo, Identified},
     outcomes::{Content, ConvoOutcome, Observation},
     service_traits::KeyPackageProvider,
@@ -247,6 +247,7 @@ impl GroupV1Convo {
         cx.ds
             .publish(env)
             .map_err(|e| ChatError::Delivery(e.to_string()))
+            .map(drop)
     }
 }
 
@@ -269,6 +270,7 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
         &mut self,
         cx: &mut ServiceContext<S>,
         payload: &[u8],
+        _delivery_info: Option<&DeliveryInfo>,
     ) -> Result<ConvoOutcome, ChatError> {
         let encrypted_payload = EncryptedPayload::decode(payload)?;
 

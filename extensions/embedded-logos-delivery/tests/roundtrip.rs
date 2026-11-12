@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use embedded_logos_delivery::{EmbeddedLogosDelivery, P2pConfig};
 use libchat::{AddressedEnvelope, DeliveryService};
-use logos_generic_chat::Transport;
+use logos_generic_chat::{InboundPayload, Transport};
 
 #[test]
 #[ignore = "needs network access and a linked liblogosdelivery"]
@@ -23,7 +23,7 @@ fn two_embedded_nodes_exchange_a_message() {
                 data: b"hello chat".to_vec(),
             })
             .expect("publish");
-        if let Ok(data) = inbound.recv_timeout(Duration::from_secs(10)) {
+        if let Ok(InboundPayload { data, .. }) = inbound.recv_timeout(Duration::from_secs(10)) {
             assert_eq!(data, b"hello chat");
             sender.shutdown().expect("shutdown sender");
             receiver.shutdown().expect("shutdown receiver");
