@@ -12,7 +12,7 @@ use crate::service_context::ServiceContext;
 use crate::{ChatError, Content, ConvoOutcome, ExternalServices, MessageId, Observation, Signer};
 
 use super::payloads::{GroupV3FrameType, protocol_message};
-use super::{Frame, GroupV3Convo};
+use super::{Frame, GroupV3Convo, readd};
 
 impl GroupV3Convo {
     /// Act on SDS events in order: a released message goes through MLS, a record is published.
@@ -145,18 +145,20 @@ impl GroupV3Convo {
         commit: StagedCommit,
     ) -> Result<ConvoOutcome, ChatError> {
         let epoch = self.mls_group.epoch().as_u64();
-        let fingerprint = EpochFingerprint::from(&commit);
+        let fingerprint = EpochFingerprint::of_commit(&commit);
+        let readded = readd::readded_signers(&self.mls_group, &commit);
 
         self.mls_group
             .merge_staged_commit(&cx.mls_provider, commit)
             .map_err(ChatError::generic)?;
+        self.note_readds(readded);
         self.enter_epoch(cx);
 
         info!(
             convo = %self.convo_id,
             epoch,
             new_epoch = self.mls_group.epoch().as_u64(),
-            epochfingerprint = fingerprint.as_str(),
+            epochfingerprint = fingerprint.as_ref().map(EpochFingerprint::as_str),
             "incoming commit merged"
         );
         Ok(ConvoOutcome {

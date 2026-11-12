@@ -12,18 +12,24 @@ mod handlers;
 #[cfg(any(test, feature = "test-support"))]
 pub mod inspect;
 mod payloads;
+mod readd;
+mod sealed;
 
+use std::collections::VecDeque;
 use std::fmt;
 use std::time::Duration;
 
+use openmls::ciphersuite::hash_ref::ProposalRef;
 use openmls::framing::MlsMessageOut;
 use openmls::group::{MlsGroup, StagedWelcome};
 use openmls::key_packages::KeyPackage;
 use openmls::messages::Welcome;
+use openmls::prelude::GroupId;
 use openmls_traits::OpenMlsProvider;
+use openmls_traits::storage::StorageProvider as _;
 use prost::Message;
 use sds::{Channel, Config, OutgoingMessage, SDSRecord, StartPoint};
-use tracing::{instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 use crate::conversation::mls_groups::{HasMlsConvo, create_group, group_join_config};
 use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified};
@@ -73,6 +79,11 @@ pub struct GroupV3Convo {
     mls_group: MlsGroup,
     channel: Channel,
     beacons: Beacons,
+    /// Signers re-added in a commit we merged, with the epoch it started. Kept
+    /// by every member, so a later request can't remove the fresh leaf.
+    readds: VecDeque<(Vec<u8>, u64)>,
+    /// Our last re-add request's attempt; it picks the answerer.
+    readd_attempt: u32,
 }
 
 // `sds::Channel` implements no `Debug`.
@@ -94,7 +105,6 @@ impl GroupV3Convo {
     ) -> Result<Self, ChatError> {
         // Create MlsGroup
         let mls_group = create_group(cx, name, desc)?;
-
         let mut convo = Self::from_group(cx, mls_group, None)?;
 
         convo.init(cx)?;
@@ -103,25 +113,37 @@ impl GroupV3Convo {
         Ok(convo)
     }
 
-    /// Joins from a Welcome, starting our SDS channel at `start`, the commit that added us.
+    /// Joins from a Welcome, starting our SDS channel at `start`, the commit that added us. Also
+    /// returns whether it replaced a group we held, which only a re-add we asked for may do.
     pub fn new_from_welcome<S: ExternalServices>(
         cx: &mut ServiceContext<S>,
         welcome: Welcome,
         start: StartPoint,
-    ) -> Result<Self, ChatError> {
-        let mls_group =
+    ) -> Result<(Self, bool), ChatError> {
+        let staged =
             StagedWelcome::build_from_welcome(&cx.mls_provider, &group_join_config(), welcome)
                 .map_err(ChatError::generic)?
+                .replace_old_group()
                 .build()
-                .map_err(ChatError::generic)?
-                .into_group(&cx.mls_provider)
                 .map_err(ChatError::generic)?;
+        let held = held_group_to_replace(cx, &staged)?;
+        let mls_group = staged
+            .into_group(&cx.mls_provider)
+            .map_err(ChatError::generic)?;
 
         let mut convo = Self::from_group(cx, mls_group, Some(start))?;
 
-        convo.init(cx)?;
+        // A replaced group's subscription and tick carry over.
+        if held.is_none() {
+            convo.init(cx)?;
+        }
+        if let Some(held) = &held {
+            forget_held_group(cx, held, &convo.mls_group)?;
+            cx.readd_pending.remove(&convo.convo_id);
+            info!(convo = %convo.convo_id, "a Welcome replaced a group we held");
+        }
         convo.enter_epoch(cx);
-        Ok(convo)
+        Ok((convo, held.is_some()))
     }
 
     fn from_group<S: ExternalServices>(
@@ -136,8 +158,63 @@ impl GroupV3Convo {
             mls_group,
             channel,
             beacons: Beacons::default(),
+            readds: VecDeque::new(),
+            readd_attempt: 0,
         })
     }
+}
+
+/// A re-add sends a Welcome for a group we hold. Accept it only while we asked,
+/// and only from a member of that group. Not proof of descent: a member we
+/// still list could build a lookalike group. Read-only, so a Welcome that fails
+/// to install leaves the held group and the pending re-add as they were.
+fn held_group_to_replace<S: ExternalServices>(
+    cx: &ServiceContext<S>,
+    staged: &StagedWelcome,
+) -> Result<Option<MlsGroup>, ChatError> {
+    let group_id = staged.group_context().group_id();
+    let Some(held) =
+        MlsGroup::load(cx.mls_provider.storage(), group_id).map_err(ChatError::generic)?
+    else {
+        return Ok(None);
+    };
+    if !cx.readd_pending.contains(&hex::encode(group_id.as_slice())) {
+        return Err(ChatError::generic(
+            "a Welcome for a group we hold, and we did not ask to be re-added",
+        ));
+    }
+    let sender = staged.welcome_sender().map_err(ChatError::generic)?;
+    if !held
+        .members()
+        .any(|m| m.signature_key == sender.signature_key().as_slice())
+    {
+        return Err(ChatError::generic(
+            "a Welcome for a group we hold, from outside it",
+        ));
+    }
+    Ok(Some(held))
+}
+
+/// Drop what the new group, stored under the same id, did not overwrite.
+fn forget_held_group<S: ExternalServices>(
+    cx: &ServiceContext<S>,
+    held: &MlsGroup,
+    new: &MlsGroup,
+) -> Result<(), ChatError> {
+    let storage = cx.mls_provider.storage();
+    let group_id = held.group_id();
+    let (epoch, leaf) = (held.epoch(), held.own_leaf_index());
+    if (epoch, leaf) != (new.epoch(), new.own_leaf_index()) {
+        storage
+            .delete_encryption_epoch_key_pairs(group_id, &epoch, leaf.u32())
+            .map_err(ChatError::generic)?;
+    }
+    storage
+        .delete_own_leaf_nodes(group_id)
+        .map_err(ChatError::generic)?;
+    storage
+        .clear_proposal_queue::<GroupId, ProposalRef>(group_id)
+        .map_err(ChatError::generic)
 }
 
 impl GroupV3Convo {
@@ -212,7 +289,13 @@ impl GroupV3Convo {
         };
 
         // Update State
+        let readded = self
+            .mls_group
+            .pending_commit()
+            .map(|commit| readd::readded_signers(&self.mls_group, commit))
+            .unwrap_or_default();
         self.mls_group.merge_pending_commit(&cx.mls_provider)?;
+        self.note_readds(readded);
         self.enter_epoch(cx);
 
         let start = StartPoint {
@@ -326,6 +409,14 @@ where
     ) -> Result<(), ChatError> {
         todo!()
     }
+
+    fn request_readd(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        next_answerer: bool,
+    ) -> Result<usize, ChatError> {
+        GroupV3Convo::request_readd(self, cx, next_answerer)
+    }
 }
 
 impl<S> Convo<S> for GroupV3Convo
@@ -349,11 +440,20 @@ where
     ) -> Result<ConvoOutcome, ChatError> {
         let payload = GroupV3Payload::decode(payload)?;
         if let Some(GroupV3Body::External(frame)) = &payload.body {
-            let crypto = cx.mls_provider.crypto();
-            let keys = self.mls_group.members().map(|m| m.signature_key);
-            self.beacons
-                .receive_frame(crypto, &self.convo_id, keys, frame);
-            return Ok(self.default_outcome());
+            return match external::admit_frame(frame) {
+                Some(external::Inbound::Beacon(beacon)) => {
+                    let crypto = cx.mls_provider.crypto();
+                    let keys = self.mls_group.members().map(|m| m.signature_key);
+                    self.beacons
+                        .receive_frame(crypto, &self.convo_id, keys, beacon, frame);
+                    Ok(self.default_outcome())
+                }
+                Some(external::Inbound::Sealed(msg)) => self.receive_sealed(cx, msg),
+                None => {
+                    debug!(convo = %self.convo_id, "refused a malformed external frame");
+                    Ok(self.default_outcome())
+                }
+            };
         }
 
         let events = self

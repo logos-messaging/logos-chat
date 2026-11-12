@@ -248,6 +248,11 @@ impl<const N: usize> TestHarness<N> {
         }
     }
 
+    /// Wakeups client `i` has pending for `convo_id`.
+    pub fn pending_wakeups(&self, i: usize, convo_id: &str) -> usize {
+        self.wakeup_service.pending(i, convo_id)
+    }
+
     fn names(i: usize) -> String {
         match i {
             SARO => "saro".into(),

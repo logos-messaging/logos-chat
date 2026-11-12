@@ -130,8 +130,8 @@ pub fn create_invite_v3(
 }
 
 /// A convo built from an InboxV2 invite, paired with the display class its
-/// invite type implies.
-type ClassifiedConvo<S> = (Box<dyn GroupConvo<S>>, ConversationClass);
+/// invite type implies, and whether it replaces one we hold (a GroupV3 re-add).
+type ClassifiedConvo<S> = (Box<dyn GroupConvo<S>>, ConversationClass, bool);
 
 /// A PQ focused Conversation initializer.
 /// InboxV2 is signer-scoped: it receives invites under this installation's
@@ -202,14 +202,14 @@ impl InboxV2 {
         match payload {
             InviteType::GroupV1(inv) => {
                 let convo = self.handle_heavy_invite(service_ctx, inv)?;
-                Ok(Some((Box::new(convo), ConversationClass::Dm)))
+                Ok(Some((Box::new(convo), ConversationClass::Dm, false)))
             }
             InviteType::GroupV2(welcome_bytes) => {
                 info!("Process WelcomeMessage");
                 let mw =
                     MemberWelcome::decode(welcome_bytes.as_slice()).map_err(ChatError::generic)?;
                 let convo = GroupV2Convo::new_from_welcome(service_ctx, &mw)?;
-                Ok(Some((Box::new(convo), ConversationClass::Group)))
+                Ok(Some((Box::new(convo), ConversationClass::Group, false)))
             }
             InviteType::GroupV3(invite) => {
                 info!("Process V3 WelcomeMessage");
@@ -218,8 +218,9 @@ impl InboxV2 {
                     message_id: invite.commit_message_id,
                     lamport_timestamp: invite.commit_lamport_timestamp,
                 };
-                let convo = GroupV3Convo::new_from_welcome(service_ctx, welcome, start)?;
-                Ok(Some((Box::new(convo), ConversationClass::Group)))
+                let (convo, replaces) =
+                    GroupV3Convo::new_from_welcome(service_ctx, welcome, start)?;
+                Ok(Some((Box::new(convo), ConversationClass::Group, replaces)))
             }
         }
     }
