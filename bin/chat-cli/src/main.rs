@@ -32,7 +32,7 @@ enum GroupCommit {
     Auto,
     /// Always use fast commit timers.
     Fast,
-    /// Always use the de-mls library default timing.
+    /// Always use the library's default timing.
     Default,
 }
 
@@ -76,10 +76,11 @@ struct Cli {
     transport: TransportKind,
 
     /// How quickly group membership changes commit. `fast` makes `/add` and
-    /// `/remove` commit in ~1s (great for local demos); `default` uses
-    /// production de-mls timing.
+    /// `/remove` commit in ~1s (great for local demos); `default` uses the
+    /// library's default timing.
     /// `auto` (the default) picks `fast` for `--transport file` and `default`
     /// otherwise, since fast timers are too aggressive for a high-latency network.
+    /// GroupV2 only: GroupV3 commits fast in a `test-fast-commits` build.
     #[arg(long, value_enum, default_value_t = GroupCommit::Auto)]
     group_commit: GroupCommit,
 

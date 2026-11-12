@@ -44,7 +44,13 @@ type Frame = payloads::GroupV3Frame;
 // Fires SDS's resend and sync deadlines within a second. `wakeup_in` adds a timer rather than
 // replacing one, so only `init` and `wakeup` arm it.
 const SDS_TICK_INTERVAL: Duration = Duration::from_secs(1);
+// How long this member waits, from the first commit it defers, sent or received, before it
+// finalizes one. The `test-fast-commits` feature puts it under one SDS tick, so a commit lands
+// on the next tick.
+#[cfg(not(feature = "test-fast-commits"))]
 const COMMIT_FINALIZE_TIMEOUT: Duration = Duration::from_secs(120);
+#[cfg(feature = "test-fast-commits")]
+const COMMIT_FINALIZE_TIMEOUT: Duration = Duration::from_millis(100);
 
 fn delivery_address_from_id(convo_id: &str) -> String {
     blake2b_hex::<hash_size::DeliveryAddr>(&["delivery_addr|", convo_id])
@@ -409,7 +415,10 @@ where
         _cx: &mut ServiceContext<S>,
         _signer: &[crate::SignerRef],
     ) -> Result<(), ChatError> {
-        todo!()
+        Err(ChatError::UnsupportedFunction(
+            self.convo_id.clone(),
+            "Remove Member".into(),
+        ))
     }
 }
 

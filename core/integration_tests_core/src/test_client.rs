@@ -274,8 +274,16 @@ impl<const N: usize> TestHarness<N> {
         label: &str,
         predicate: impl Fn(&mut TestHarness<N>) -> bool,
     ) {
+        self.process_until_within(label, Duration::from_mins(5), predicate);
+    }
+
+    pub fn process_until_within(
+        &mut self,
+        label: &str,
+        timeout: Duration,
+        predicate: impl Fn(&mut TestHarness<N>) -> bool,
+    ) {
         info!(label, "Process Until");
-        let timeout = Duration::from_mins(5);
         let step = Duration::from_millis(50);
         let mut elapsed = Duration::ZERO;
 

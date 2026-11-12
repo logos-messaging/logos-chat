@@ -278,7 +278,7 @@ fn groupv3_member_fetches_a_lost_message_only_its_sender_names() {
         .expect("saro send m2");
 
     // A minute at most, which runs out before Saro's resend of m1 can arrive.
-    harness.process_until_label("raya gets both", |h| {
+    harness.process_until_within("raya gets both", Duration::from_mins(1), |h| {
         h.raya().received_messages().len() == 2
     });
     let contents: Vec<&[u8]> = harness

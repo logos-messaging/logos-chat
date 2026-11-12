@@ -8,11 +8,16 @@ license.workspace = true
 name = "chat-cli"
 path = "src/main.rs"
 
+[features]
+# Fast GroupV3 commits for local demos; see libchat's feature of the same name.
+test-fast-commits = ["libchat/test-fast-commits"]
+
 [dependencies]
 # Workspace dependencies (sorted)
 components = { workspace = true }
 crypto = {workspace =  true }
 crossbeam-channel = { workspace = true }
+libchat = { workspace = true }
 logos-account = { workspace = true }
 logos-chat = { workspace = true }
 message-types = { workspace = true }
