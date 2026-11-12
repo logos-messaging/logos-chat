@@ -5,7 +5,7 @@ use std::{
     rc::Rc,
 };
 
-use libchat::{AddressedEnvelope, DeliveryInfo, DeliveryMsgId, DeliveryService};
+use libchat::{AddressedEnvelope, DeliveryInfo, DeliveryMsgId, DeliveryService, DeliveryTag};
 use tracing::info;
 
 #[derive(Debug)]
@@ -32,6 +32,8 @@ pub struct LocalBroadcaster {
     subscriptions: HashSet<String>,
     outbound_msgs: Vec<u64>,
     fetched: VecDeque<(Vec<u8>, DeliveryInfo)>,
+    /// Set by [`Self::report_ids_late`]: the ids `publish` no longer returns.
+    reports: Option<VecDeque<(DeliveryTag, DeliveryInfo)>>,
 }
 
 /// This is Lightweight DeliveryService which can be used for tests
@@ -51,6 +53,7 @@ impl LocalBroadcaster {
             subscriptions: HashSet::new(),
             outbound_msgs: Vec::new(),
             fetched: VecDeque::new(),
+            reports: None,
         }
     }
 
@@ -66,6 +69,7 @@ impl LocalBroadcaster {
             subscriptions: HashSet::new(),
             outbound_msgs: Vec::new(),
             fetched: VecDeque::new(),
+            reports: None,
         }
     }
 
@@ -95,6 +99,17 @@ impl LocalBroadcaster {
                 }
             }
         }
+    }
+
+    /// From the call on, `publish` returns no id, as a delivery node that learns it from a later
+    /// event does; [`Self::poll_report`] hands out a tagged envelope's id instead.
+    pub fn report_ids_late(&mut self) {
+        self.reports.get_or_insert_default();
+    }
+
+    /// The next id learned after `publish` returned, with the tag of the envelope it names.
+    pub fn poll_report(&mut self) -> Option<(DeliveryTag, DeliveryInfo)> {
+        self.reports.as_mut()?.pop_front()
     }
 
     fn msg_id(msg: &AddressedEnvelope) -> u64 {
@@ -140,11 +155,18 @@ impl DeliveryService for LocalBroadcaster {
     ) -> Result<Option<DeliveryMsgId>, Self::Error> {
         info!(?envelope.delivery_address, len=envelope.data.len(), "DS:Publish");
         self.outbound_msgs.push(Self::msg_id(&envelope));
+        let tag = envelope.tag.clone();
         let mut shared = self.shared.borrow_mut();
         let cursor = shared.tail();
         shared.messages.push_back(envelope);
 
-        Ok(Some(Self::id_for(cursor)))
+        let Some(reports) = &mut self.reports else {
+            return Ok(Some(Self::id_for(cursor)));
+        };
+        if let Some(tag) = tag {
+            reports.push_back((tag, Self::info_for(cursor)));
+        }
+        Ok(None)
     }
 
     fn subscribe(&mut self, delivery_address: &str) -> Result<(), Self::Error> {
@@ -189,6 +211,7 @@ mod tests {
         AddressedEnvelope {
             delivery_address: delivery_address.into(),
             data: data.to_vec(),
+            tag: None,
         }
     }
 

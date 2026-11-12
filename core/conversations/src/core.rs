@@ -9,8 +9,8 @@ use crate::service_traits::AuthService;
 use crate::storage::{ConversationKind, ConversationMeta, ConversationStore};
 use crate::types::ConvoMetadata;
 use crate::{
-    Clock, DeliveryInfo, DeliveryService, GroupV2Config, GroupV3Config, IdentityProvider,
-    RegistrationService, WakeupService,
+    Clock, DeliveryInfo, DeliveryService, DeliveryTag, GroupV2Config, GroupV3Config,
+    IdentityProvider, RegistrationService, WakeupService,
 };
 use crate::{
     conversation::{Convo, ConvoBase, GroupConvo, mls_trace::record},
@@ -505,6 +505,19 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         }
     }
 
+    /// Hands an id the delivery service learned after `publish` returned to the conversation
+    /// that published the envelope carrying `tag`.
+    pub fn handle_delivery_report(
+        &mut self,
+        tag: &DeliveryTag,
+        info: &DeliveryInfo,
+    ) -> Result<(), ChatError> {
+        self.cached_convos
+            .get_mut(tag.convo_id.as_str())
+            .ok_or_else(|| ChatError::NoConvo(tag.convo_id.clone()))?
+            .handle_delivery_report(&tag.message_id, info)
+    }
+
     pub fn wakeup(&mut self, convo_id: ConversationIdRef) -> Result<PayloadOutcome, ChatError> {
         info!(convos = ?self.cached_convos.keys().collect::<Vec<_>>(), id = ?self.services.mls_identity.signer_key(), "Cached Convos");
 
@@ -656,6 +669,19 @@ impl<S: ExternalServices> Convo<S> for ConvoTypeOwned<S> {
         match self {
             ConvoTypeOwned::Group(group_convo) => group_convo.wakeup(service_ctx),
             ConvoTypeOwned::Direct(convo) => convo.wakeup(service_ctx),
+        }
+    }
+
+    fn handle_delivery_report(
+        &mut self,
+        message_id: &str,
+        info: &DeliveryInfo,
+    ) -> Result<(), ChatError> {
+        match self {
+            ConvoTypeOwned::Group(group_convo) => {
+                group_convo.handle_delivery_report(message_id, info)
+            }
+            ConvoTypeOwned::Direct(convo) => convo.handle_delivery_report(message_id, info),
         }
     }
 }

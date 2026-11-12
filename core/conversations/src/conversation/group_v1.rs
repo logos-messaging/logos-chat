@@ -353,6 +353,17 @@ impl<S: ExternalServices> Convo<S> for GroupV1Convo {
     fn wakeup(&mut self, _: &mut ServiceContext<S>) -> Result<ConvoOutcome, ChatError> {
         Ok(ConvoOutcome::empty(self.id().to_string()))
     }
+
+    fn handle_delivery_report(
+        &mut self,
+        _message_id: &str,
+        _info: &DeliveryInfo,
+    ) -> Result<(), ChatError> {
+        Err(ChatError::UnsupportedFunction(
+            self.id().into(),
+            "Delivery Report".into(),
+        ))
+    }
 }
 
 impl<S: ExternalServices> GroupConvo<S> for GroupV1Convo {

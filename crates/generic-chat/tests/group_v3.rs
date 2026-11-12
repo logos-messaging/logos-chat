@@ -3,17 +3,21 @@
 //! `ChatClient` API and its event channel. A member applies a commit when it
 //! finalizes it on a wakeup tick, so assertions wait for events and rosters.
 
+use std::convert::Infallible;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chat_sqlite::SqliteStore;
 use components::EphemeralRegistry;
-use crossbeam_channel::Receiver;
+use crossbeam_channel::{Receiver, Sender};
 use integration_tests_core::AcceptAllAuth;
 use libchat::ChatError;
 use logos_account::AccountAddr;
 use logos_generic_chat::{
-    ChatClient, ChatClientBuilder, ClientError, ConversationClass, Event, GroupMetadata,
-    GroupV3Config, InProcessDelivery, MessageBus, PendingInstallation,
+    AddressedEnvelope, ChatClient, ChatClientBuilder, ClientError, ConversationClass, DeliveryInfo,
+    DeliveryMsgId, DeliveryReport, DeliveryService, Event, GroupMetadata, GroupV3Config,
+    InProcessDelivery, InboundPayload, MessageBus, PendingInstallation, Transport,
 };
 
 /// A finalize delay under GroupV3's one-second tick, so a commit lands on the
@@ -24,7 +28,8 @@ fn fast_group_v3_config() -> GroupV3Config {
     }
 }
 
-type TestClient = ChatClient<InProcessDelivery, EphemeralRegistry, AcceptAllAuth, SqliteStore>;
+type TestClient<T = InProcessDelivery> =
+    ChatClient<T, EphemeralRegistry, AcceptAllAuth, SqliteStore>;
 
 /// A client for a fresh account: mints the account and an installation, publishes
 /// the endorsing bundle, and builds the client on the shared bus/registry with
@@ -34,10 +39,19 @@ fn create_test_client(
     reg: EphemeralRegistry,
     auth: &AcceptAllAuth,
 ) -> (TestClient, Receiver<Event>, String) {
+    create_test_client_on(InProcessDelivery::new(message_bus), reg, auth)
+}
+
+/// [`create_test_client`] on `transport`.
+fn create_test_client_on<T: Transport>(
+    transport: T,
+    reg: EphemeralRegistry,
+    auth: &AcceptAllAuth,
+) -> (TestClient<T>, Receiver<Event>, String) {
     let installation = PendingInstallation::generate().complete(TestLogosAccount::new().addr());
     auth.register(&installation);
     let (client, events) = ChatClientBuilder::new(installation)
-        .transport(InProcessDelivery::new(message_bus))
+        .transport(transport)
         .registration(reg)
         .auth(auth.clone())
         .group_v3_config(fast_group_v3_config())
@@ -83,7 +97,11 @@ fn wait_for_group_started(events: &Receiver<Event>, label: &str) -> String {
 /// Poll a client's roster for `convo_id` until its committed accounts equal
 /// `expected` (order-independent), or panic after a timeout. Each member
 /// applies an add when it finalizes the commit, so the roster is polled.
-fn wait_for_participants(client: &mut TestClient, convo_id: &str, expected: &[&str]) {
+fn wait_for_participants<T: Transport>(
+    client: &mut TestClient<T>,
+    convo_id: &str,
+    expected: &[&str],
+) {
     use std::collections::BTreeSet;
 
     let want: BTreeSet<String> = expected.iter().map(|a| a.to_string()).collect();
@@ -193,6 +211,202 @@ fn removing_a_member_is_unsupported() {
     wait_for_participants(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
     saro.send_message(&convo_id, b"still here").unwrap();
     wait_for_message(&raya_events, b"still here");
+}
+
+/// Saro's transport learns each id after `publish` returns, as a delivery node does, and
+/// Raya loses m1 on the way. Saro's later m2 names m1 by the id the transport reported, so
+/// Raya fetches m1 by it.
+#[test]
+fn a_lost_message_arrives_by_the_id_its_sender_learned_after_the_send() {
+    let bus = MessageBus::default();
+    let reg = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
+
+    let saro_transport = LateIdDelivery::new(InProcessDelivery::new(bus.clone()));
+    let saro_reports = saro_transport.reports_tx.clone();
+    let saro_published = saro_transport.published.clone();
+    let (mut saro, saro_events, saro_addr) =
+        create_test_client_on(saro_transport, reg.clone(), &auth);
+    let raya_transport = LossyDelivery::new(InProcessDelivery::new(bus.clone()));
+    let (raya_offline, raya_dropped) = (
+        raya_transport.offline.clone(),
+        raya_transport.dropped.clone(),
+    );
+    let (mut raya, raya_events, raya_addr) =
+        create_test_client_on(raya_transport, reg.clone(), &auth);
+
+    let convo_id = saro
+        .create_group_conversation(&[&raya_addr], GroupMetadata::new("", ""))
+        .expect("saro create group");
+    wait_for_group_started(&raya_events, "raya ConversationStarted");
+    wait_for_participants(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
+
+    raya_offline.store(true, Ordering::SeqCst);
+    saro.send_message(&convo_id, b"m1").unwrap();
+    let m1 = saro_published
+        .lock()
+        .unwrap()
+        .last()
+        .cloned()
+        .expect("m1 published");
+    wait_until("raya drops m1", || {
+        raya_dropped.lock().unwrap().contains(&m1)
+    });
+    raya_offline.store(false, Ordering::SeqCst);
+
+    // Saro's worker took m1's report once the stream is empty, and has handled it once a
+    // payload that arrives later reaches Saro.
+    wait_until("saro takes the report", || saro_reports.is_empty());
+    raya.send_message(&convo_id, b"r1").unwrap();
+    assert_eq!(wait_for_message(&saro_events, b"r1"), raya_addr);
+
+    saro.send_message(&convo_id, b"m2").unwrap();
+    assert_eq!(wait_for_message(&raya_events, b"m1"), saro_addr);
+    assert_eq!(wait_for_message(&raya_events, b"m2"), saro_addr);
+}
+
+/// Poll `done` until it holds, or panic after a timeout.
+fn wait_until(label: &str, done: impl Fn() -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !done() {
+        if std::time::Instant::now() >= deadline {
+            panic!("timed out waiting until {label}");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// [`InProcessDelivery`] as a delivery node behaves: `publish` returns no id, and a tagged
+/// envelope's id follows on the report stream. Keeps those ids in the order published.
+#[derive(Debug)]
+struct LateIdDelivery {
+    inner: InProcessDelivery,
+    reports_tx: Sender<DeliveryReport>,
+    reports_rx: Option<Receiver<DeliveryReport>>,
+    published: Arc<Mutex<Vec<DeliveryMsgId>>>,
+}
+
+impl LateIdDelivery {
+    fn new(inner: InProcessDelivery) -> Self {
+        let (reports_tx, reports_rx) = crossbeam_channel::unbounded();
+        Self {
+            inner,
+            reports_tx,
+            reports_rx: Some(reports_rx),
+            published: Arc::default(),
+        }
+    }
+}
+
+impl DeliveryService for LateIdDelivery {
+    type Error = Infallible;
+
+    fn publish(
+        &mut self,
+        envelope: AddressedEnvelope,
+    ) -> Result<Option<DeliveryMsgId>, Infallible> {
+        let tag = envelope.tag.clone();
+        let delivery_msg_id = self
+            .inner
+            .publish(envelope)?
+            .expect("the bus names every message");
+        if let Some(tag) = tag {
+            self.published.lock().unwrap().push(delivery_msg_id.clone());
+            let delivery_info = DeliveryInfo { delivery_msg_id };
+            self.reports_tx
+                .send(DeliveryReport { tag, delivery_info })
+                .expect("the stream outlives the transport");
+        }
+        Ok(None)
+    }
+
+    fn subscribe(&mut self, delivery_address: &str) -> Result<(), Infallible> {
+        self.inner.subscribe(delivery_address)
+    }
+
+    fn fetch_messages(
+        &mut self,
+        delivery_address: &str,
+        delivery_msg_ids: &[DeliveryMsgId],
+    ) -> Result<(), Infallible> {
+        self.inner
+            .fetch_messages(delivery_address, delivery_msg_ids)
+    }
+}
+
+impl Transport for LateIdDelivery {
+    fn inbound(&mut self) -> Receiver<InboundPayload> {
+        self.inner.inbound()
+    }
+
+    fn delivery_reports(&mut self) -> Receiver<DeliveryReport> {
+        self.reports_rx
+            .take()
+            .expect("LateIdDelivery::delivery_reports called more than once")
+    }
+}
+
+/// [`InProcessDelivery`] that drops inbound payloads while `offline` is set, keeping the id of
+/// each; the bus still holds them, so a fetch by that id delivers them.
+#[derive(Debug)]
+struct LossyDelivery {
+    inner: InProcessDelivery,
+    offline: Arc<AtomicBool>,
+    dropped: Arc<Mutex<Vec<DeliveryMsgId>>>,
+}
+
+impl LossyDelivery {
+    fn new(inner: InProcessDelivery) -> Self {
+        Self {
+            inner,
+            offline: Arc::default(),
+            dropped: Arc::default(),
+        }
+    }
+}
+
+impl DeliveryService for LossyDelivery {
+    type Error = Infallible;
+
+    fn publish(
+        &mut self,
+        envelope: AddressedEnvelope,
+    ) -> Result<Option<DeliveryMsgId>, Infallible> {
+        self.inner.publish(envelope)
+    }
+
+    fn subscribe(&mut self, delivery_address: &str) -> Result<(), Infallible> {
+        self.inner.subscribe(delivery_address)
+    }
+
+    fn fetch_messages(
+        &mut self,
+        delivery_address: &str,
+        delivery_msg_ids: &[DeliveryMsgId],
+    ) -> Result<(), Infallible> {
+        self.inner
+            .fetch_messages(delivery_address, delivery_msg_ids)
+    }
+}
+
+impl Transport for LossyDelivery {
+    fn inbound(&mut self) -> Receiver<InboundPayload> {
+        let upstream = self.inner.inbound();
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let (offline, dropped) = (self.offline.clone(), self.dropped.clone());
+        std::thread::spawn(move || {
+            for payload in upstream {
+                if !offline.load(Ordering::SeqCst) {
+                    if tx.send(payload).is_err() {
+                        return;
+                    }
+                } else if let Some(info) = payload.delivery_info {
+                    dropped.lock().unwrap().push(info.delivery_msg_id);
+                }
+            }
+        });
+        rx
+    }
 }
 
 /// A stand-in account while the account layer is out: only a well-formed

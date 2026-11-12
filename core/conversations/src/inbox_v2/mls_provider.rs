@@ -52,6 +52,7 @@ impl MlsProvider for MlsEphemeralPqProvider {
         let outbound_msg = AddressedEnvelope {
             delivery_address: delivery_address_for(signer),
             data: envelope.encode_to_vec(),
+            tag: None,
         };
 
         ds.publish(outbound_msg).map_err(ChatError::generic)?;

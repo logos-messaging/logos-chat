@@ -58,6 +58,14 @@ pub(crate) trait Convo<S: ExternalServices>: Identified + ConvoBase + Send {
     /// Advances any time-driven protocol work (de-mls consensus deadlines) and
     /// reports what it observed, mirroring [`Self::handle_frame`].
     fn wakeup(&mut self, service_ctx: &mut ServiceContext<S>) -> Result<ConvoOutcome, ChatError>;
+
+    /// Takes the id the delivery service learned, after `publish` returned, for the payload
+    /// that carried `message_id`.
+    fn handle_delivery_report(
+        &mut self,
+        message_id: &str,
+        info: &DeliveryInfo,
+    ) -> Result<(), ChatError>;
 }
 
 /// Base functionality for every conversation kind.

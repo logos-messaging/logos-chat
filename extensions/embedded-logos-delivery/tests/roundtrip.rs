@@ -21,6 +21,7 @@ fn two_embedded_nodes_exchange_a_message() {
             .publish(AddressedEnvelope {
                 delivery_address: "addr-roundtrip".into(),
                 data: b"hello chat".to_vec(),
+                tag: None,
             })
             .expect("publish");
         if let Ok(InboundPayload { data, .. }) = inbound.recv_timeout(Duration::from_secs(10)) {

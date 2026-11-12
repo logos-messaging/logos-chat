@@ -30,7 +30,7 @@ use crate::service_context::ServiceContext;
 use crate::utils::{blake2b_hex, hash_size};
 use crate::{
     AddressedEnvelope, ChatError, ConvoOutcome, DeliveryInfo, DeliveryMsgId, DeliveryService,
-    ExternalServices, IdentityProvider, Observation, SignerKey, WakeupService,
+    DeliveryTag, ExternalServices, IdentityProvider, Observation, SignerKey, WakeupService,
 };
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
@@ -342,14 +342,20 @@ impl GroupV3Convo {
     }
 
     /// Publishes a record SDS logged, and gives its message the id the delivery service returned
-    /// as its retrieval hint, which later histories name it by.
+    /// as its retrieval hint, which later histories name it by. A service that learns the id later
+    /// reports it for the envelope's tag.
     fn publish_record<S: ExternalServices>(
         &mut self,
         cx: &mut ServiceContext<S>,
         record: SDSRecord,
     ) -> Result<(), SendError> {
         let message_id = record.header.message_id.clone();
-        if let Some(delivery_msg_id) = self.publish_payload(cx, record.into())?
+        let mut env = to_envelope(self.convo_id.to_string(), record.into());
+        env.tag = Some(DeliveryTag {
+            convo_id: self.convo_id.clone(),
+            message_id: message_id.clone(),
+        });
+        if let Some(delivery_msg_id) = Self::publish_envelope(cx, env)?
             && let Err(e) = self
                 .channel
                 .set_retrieval_hint(&message_id, delivery_msg_id.as_bytes().to_vec())
@@ -488,6 +494,16 @@ where
             observations,
             ..self.default_outcome()
         })
+    }
+
+    fn handle_delivery_report(
+        &mut self,
+        message_id: &str,
+        info: &DeliveryInfo,
+    ) -> Result<(), ChatError> {
+        self.channel
+            .set_retrieval_hint(message_id, info.delivery_msg_id.as_bytes().to_vec())
+            .map_err(ChatError::generic)
     }
 }
 

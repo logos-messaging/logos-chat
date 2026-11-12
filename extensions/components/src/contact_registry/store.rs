@@ -159,6 +159,7 @@ impl<D: DeliveryService> ContactRegistry<D> {
             .publish(AddressedEnvelope {
                 delivery_address: delivery_address.to_string(),
                 data: submission.encode_to_vec(),
+                tag: None,
             })
             .map_err(|e| ContactRegistryError::Publish(e.to_string()))
             .map(drop)
