@@ -3768,6 +3768,7 @@ dependencies = [
  "hex",
  "integration_tests_core",
  "libchat",
+ "logos-generic-chat",
  "parking_lot",
  "tempfile",
  "thiserror",

@@ -24,6 +24,8 @@ use logos_account::AccountPublisher;
 use logos_account::ChatWrite;
 use logos_account::Ed25519VerifyingKey;
 
+#[cfg(feature = "test-support")]
+use logos_generic_chat::GroupV3Config;
 use logos_generic_chat::SqliteStore;
 use logos_generic_chat::StorageConfig;
 use logos_generic_chat::{
@@ -54,6 +56,8 @@ pub struct LogosConfig {
     registry_publish_mode: RegistryPublishMode,
     p2p_config: P2pConfig,
     group_v2_config: Option<GroupV2Config>,
+    #[cfg(feature = "test-support")]
+    group_v3_config: Option<GroupV3Config>,
 }
 
 impl LogosConfig {
@@ -73,6 +77,8 @@ impl LogosConfig {
             registry_publish_mode: RegistryPublishMode::default(),
             p2p_config: P2pConfig::default(),
             group_v2_config: None,
+            #[cfg(feature = "test-support")]
+            group_v3_config: None,
         }
     }
 
@@ -126,6 +132,13 @@ impl LogosConfig {
     )]
     pub fn set_group_v2_config(&mut self, group_v2_config: GroupV2Config) {
         self.group_v2_config = Some(group_v2_config);
+    }
+
+    /// Override the GroupV3 timing this client creates or joins groups with
+    /// (defaults to [`GroupV3Config::default`]).
+    #[cfg(feature = "test-support")]
+    pub fn set_group_v3_config(&mut self, group_v3_config: GroupV3Config) {
+        self.group_v3_config = Some(group_v3_config);
     }
 }
 
@@ -186,6 +199,10 @@ pub fn open_with_transport<T: Transport + Clone>(
         .storage(store);
     if let Some(group_v2) = config.group_v2_config {
         builder = builder.group_v2_config(group_v2);
+    }
+    #[cfg(feature = "test-support")]
+    if let Some(group_v3) = config.group_v3_config {
+        builder = builder.group_v3_config(group_v3);
     }
     builder.build()
 }
@@ -252,6 +269,11 @@ pub fn client_with(
         .auth(auth)
         .storage(store)
         .group_v2_config(demls_config);
+    #[cfg(feature = "test-support")]
+    let builder = match config.group_v3_config {
+        Some(group_v3) => builder.group_v3_config(group_v3),
+        None => builder,
+    };
     builder.build()
 }
 

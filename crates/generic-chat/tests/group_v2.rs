@@ -156,7 +156,7 @@ fn group_v2_three_members() {
     let (mut pax, pax_events, pax_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
 
     let convo_id = saro
-        .create_group_conversation(&[&raya_addr], unnamed_group())
+        .create_group_conversation_v2(&[&raya_addr], unnamed_group())
         .expect("saro create group");
 
     // The invite lands once saro's steward commit finalizes (wakeup-driven);
@@ -229,7 +229,7 @@ fn peers_invited_to_many_groups() {
     let mut convo_ids = Vec::new();
     for _ in 0..GROUPS {
         convo_ids.push(
-            saro.create_group_conversation(&[&raya_addr, &pax_addr], unnamed_group())
+            saro.create_group_conversation_v2(&[&raya_addr, &pax_addr], unnamed_group())
                 .expect("saro create group"),
         );
     }
@@ -263,7 +263,7 @@ fn group_creator_is_in_own_roster() {
     let (mut saro, _saro_events, saro_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
 
     let convo_id = saro
-        .create_group_conversation(&[], unnamed_group())
+        .create_group_conversation_v2(&[], unnamed_group())
         .expect("empty group");
     let members = saro.members(&convo_id).expect("members");
     let accounts: Vec<String> = members.iter().map(|m| m.account.to_string()).collect();
@@ -289,7 +289,7 @@ fn invited_member_is_pending_until_the_group_commits() {
     let (_raya, _raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
 
     let convo_id = saro
-        .create_group_conversation(&[], unnamed_group())
+        .create_group_conversation_v2(&[], unnamed_group())
         .expect("empty group");
     saro.add_group_participants(&convo_id, &[&raya_addr])
         .expect("saro invites raya");
@@ -321,7 +321,7 @@ fn pending_clears_once_the_add_commits() {
     let (raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
 
     let convo_id = saro
-        .create_group_conversation(&[], unnamed_group())
+        .create_group_conversation_v2(&[], unnamed_group())
         .expect("empty group");
     saro.add_group_participants(&convo_id, &[&raya_addr])
         .expect("saro invites raya");
@@ -364,7 +364,7 @@ fn add_batch_with_missing_key_package_invites_no_one() {
     auth.register(&PendingInstallation::generate().complete(account_without_key_package.addr()));
 
     let convo_id = saro
-        .create_group_conversation(&[&raya_addr], unnamed_group())
+        .create_group_conversation_v2(&[&raya_addr], unnamed_group())
         .expect("saro create group");
     wait_for_group_started(&raya_events, "raya ConversationStarted");
 
@@ -398,7 +398,7 @@ fn a_removed_member_leaves_the_roster() {
     let (mut pax, pax_events, pax_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
 
     let convo_id = saro
-        .create_group_conversation(&[&raya_addr, &pax_addr], unnamed_group())
+        .create_group_conversation_v2(&[&raya_addr, &pax_addr], unnamed_group())
         .expect("saro create group");
     wait_for_group_started(&raya_events, "raya ConversationStarted");
     wait_for_group_started(&pax_events, "pax ConversationStarted");
@@ -460,7 +460,7 @@ fn removing_yourself_is_refused() {
     let (_raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
 
     let convo_id = saro
-        .create_group_conversation(&[&raya_addr], unnamed_group())
+        .create_group_conversation_v2(&[&raya_addr], unnamed_group())
         .expect("saro create group");
     wait_for_group_started(&raya_events, "raya ConversationStarted");
     wait_for_participants(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
@@ -492,7 +492,7 @@ fn removing_a_non_member_is_an_error() {
     let (_pax, _pax_events, pax_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
 
     let convo_id = saro
-        .create_group_conversation(&[&raya_addr], unnamed_group())
+        .create_group_conversation_v2(&[&raya_addr], unnamed_group())
         .expect("saro create group");
     wait_for_group_started(&raya_events, "raya ConversationStarted");
     wait_for_participants(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
@@ -518,7 +518,7 @@ fn group_invite_of_unpublished_account_is_an_error() {
     let unpublished = TestLogosAccount::new();
 
     let err = saro
-        .create_group_conversation(&[&unpublished.address()], unnamed_group())
+        .create_group_conversation_v2(&[&unpublished.address()], unnamed_group())
         .expect_err("the account is unknown");
     assert!(matches!(
         err,
@@ -526,7 +526,7 @@ fn group_invite_of_unpublished_account_is_an_error() {
     ));
 
     let convo_id = saro
-        .create_group_conversation(&[], unnamed_group())
+        .create_group_conversation_v2(&[], unnamed_group())
         .expect("empty group");
     let err = saro
         .add_group_participants(&convo_id, &[&unpublished.address()])
@@ -550,7 +550,7 @@ fn group_metadata_reaches_joiners() {
     let (raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
 
     let convo_id = saro
-        .create_group_conversation(
+        .create_group_conversation_v2(
             &[&raya_addr],
             GroupMetadata::new("Book Club", "Weekly reads"),
         )
@@ -579,7 +579,7 @@ fn group_metadata_defaults_to_empty() {
     let (mut saro, _saro_events, _saro_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
 
     let convo_id = saro
-        .create_group_conversation(&[], unnamed_group())
+        .create_group_conversation_v2(&[], unnamed_group())
         .expect("empty group");
     let meta = saro.group_metadata(&convo_id).expect("creator metadata");
     assert_eq!(meta.name, "");
@@ -601,7 +601,7 @@ fn a_sent_message_is_acknowledged_by_the_peers_that_reply() {
     let (mut pax, pax_events, pax_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
 
     let convo_id = saro
-        .create_group_conversation(&[&raya_addr, &pax_addr], unnamed_group())
+        .create_group_conversation_v2(&[&raya_addr, &pax_addr], unnamed_group())
         .expect("saro create group");
     wait_for_group_started(&raya_events, "raya ConversationStarted");
     wait_for_group_started(&pax_events, "pax ConversationStarted");

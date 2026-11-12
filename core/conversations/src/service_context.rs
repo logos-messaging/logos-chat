@@ -3,6 +3,7 @@
 use crate::IdentityProvider;
 use crate::causal_history::CausalHistoryStore;
 use crate::clock::Clock;
+use crate::conversation::GroupV3Config;
 use crate::inbox_v2::{MlsEphemeralPqProvider, MlsIdentityProvider};
 use crate::service_traits::AuthService;
 use crate::service_traits::WakeupService;
@@ -52,4 +53,6 @@ pub(crate) struct ServiceContext<S: ExternalServices> {
     /// create/join. The creator's phase durations reach joiners inside the
     /// welcome's `ConversationSync`.
     pub(crate) demls_config: de_mls::ConversationConfig,
+    /// Timing for GroupV3 conversations, read whenever a commit is deferred.
+    pub(crate) group_v3_config: GroupV3Config,
 }

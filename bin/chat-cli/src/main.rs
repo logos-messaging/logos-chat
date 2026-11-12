@@ -12,8 +12,9 @@ use components::HttpAuthClient;
 use components::basic_file_key_vault::BasicFileKeyVault;
 use crossbeam_channel::Receiver;
 use logos_chat::{
-    AuthService, ChatClient, ConversationStore, DbKey, Event, GroupV2Config, Installation,
-    LogosConfig, P2pConfig, REGISTRY_ENDPOINT, RegistrationService, RegistryPublishMode, Transport,
+    AuthService, ChatClient, ConversationStore, DbKey, Event, GroupV2Config, GroupV3Config,
+    Installation, LogosConfig, P2pConfig, REGISTRY_ENDPOINT, RegistrationService,
+    RegistryPublishMode, Transport,
 };
 
 use app::ChatApp;
@@ -32,7 +33,7 @@ enum GroupCommit {
     Auto,
     /// Always use fast commit timers.
     Fast,
-    /// Always use the de-mls library default timing.
+    /// Always use the library's default timing.
     Default,
 }
 
@@ -49,6 +50,15 @@ fn fast_group_v2_config() -> GroupV2Config {
         freeze_duration: Duration::from_millis(500),
         proposal_expiration: Duration::from_millis(4000),
         ..GroupV2Config::default()
+    }
+}
+
+/// Fast GroupV3 timing: a finalize delay under GroupV3's one-second tick, so
+/// a commit lands, and an add's invites go out, on the next tick instead of
+/// after 30s.
+fn fast_group_v3_config() -> GroupV3Config {
+    GroupV3Config {
+        commit_finalize_delay: Duration::from_millis(100),
     }
 }
 
@@ -76,8 +86,8 @@ struct Cli {
     transport: TransportKind,
 
     /// How quickly group membership changes commit. `fast` makes `/add` and
-    /// `/remove` commit in ~1s (great for local demos); `default` uses
-    /// production de-mls timing.
+    /// `/remove` commit in ~1s (great for local demos); `default` uses the
+    /// library's default timing.
     /// `auto` (the default) picks `fast` for `--transport file` and `default`
     /// otherwise, since fast timers are too aggressive for a high-latency network.
     #[arg(long, value_enum, default_value_t = GroupCommit::Auto)]
@@ -179,6 +189,7 @@ fn main() -> Result<()> {
                 // wallclock/timer abstraction replaces this raw config.
                 #[allow(deprecated)]
                 config.set_group_v2_config(group_v2);
+                config.set_group_v3_config(fast_group_v3_config());
             }
 
             // A smoketest's keys are throwaway, so each run starts a fresh identity.
@@ -215,6 +226,7 @@ fn main() -> Result<()> {
                 // wallclock/timer abstraction replaces this raw config.
                 #[allow(deprecated)]
                 config.set_group_v2_config(group_v2);
+                config.set_group_v3_config(fast_group_v3_config());
             }
             let (client, events) = logos_chat::open_with_transport(config, transport)
                 .map_err(|e| anyhow::anyhow!("{e:?}"))

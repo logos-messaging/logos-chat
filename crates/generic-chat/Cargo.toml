@@ -7,6 +7,10 @@ license.workspace = true
 [lib]
 crate-type = ["rlib"]
 
+[features]
+# The GroupV3 timing override, for tests and demos that can't wait out the commit finalize delay.
+test-support = []
+
 [dependencies]
 # Workspace dependencies (sorted)
 chat-sqlite = { workspace = true }
@@ -25,6 +29,8 @@ tracing = "0.1"
 [dev-dependencies]
 # Workspace dependencies (sorted)
 integration_tests_core = { workspace = true }
+# Itself, so its own tests get test-support.
+logos-generic-chat = { workspace = true, features = ["test-support"] }
 
 # External dependencies (sorted)
 tempfile = "3"

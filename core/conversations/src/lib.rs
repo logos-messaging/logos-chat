@@ -18,7 +18,7 @@ mod utils;
 
 pub use causal_history::{DeliveryAck, Frontier, MissingMessage};
 pub use clock::{Clock, MockClock};
-pub use conversation::{GroupV2Frame, GroupV2Payload, MessageId};
+pub use conversation::{GroupV2Frame, GroupV2Payload, GroupV3Config, MessageId};
 pub use core::{ConversationId, Core};
 /// Timing/policy for GroupV2 conversations (de-mls's per-conversation config).
 /// Defaults to the de-mls library defaults; inject via

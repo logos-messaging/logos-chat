@@ -14,7 +14,7 @@ components = { workspace = true }
 crypto = {workspace =  true }
 crossbeam-channel = { workspace = true }
 logos-account = { workspace = true }
-logos-chat = { workspace = true }
+logos-chat = { workspace = true, features = ["test-support"] }
 message-types = { workspace = true }
 
 # External dependencies (sorted)

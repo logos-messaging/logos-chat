@@ -9,8 +9,8 @@ use crate::service_traits::AuthService;
 use crate::storage::{ConversationKind, ConversationMeta, ConversationStore};
 use crate::types::ConvoMetadata;
 use crate::{
-    Clock, DeliveryInfo, DeliveryService, GroupV2Config, IdentityProvider, RegistrationService,
-    WakeupService,
+    Clock, DeliveryInfo, DeliveryService, GroupV2Config, GroupV3Config, IdentityProvider,
+    RegistrationService, WakeupService,
 };
 use crate::{
     conversation::{Convo, ConvoBase, GroupConvo, mls_trace::record},
@@ -92,6 +92,12 @@ where
         self.services.demls_config = config;
     }
 
+    /// Overrides the GroupV3 timing. Each member applies its own, to the
+    /// commits it sends and receives from the call on.
+    pub fn set_group_v3_config(&mut self, config: GroupV3Config) {
+        self.services.group_v3_config = config;
+    }
+
     /// Builds the inbox/account/MLS/causal state, subscribes both inbound
     /// addresses, and assembles the service bundle — shared by both constructors.
     fn assemble(
@@ -120,6 +126,7 @@ where
                 wakeup_service,
                 clock: Clock::default(),
                 demls_config: GroupV2Config::default(),
+                group_v3_config: GroupV3Config::default(),
             },
             pq_inbox,
             cached_convos: HashMap::new(),
