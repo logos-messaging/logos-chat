@@ -35,7 +35,7 @@ use crate::{
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
-use self::payloads::{GroupV3Payload, message_id, to_envelope};
+use self::payloads::{GroupV3Envelope, message_id, to_envelope};
 
 // Type Aliases
 type Frame = payloads::GroupV3Frame;
@@ -346,7 +346,7 @@ impl GroupV3Convo {
     fn publish_payload<S: ExternalServices>(
         &self,
         cx: &mut ServiceContext<S>,
-        payload: GroupV3Payload,
+        payload: GroupV3Envelope,
     ) -> Result<Option<DeliveryMsgId>, SendError> {
         let env = to_envelope(self.convo_id.to_string(), payload);
         Self::publish_envelope(cx, env)
@@ -437,7 +437,7 @@ where
         payload: &[u8],
         delivery_info: Option<&DeliveryInfo>,
     ) -> Result<ConvoOutcome, ChatError> {
-        let payload = GroupV3Payload::decode(payload)?;
+        let payload = GroupV3Envelope::decode(payload)?;
         let retrieval_hint = delivery_info.map(|info| info.delivery_msg_id.as_bytes().to_vec());
         let events = self
             .channel
