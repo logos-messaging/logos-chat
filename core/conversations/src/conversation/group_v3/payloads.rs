@@ -58,7 +58,7 @@ impl GroupV3Frame {
     }
 }
 
-pub fn to_envelope(convo_id: String, payload: GroupV3Payload) -> AddressedEnvelope {
+pub fn to_envelope(convo_id: String, payload: GroupV3Envelope) -> AddressedEnvelope {
     AddressedEnvelope::new(
         delivery_address_from_id(&convo_id),
         convo_id,
@@ -74,14 +74,14 @@ pub fn protocol_message(mls_message: &[u8]) -> Result<ProtocolMessage, ChatError
 }
 
 #[derive(Clone, PartialEq, Message)]
-pub struct GroupV3Payload {
+pub struct GroupV3Envelope {
     #[prost(bytes = "bytes", tag = "1")]
     pub encrypted_header: Bytes,
     #[prost(bytes = "bytes", tag = "2")]
     pub encrypted_frame: Bytes,
 }
 
-impl From<SDSRecord> for GroupV3Payload {
+impl From<SDSRecord> for GroupV3Envelope {
     fn from(record: SDSRecord) -> Self {
         Self {
             encrypted_header: SdsHeader::from(record.header).encode_to_vec().into(),
@@ -90,10 +90,10 @@ impl From<SDSRecord> for GroupV3Payload {
     }
 }
 
-impl TryFrom<GroupV3Payload> for SDSRecord {
+impl TryFrom<GroupV3Envelope> for SDSRecord {
     type Error = prost::DecodeError;
 
-    fn try_from(payload: GroupV3Payload) -> Result<Self, Self::Error> {
+    fn try_from(payload: GroupV3Envelope) -> Result<Self, Self::Error> {
         let content = payload.encrypted_frame;
         Ok(Self {
             header: SdsHeader::decode(payload.encrypted_header)?.into(),
@@ -206,7 +206,7 @@ mod tests {
             content: Some(vec![7]),
         };
 
-        let payload = GroupV3Payload::from(record.clone());
+        let payload = GroupV3Envelope::from(record.clone());
 
         let expected = [
             0x0a, 1, b'a', // 1: sender_id
