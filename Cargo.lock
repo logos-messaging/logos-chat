@@ -2193,6 +2193,7 @@ name = "embedded-logos-delivery"
 version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
+ "hex",
  "libchat",
  "logos-delivery",
  "logos-generic-chat",
@@ -3742,13 +3743,14 @@ dependencies = [
 [[package]]
 name = "logos-delivery"
 version = "0.1.0"
-source = "git+https://github.com/logos-messaging/logos-delivery-rust-bindings?rev=8f27fb91769a92af66f6e6d59fdccacca611448b#8f27fb91769a92af66f6e6d59fdccacca611448b"
+source = "git+https://github.com/logos-messaging/logos-delivery-rust-bindings?rev=a5b374be70c6bb9c798fdc5335b1578fce73d0d1#a5b374be70c6bb9c798fdc5335b1578fce73d0d1"
 dependencies = [
  "base64",
  "ciborium",
  "crossbeam-channel",
  "flume",
  "futures-core",
+ "futures-util",
  "serde",
  "serde_json",
  "thiserror",
