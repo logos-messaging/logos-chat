@@ -19,9 +19,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crossbeam_channel::Receiver;
-use libchat::{AddressedEnvelope, DeliveryService};
+use libchat::{AddressedEnvelope, DeliveryMsgId, DeliveryService};
 use logos_delivery::DeliveryConfig;
 use logos_delivery::blocking::BlockingDeliveryNode;
+use logos_generic_chat::InboundPayload;
 use tokio::runtime::Runtime;
 use tracing::{debug, warn};
 
@@ -83,7 +84,7 @@ impl Drop for Shared {
 pub struct EmbeddedLogosDelivery {
     shared: Arc<Shared>,
     // Taken by the first `Transport::inbound` call, shared by all clones.
-    inbound: Arc<Mutex<Option<Receiver<Vec<u8>>>>>,
+    inbound: Arc<Mutex<Option<Receiver<InboundPayload>>>>,
 }
 
 impl std::fmt::Debug for EmbeddedLogosDelivery {
@@ -121,10 +122,14 @@ impl EmbeddedLogosDelivery {
                 .wait_for_connection(CONNECT_WAIT),
             runtime.handle().clone(),
         )?;
+        // A received message comes without the node's message hash, so without delivery info.
         let inbound = inner.inbound_queue(|m| {
             m.content_topic
                 .starts_with(CHAT_TOPIC_PREFIX)
-                .then_some(m.payload)
+                .then_some(InboundPayload {
+                    data: m.payload,
+                    delivery_info: None,
+                })
         });
         Ok(Self {
             shared: Arc::new(Shared {
@@ -151,11 +156,15 @@ impl EmbeddedLogosDelivery {
 impl DeliveryService for EmbeddedLogosDelivery {
     type Error = DeliveryError;
 
-    fn publish(&mut self, envelope: AddressedEnvelope) -> Result<(), DeliveryError> {
+    fn publish(
+        &mut self,
+        envelope: AddressedEnvelope,
+    ) -> Result<Option<DeliveryMsgId>, DeliveryError> {
         let topic = content_topic_for(&envelope.delivery_address);
         debug!(topic = &topic, "Publish");
+        // The node reports the message hash only in a later event.
         self.shared.inner.publish(&topic, &envelope.data)?;
-        Ok(())
+        Ok(None)
     }
 
     fn subscribe(&mut self, delivery_address: &str) -> Result<(), DeliveryError> {
@@ -163,13 +172,25 @@ impl DeliveryService for EmbeddedLogosDelivery {
             .inner
             .subscribe(&content_topic_for(delivery_address))
     }
+
+    fn fetch_messages(
+        &mut self,
+        delivery_address: &str,
+        _delivery_msg_ids: &[DeliveryMsgId],
+    ) -> Result<(), DeliveryError> {
+        // The node's API has no query by message hash.
+        Err(DeliveryError::Subscribe(format!(
+            "no fetch by delivery message id on {}",
+            content_topic_for(delivery_address)
+        )))
+    }
 }
 
 // The impl lives here (the crate owning the type) because the orphan rule bars
 // it from the `logos-chat` crate, which owns neither the trait nor the type.
 impl logos_generic_chat::Transport for EmbeddedLogosDelivery {
     /// Callable once: a second receiver would split the messages with the first.
-    fn inbound(&mut self) -> Receiver<Vec<u8>> {
+    fn inbound(&mut self) -> Receiver<InboundPayload> {
         self.inbound
             .lock()
             .expect("inbound lock is never held across a panic")

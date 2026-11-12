@@ -38,7 +38,7 @@ use crate::IdentityProvider;
 use crate::conversation::mls_trace::record::{ConvoId, Short};
 use crate::conversation::{ConversationIdRef, ExternalServices, MessageId, ServiceContext};
 use crate::{
-    ConvoOutcome, DeliveryService, Observation, RegistrationService,
+    ConvoOutcome, DeliveryInfo, DeliveryService, Observation, RegistrationService,
     conversation::{ChatError, Convo, ConvoBase, GroupConvo, Identified},
 };
 
@@ -384,6 +384,7 @@ where
         &mut self,
         service_ctx: &mut super::ServiceContext<S>,
         payload: &[u8],
+        _delivery_info: Option<&DeliveryInfo>,
     ) -> Result<ConvoOutcome, ChatError> {
         let encrypted_payload = EncryptedPayload::decode(payload)?;
 

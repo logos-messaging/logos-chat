@@ -48,8 +48,8 @@ impl Client {
             let ds = self.inner.ds();
             std::iter::from_fn(|| ds.poll()).collect()
         };
-        for data in messages {
-            self.inner.handle_payload(&data).unwrap();
+        for (data, info) in messages {
+            self.inner.handle_payload(&data, Some(&info)).unwrap();
         }
     }
 

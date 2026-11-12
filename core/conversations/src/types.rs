@@ -48,6 +48,29 @@ impl Debug for AddressedEnvelope {
     }
 }
 
+/// Names a payload on the delivery network, so any client's delivery service can fetch it again.
+/// Opaque to chat, which only keeps it and hands it back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeliveryMsgId(Vec<u8>);
+
+impl DeliveryMsgId {
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
+
+impl From<Vec<u8>> for DeliveryMsgId {
+    fn from(value: Vec<u8>) -> Self {
+        Self(value)
+    }
+}
+
+/// What the delivery service knows of a payload it carries.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeliveryInfo {
+    pub delivery_msg_id: DeliveryMsgId,
+}
+
 // Internal type Definitions
 
 // Used by Conversations to attach addresses to outbound encrypted payloads

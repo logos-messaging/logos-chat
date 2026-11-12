@@ -196,3 +196,96 @@ fn groupv3_resend_heals_a_lost_commit() {
         h.raya().group_signers(&convo_id).map_or(0, |s| s.len()) == 3
     });
 }
+
+#[test]
+fn groupv3_joiner_fetches_what_was_sent_while_its_invite_was_in_flight() {
+    let mut harness = TestHarness::<4>::new(|_, _| {});
+    let convo_id = create_group_for_adds(&mut harness);
+
+    let pax = harness.pax().account();
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &[pax])
+        .expect("saro adds pax");
+    // Sent before Saro applies the add, m1 would be in an epoch Pax never joins.
+    harness.process_until_label("Saro and Raya apply the add", |h| {
+        h.saro().group_signers(&convo_id).map_or(0, |s| s.len()) == 3
+            && h.raya().group_signers(&convo_id).map_or(0, |s| s.len()) == 3
+    });
+    // Out before Pax has the invite, so before Pax subscribes: it never reaches Pax live.
+    assert_eq!(harness.pax().convo_count(), 0);
+    harness
+        .saro()
+        .send_content(&convo_id, b"m1")
+        .expect("saro send");
+    harness.process_until_label("Pax join", |h| {
+        h.pax().convo_count() == 1 && h.raya().check(&convo_id, b"m1")
+    });
+    // Raya's reply names m1, which acknowledges it, so Saro never resends it.
+    harness
+        .raya()
+        .send_content(&convo_id, b"r1")
+        .expect("raya send");
+    harness.process_until_label("Pax gets both", |h| {
+        h.pax().check(&convo_id, b"m1") && h.pax().check(&convo_id, b"r1")
+    });
+}
+
+#[test]
+fn groupv3_member_fetches_a_lost_message_another_member_names() {
+    let mut harness = TestHarness::<4>::new(|_, _| {});
+    let convo_id = create_group_for_adds(&mut harness);
+
+    let pax = harness.pax().account();
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &[pax])
+        .expect("saro adds pax");
+    harness.process_until_label("Pax join", |h| {
+        h.pax().convo_count() == 1 && h.raya().group_signers(&convo_id).map_or(0, |s| s.len()) == 3
+    });
+
+    harness
+        .saro()
+        .send_content(&convo_id, b"m1")
+        .expect("saro send");
+    harness.raya().drop_pending_payloads();
+    harness.process_until_label("Pax gets m1", |h| h.pax().check(&convo_id, b"m1"));
+    // Pax's reply names m1, which acknowledges it, so Saro never resends it.
+    harness
+        .pax()
+        .send_content(&convo_id, b"p1")
+        .expect("pax send");
+    harness.process_until_label("Raya gets both", |h| {
+        h.raya().check(&convo_id, b"m1") && h.raya().check(&convo_id, b"p1")
+    });
+}
+
+#[test]
+fn groupv3_member_fetches_a_lost_message_only_its_sender_names() {
+    let mut harness = TestHarness::<2>::new(|_, _| {});
+    let convo_id = create_group(&mut harness);
+
+    harness
+        .saro()
+        .send_content(&convo_id, b"m1")
+        .expect("saro send m1");
+    harness.raya().drop_pending_payloads();
+    // m2 names m1 by the hint Saro kept after publishing it.
+    harness
+        .saro()
+        .send_content(&convo_id, b"m2")
+        .expect("saro send m2");
+
+    // A minute at most, which runs out before Saro's resend of m1 can arrive.
+    harness.process_until_label("raya gets both", |h| {
+        h.raya().received_messages().len() == 2
+    });
+    let contents: Vec<&[u8]> = harness
+        .raya()
+        .received_messages()
+        .iter()
+        .map(|message| message.contents.as_slice())
+        .collect();
+    assert_eq!(contents, [b"m1", b"m2"]);
+}

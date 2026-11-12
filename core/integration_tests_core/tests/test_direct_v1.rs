@@ -58,13 +58,16 @@ fn replayed_invite_is_rejected() {
         .create_direct_convo_v1(raya_account)
         .expect("saro create convo");
 
-    let invite = harness.raya().ds().poll().expect("invite for raya");
-    let joined = harness.raya().handle_payload(&invite).expect("raya joins");
+    let (invite, info) = harness.raya().ds().poll().expect("invite for raya");
+    let joined = harness
+        .raya()
+        .handle_payload(&invite, Some(&info))
+        .expect("raya joins");
     assert!(matches!(joined, PayloadOutcome::Inbox(_)), "{joined:?}");
 
     harness
         .raya()
-        .handle_payload(&invite)
+        .handle_payload(&invite, Some(&info))
         .expect_err("the copy is rejected");
 
     harness
@@ -88,8 +91,8 @@ fn invite_for_another_installation_is_rejected() {
         .create_direct_convo_v1(pax_account)
         .expect("saro create convo with pax");
 
-    let for_raya = harness.raya().ds().poll().expect("invite for raya");
-    let for_pax = harness.pax().ds().poll().expect("invite for pax");
+    let (for_raya, _) = harness.raya().ds().poll().expect("invite for raya");
+    let (for_pax, info) = harness.pax().ds().poll().expect("invite for pax");
 
     // Raya's Welcome, addressed to Pax's inbox.
     let mut forged = EnvelopeV1::decode(for_raya.as_slice()).expect("envelope");
@@ -99,10 +102,13 @@ fn invite_for_another_installation_is_rejected() {
 
     harness
         .pax()
-        .handle_payload(&forged.encode_to_vec())
+        .handle_payload(&forged.encode_to_vec(), None)
         .expect_err("a Welcome for someone else is rejected");
 
-    let joined = harness.pax().handle_payload(&for_pax).expect("pax joins");
+    let joined = harness
+        .pax()
+        .handle_payload(&for_pax, Some(&info))
+        .expect("pax joins");
     assert!(matches!(joined, PayloadOutcome::Inbox(_)), "{joined:?}");
 }
 
@@ -117,7 +123,7 @@ fn wakeup_naming_the_inbox_is_an_error() {
         .expect("saro create convo");
 
     // An invite's hint is its recipient's inbox id.
-    let invite = harness.raya().ds().poll().expect("invite for raya");
+    let (invite, _) = harness.raya().ds().poll().expect("invite for raya");
     let inbox_id = EnvelopeV1::decode(invite.as_slice())
         .expect("envelope")
         .conversation_hint;

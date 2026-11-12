@@ -6,8 +6,8 @@ use components::{ThreadedWakeupService, WakeupEvent};
 use crossbeam_channel::{Receiver, Sender, select};
 use libchat::{
     AuthService, ConversationId, ConversationStore, ConvoMetadata, ConvoOutcome, Core, DeliveryAck,
-    DeliveryService, GroupV2Config, InboxOutcome, MessageId, MissingMessage, Observation,
-    ParticipantId, PayloadOutcome, RegistrationService,
+    DeliveryInfo, DeliveryService, GroupV2Config, InboxOutcome, MessageId, MissingMessage,
+    Observation, ParticipantId, PayloadOutcome, RegistrationService,
 };
 use logos_account::AccountAddr;
 use parking_lot::Mutex;
@@ -45,7 +45,15 @@ impl GroupMetadata {
 pub trait Transport: DeliveryService + Send + 'static {
     /// Hand over the inbound payload stream. Called once, at client construction,
     /// before the [`Core`] takes ownership of the service.
-    fn inbound(&mut self) -> Receiver<Vec<u8>>;
+    fn inbound(&mut self) -> Receiver<InboundPayload>;
+}
+
+/// A payload as the transport received it, with its delivery info when the transport gives it.
+#[derive(Clone, Debug)]
+pub struct InboundPayload {
+    pub data: Vec<u8>,
+    /// The conversation keeps it to hand on, so members that missed the payload can fetch it.
+    pub delivery_info: Option<DeliveryInfo>,
 }
 
 /// High-level chat client.
@@ -110,7 +118,7 @@ where
     fn spawn(
         core: ClientCore<T, R, A, S>,
         address: String,
-        inbound: Receiver<Vec<u8>>,
+        inbound: Receiver<InboundPayload>,
         wakeup_events: Receiver<WakeupEvent>,
     ) -> (Self, Receiver<Event>) {
         let core = Arc::new(Mutex::new(core));
@@ -333,7 +341,7 @@ where
 /// the thread until one of the channels is ready.
 fn worker_loop<T, R, A, S: ConversationStore + 'static>(
     core: Arc<Mutex<ClientCore<T, R, A, S>>>,
-    inbound: Receiver<Vec<u8>>,
+    inbound: Receiver<InboundPayload>,
     wakeup_events: Receiver<WakeupEvent>,
     shutdown: Receiver<()>,
     event_tx: Sender<Event>,
@@ -345,12 +353,12 @@ fn worker_loop<T, R, A, S: ConversationStore + 'static>(
     loop {
         select! {
             recv(inbound) -> msg => {
-                let Ok(bytes) = msg else {
+                let Ok(InboundPayload { data: bytes, delivery_info }) = msg else {
                     return; // transport's sender dropped
                 };
                 let events = {
                     let mut core = core.lock();
-                    let mut events = match core.handle_payload(&bytes) {
+                    let mut events = match core.handle_payload(&bytes, delivery_info.as_ref()) {
                         Ok(outcome) => events_from_inbound(outcome),
                         Err(e) => {
                             tracing::warn!("inbound handle_payload failed: {e:?}");

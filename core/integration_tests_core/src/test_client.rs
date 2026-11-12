@@ -81,8 +81,8 @@ impl TestClient {
         }
 
         let mut outcomes = vec![];
-        for data in messages {
-            let outcome = match self.inner.handle_payload(&data) {
+        for (data, info) in messages {
+            let outcome = match self.inner.handle_payload(&data, Some(&info)) {
                 Ok(outcome) => outcome,
                 Err(e) if self.tolerate_inbound_errors => {
                     warn!(id = ?self.signer_key(), error = ?e, "INBOUND ERROR");

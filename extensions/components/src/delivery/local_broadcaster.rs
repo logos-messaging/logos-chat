@@ -5,7 +5,7 @@ use std::{
     rc::Rc,
 };
 
-use libchat::{AddressedEnvelope, DeliveryService};
+use libchat::{AddressedEnvelope, DeliveryInfo, DeliveryMsgId, DeliveryService};
 use tracing::info;
 
 #[derive(Debug)]
@@ -31,6 +31,7 @@ pub struct LocalBroadcaster {
     cursor: usize,
     subscriptions: HashSet<String>,
     outbound_msgs: Vec<u64>,
+    fetched: VecDeque<(Vec<u8>, DeliveryInfo)>,
 }
 
 /// This is Lightweight DeliveryService which can be used for tests
@@ -49,6 +50,7 @@ impl LocalBroadcaster {
             cursor,
             subscriptions: HashSet::new(),
             outbound_msgs: Vec::new(),
+            fetched: VecDeque::new(),
         }
     }
 
@@ -63,17 +65,22 @@ impl LocalBroadcaster {
             cursor,
             subscriptions: HashSet::new(),
             outbound_msgs: Vec::new(),
+            fetched: VecDeque::new(),
         }
     }
 
     /// Pulls all messages this consumer has not yet seen on `address`,
     /// applying any registered filter.  Advances the cursor so the same
     /// messages are not returned again.
+    /// Fetched messages come first, and each comes with its delivery info.
     // clippy's question_mark (1.97+) wants `self.shared.borrow().read(next)?`, but
     // `read` returns a reference into the RefCell `Ref`; the `?` form drops that
     // guard at the `;` and `ae` would dangle. Keep the explicit match.
     #[allow(clippy::question_mark)]
-    pub fn poll(&mut self) -> Option<Vec<u8>> {
+    pub fn poll(&mut self) -> Option<(Vec<u8>, DeliveryInfo)> {
+        if let Some(fetched) = self.fetched.pop_front() {
+            return Some(fetched);
+        }
         loop {
             let next = self.cursor;
             match self.shared.borrow().read(next) {
@@ -83,7 +90,7 @@ impl LocalBroadcaster {
                     if self.subscriptions.contains(ae.delivery_address.as_str())
                         && self.is_inbound(ae)
                     {
-                        return Some(ae.data.clone());
+                        return Some((ae.data.clone(), Self::info_for(next)));
                     }
                 }
             }
@@ -100,6 +107,22 @@ impl LocalBroadcaster {
         let mid = Self::msg_id(msg);
         !self.outbound_msgs.contains(&mid)
     }
+
+    /// A message's delivery message id is the cursor that reads it.
+    fn id_for(cursor: usize) -> DeliveryMsgId {
+        DeliveryMsgId::from((cursor as u64).to_be_bytes().to_vec())
+    }
+
+    fn info_for(cursor: usize) -> DeliveryInfo {
+        DeliveryInfo {
+            delivery_msg_id: Self::id_for(cursor),
+        }
+    }
+
+    fn cursor_from(id: &DeliveryMsgId) -> Option<usize> {
+        let bytes = <[u8; 8]>::try_from(id.as_bytes()).ok()?;
+        Some(u64::from_be_bytes(bytes) as usize)
+    }
 }
 
 impl Default for LocalBroadcaster {
@@ -111,12 +134,17 @@ impl Default for LocalBroadcaster {
 impl DeliveryService for LocalBroadcaster {
     type Error = String;
 
-    fn publish(&mut self, envelope: AddressedEnvelope) -> Result<(), Self::Error> {
+    fn publish(
+        &mut self,
+        envelope: AddressedEnvelope,
+    ) -> Result<Option<DeliveryMsgId>, Self::Error> {
         info!(?envelope.delivery_address, len=envelope.data.len(), "DS:Publish");
         self.outbound_msgs.push(Self::msg_id(&envelope));
-        self.shared.borrow_mut().messages.push_back(envelope);
+        let mut shared = self.shared.borrow_mut();
+        let cursor = shared.tail();
+        shared.messages.push_back(envelope);
 
-        Ok(())
+        Ok(Some(Self::id_for(cursor)))
     }
 
     fn subscribe(&mut self, delivery_address: &str) -> Result<(), Self::Error> {
@@ -125,5 +153,68 @@ impl DeliveryService for LocalBroadcaster {
         // Subscriptions are evaluated on polling, not when the message is published
         self.subscriptions.insert(delivery_address.to_string());
         Ok(())
+    }
+
+    fn fetch_messages(
+        &mut self,
+        delivery_address: &str,
+        delivery_msg_ids: &[DeliveryMsgId],
+    ) -> Result<(), Self::Error> {
+        info!(
+            delivery_address,
+            count = delivery_msg_ids.len(),
+            "DS:FetchMessages"
+        );
+        let shared = self.shared.borrow();
+        for id in delivery_msg_ids {
+            // An id naming nothing on the address finds nothing.
+            if let Some(cursor) = Self::cursor_from(id)
+                && let Some(ae) = shared
+                    .read(cursor)
+                    .filter(|ae| ae.delivery_address == delivery_address)
+            {
+                self.fetched
+                    .push_back((ae.data.clone(), Self::info_for(cursor)));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn envelope(delivery_address: &str, data: &[u8]) -> AddressedEnvelope {
+        AddressedEnvelope {
+            delivery_address: delivery_address.into(),
+            data: data.to_vec(),
+        }
+    }
+
+    #[test]
+    fn fetch_delivers_what_the_ids_name_on_the_address() {
+        let mut saro = LocalBroadcaster::new();
+        let mut raya = saro.new_consumer();
+        raya.subscribe("group").unwrap();
+        let m1 = saro
+            .publish(envelope("group", b"m1"))
+            .unwrap()
+            .expect("delivery message id");
+        let x1 = saro
+            .publish(envelope("elsewhere", b"x1"))
+            .unwrap()
+            .expect("delivery message id");
+        // Raya was there: m1 reaches it live, with the id its publish returned.
+        assert_eq!(raya.poll().unwrap().1.delivery_msg_id, m1);
+
+        // Pax arrives after both went out, so neither reaches it live; x1 is on another address.
+        let mut pax = saro.new_consumer();
+        pax.subscribe("group").unwrap();
+        pax.fetch_messages("group", &[m1.clone(), x1]).unwrap();
+        let (data, info) = pax.poll().expect("m1");
+        assert_eq!(data, b"m1");
+        assert_eq!(info.delivery_msg_id, m1);
+        assert!(pax.poll().is_none());
     }
 }
