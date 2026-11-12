@@ -33,7 +33,7 @@ pub(crate) const CIPHER_SUITE: Ciphersuite =
 
 /// HPKE public key length for [`CIPHER_SUITE`]: a 1184-byte ML-KEM-768 key
 /// followed by a 32-byte X25519 key.
-const HPKE_PUBLIC_KEY_LEN: usize = 1184 + 32;
+pub(crate) const HPKE_PUBLIC_KEY_LEN: usize = 1184 + 32;
 
 // The length above is XWing-specific; fail the build if the ciphersuite moves.
 const _: () = assert!(matches!(

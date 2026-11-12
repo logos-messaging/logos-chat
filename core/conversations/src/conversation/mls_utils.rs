@@ -1,5 +1,5 @@
 use openmls::{
-    group::StagedCommit,
+    group::{MlsGroup, StagedCommit},
     key_packages::{KeyPackage, KeyPackageIn},
     prelude::tls_codec::Deserialize,
     versions::ProtocolVersion,
@@ -91,25 +91,43 @@ fn validate_keypackage<S: ExternalServices>(
     }
 }
 
+/// Names a group's state at one epoch: a short hash of the epoch authenticator.
+/// Two branches of a fork at the same epoch get different values.
 #[derive(Debug, PartialEq, Clone)]
 pub struct EpochFingerprint {
     val: String,
 }
 
+const EPOCH_FINGERPRINT_LABEL: &[u8] = b"logos-chat|epoch-fingerprint|v1\0";
+
 impl EpochFingerprint {
     pub fn as_str(&self) -> &str {
         &self.val
+    }
+
+    pub fn into_string(self) -> String {
+        self.val
+    }
+
+    fn of(authenticator: &[u8]) -> Self {
+        Self {
+            val: blake2b_hex::<hash_size::EpochFingerprint>(&[
+                EPOCH_FINGERPRINT_LABEL,
+                authenticator,
+            ]),
+        }
     }
 }
 
 impl From<&StagedCommit> for EpochFingerprint {
     fn from(value: &StagedCommit) -> Self {
         let authenticator = value.epoch_authenticator().expect("is member"); // To receive a Staged commit the signer must be a member of the group.
-        let hash = blake2b_hex::<hash_size::EpochFingerprint>(&[
-            b"logos-chat|epoch-fingerprint|v1\0",
-            authenticator.as_slice(),
-        ]);
+        Self::of(authenticator.as_slice())
+    }
+}
 
-        Self { val: hash }
+impl From<&MlsGroup> for EpochFingerprint {
+    fn from(group: &MlsGroup) -> Self {
+        Self::of(group.epoch_authenticator().as_slice())
     }
 }

@@ -6,7 +6,11 @@
 //  - Everyone is an "Admin"
 //
 
+mod beacons;
+pub(crate) mod external;
 mod handlers;
+#[cfg(any(test, feature = "test-support"))]
+pub mod inspect;
 mod payloads;
 
 use std::fmt;
@@ -33,7 +37,8 @@ use crate::{
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
-use self::payloads::{GroupV3Payload, message_id, to_envelope};
+use self::beacons::Beacons;
+use self::payloads::{GroupV3Body, GroupV3External, GroupV3Payload, message_id, to_envelope};
 
 // Type Aliases
 type Frame = payloads::GroupV3Frame;
@@ -67,6 +72,7 @@ pub struct GroupV3Convo {
     convo_id: String,
     mls_group: MlsGroup,
     channel: Channel,
+    beacons: Beacons,
 }
 
 // `sds::Channel` implements no `Debug`.
@@ -93,6 +99,7 @@ impl GroupV3Convo {
 
         convo.init(cx)?;
         convo.add_signer(cx, signers)?;
+        convo.enter_epoch(cx);
         Ok(convo)
     }
 
@@ -110,9 +117,10 @@ impl GroupV3Convo {
                 .into_group(&cx.mls_provider)
                 .map_err(ChatError::generic)?;
 
-        let convo = Self::from_group(cx, mls_group, Some(start))?;
+        let mut convo = Self::from_group(cx, mls_group, Some(start))?;
 
         convo.init(cx)?;
+        convo.enter_epoch(cx);
         Ok(convo)
     }
 
@@ -127,6 +135,7 @@ impl GroupV3Convo {
             convo_id,
             mls_group,
             channel,
+            beacons: Beacons::default(),
         })
     }
 }
@@ -204,6 +213,7 @@ impl GroupV3Convo {
 
         // Update State
         self.mls_group.merge_pending_commit(&cx.mls_provider)?;
+        self.enter_epoch(cx);
 
         let start = StartPoint {
             message_id: record.header.message_id.clone(),
@@ -241,6 +251,32 @@ impl GroupV3Convo {
 
     fn default_outcome(&self) -> ConvoOutcome {
         ConvoOutcome::empty(self.convo_id.clone())
+    }
+}
+
+impl GroupV3Convo {
+    /// Call after merging any commit, ours or a peer's.
+    fn enter_epoch<S: ExternalServices>(&mut self, cx: &mut ServiceContext<S>) {
+        self.beacons
+            .enter_epoch(cx, &self.mls_group, &self.convo_id);
+        self.send_beacon(cx);
+    }
+
+    /// Send our beacon once it is due. A failure is retried on a later tick
+    /// rather than failing the operation that changed the epoch.
+    fn send_beacon<S: ExternalServices>(&mut self, cx: &mut ServiceContext<S>) {
+        let now = cx.clock.now();
+        let Some(beacon) = self.beacons.due(now) else {
+            return;
+        };
+        let payload = GroupV3Payload::external(GroupV3External::beacon(beacon.clone()));
+        match self.publish_payload(cx, payload) {
+            Ok(()) => self.beacons.sent(),
+            Err(e) => {
+                warn!(convo = %self.convo_id, error = %e, "beacon not sent");
+                self.beacons.failed(now);
+            }
+        }
     }
 }
 
@@ -312,6 +348,14 @@ where
         payload: &[u8],
     ) -> Result<ConvoOutcome, ChatError> {
         let payload = GroupV3Payload::decode(payload)?;
+        if let Some(GroupV3Body::External(frame)) = &payload.body {
+            let crypto = cx.mls_provider.crypto();
+            let keys = self.mls_group.members().map(|m| m.signature_key);
+            self.beacons
+                .receive_frame(crypto, &self.convo_id, keys, frame);
+            return Ok(self.default_outcome());
+        }
+
         let events = self
             .channel
             .receive(SDSRecord::try_from(payload)?, None, now_ms(cx))
@@ -326,6 +370,7 @@ where
         cx.wakeup_service
             .wakeup_in(SDS_TICK_INTERVAL, self.convo_id.clone());
         let events = self.channel.tick(now_ms(cx), &mut rand_0_10::rng());
+        self.send_beacon(cx);
         Ok(ConvoOutcome {
             observations: self.handle_sds_events(cx, events),
             ..self.default_outcome()

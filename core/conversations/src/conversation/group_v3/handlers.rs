@@ -150,6 +150,7 @@ impl GroupV3Convo {
         self.mls_group
             .merge_staged_commit(&cx.mls_provider, commit)
             .map_err(ChatError::generic)?;
+        self.enter_epoch(cx);
 
         info!(
             convo = %self.convo_id,
