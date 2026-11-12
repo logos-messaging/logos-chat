@@ -45,6 +45,21 @@ type Frame = payloads::GroupV3Frame;
 const SDS_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const COMMIT_FINALIZE_DELAY: Duration = Duration::from_secs(30);
 
+/// Timing for GroupV3 conversations, set with [`Core::set_group_v3_config`](crate::Core::set_group_v3_config).
+#[derive(Clone, Debug)]
+pub struct GroupV3Config {
+    /// How long a commit, sent or received, waits before this member finalizes it.
+    pub commit_finalize_delay: Duration,
+}
+
+impl Default for GroupV3Config {
+    fn default() -> Self {
+        Self {
+            commit_finalize_delay: COMMIT_FINALIZE_DELAY,
+        }
+    }
+}
+
 fn delivery_address_from_id(convo_id: &str) -> String {
     blake2b_hex::<hash_size::DeliveryAddr>(&["delivery_addr|", convo_id])
 }
@@ -258,7 +273,8 @@ impl GroupV3Convo {
     ) {
         // Simulate some finalization mechanism
         if self.next_commit.is_none() {
-            self.next_commit = Some((cx.clock.now() + COMMIT_FINALIZE_DELAY, fingerprint.clone()));
+            let due = cx.clock.now() + cx.group_v3_config.commit_finalize_delay;
+            self.next_commit = Some((due, fingerprint.clone()));
         }
         self.deferred_commits.insert(fingerprint, commit);
     }
@@ -413,7 +429,10 @@ where
         _cx: &mut ServiceContext<S>,
         _signer: &[crate::SignerRef],
     ) -> Result<(), ChatError> {
-        todo!()
+        Err(ChatError::UnsupportedFunction(
+            self.convo_id.clone(),
+            "Remove Member".into(),
+        ))
     }
 }
 

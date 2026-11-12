@@ -27,8 +27,8 @@ use logos_account::Ed25519VerifyingKey;
 use logos_generic_chat::SqliteStore;
 use logos_generic_chat::StorageConfig;
 use logos_generic_chat::{
-    ChatClient, ChatClientBuilder, ClientError, DbKey, Event, GroupV2Config, IdentityMode,
-    IdentityStore, Installation, PendingInstallation, Transport,
+    ChatClient, ChatClientBuilder, ClientError, DbKey, Event, GroupV2Config, GroupV3Config,
+    IdentityMode, IdentityStore, Installation, PendingInstallation, Transport,
 };
 
 /// The endpoint for the account and keypackage registration service.
@@ -40,12 +40,14 @@ pub const REGISTRY_ENDPOINT: &str = "https://devnet.chat-kc.logos.co";
 /// never baked into the library. Everything else defaults: the identity to
 /// [`IdentityMode::LoadOrCreate`], so reopening the same database reopens the
 /// same installation; the registry endpoint to the baked-in Logos value; the
-/// embedded node's p2p settings to [`P2pConfig::default`]; and the GroupV2
-/// timing to the de-mls library defaults. Override them with
+/// embedded node's p2p settings to [`P2pConfig::default`]; the GroupV2
+/// timing to the de-mls library defaults; and the GroupV3 timing to
+/// [`GroupV3Config::default`]. Override them with
 /// [`set_identity_mode`](Self::set_identity_mode),
 /// [`set_registry_url`](Self::set_registry_url),
-/// [`set_p2p_config`](Self::set_p2p_config), and
-/// [`set_group_v2_config`](Self::set_group_v2_config).
+/// [`set_p2p_config`](Self::set_p2p_config),
+/// [`set_group_v2_config`](Self::set_group_v2_config), and
+/// [`set_group_v3_config`](Self::set_group_v3_config).
 pub struct LogosConfig {
     db_path: String,
     db_key: DbKey,
@@ -54,6 +56,7 @@ pub struct LogosConfig {
     registry_publish_mode: RegistryPublishMode,
     p2p_config: P2pConfig,
     group_v2_config: Option<GroupV2Config>,
+    group_v3_config: Option<GroupV3Config>,
 }
 
 impl LogosConfig {
@@ -73,6 +76,7 @@ impl LogosConfig {
             registry_publish_mode: RegistryPublishMode::default(),
             p2p_config: P2pConfig::default(),
             group_v2_config: None,
+            group_v3_config: None,
         }
     }
 
@@ -126,6 +130,12 @@ impl LogosConfig {
     )]
     pub fn set_group_v2_config(&mut self, group_v2_config: GroupV2Config) {
         self.group_v2_config = Some(group_v2_config);
+    }
+
+    /// Override the GroupV3 timing this client creates or joins groups with
+    /// (defaults to [`GroupV3Config::default`]).
+    pub fn set_group_v3_config(&mut self, group_v3_config: GroupV3Config) {
+        self.group_v3_config = Some(group_v3_config);
     }
 }
 
@@ -187,6 +197,9 @@ pub fn open_with_transport<T: Transport + Clone>(
     if let Some(group_v2) = config.group_v2_config {
         builder = builder.group_v2_config(group_v2);
     }
+    if let Some(group_v3) = config.group_v3_config {
+        builder = builder.group_v3_config(group_v3);
+    }
     builder.build()
 }
 
@@ -246,12 +259,15 @@ pub fn client_with(
         ..GroupV2Config::default()
     };
 
-    let builder = ChatClientBuilder::new(installation)
+    let mut builder = ChatClientBuilder::new(installation)
         .transport(transport)
         .registration(registry)
         .auth(auth)
         .storage(store)
         .group_v2_config(demls_config);
+    if let Some(group_v3) = config.group_v3_config {
+        builder = builder.group_v3_config(group_v3);
+    }
     builder.build()
 }
 

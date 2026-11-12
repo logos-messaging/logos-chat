@@ -1,7 +1,9 @@
 use chat_sqlite::{SqliteStore, StorageConfig};
 use components::EphemeralRegistry;
 use crossbeam_channel::Receiver;
-use libchat::{AuthService, ChatError, ConversationStore, GroupV2Config, RegistrationService};
+use libchat::{
+    AuthService, ChatError, ConversationStore, GroupV2Config, GroupV3Config, RegistrationService,
+};
 
 use crate::Transport;
 use crate::client::ChatClient;
@@ -20,6 +22,7 @@ pub struct ChatClientBuilder<T = Unset, R = Unset, A = Unset, S = Unset> {
     auth: A,
     storage: S,
     group_v2: Option<GroupV2Config>,
+    group_v3: Option<GroupV3Config>,
 }
 
 impl ChatClientBuilder {
@@ -34,6 +37,7 @@ impl ChatClientBuilder {
             auth: Unset,
             storage: Unset,
             group_v2: None,
+            group_v3: None,
         }
     }
 }
@@ -47,6 +51,7 @@ impl<T, R, A, S> ChatClientBuilder<T, R, A, S> {
             auth: self.auth,
             storage: self.storage,
             group_v2: self.group_v2,
+            group_v3: self.group_v3,
         }
     }
 
@@ -58,6 +63,7 @@ impl<T, R, A, S> ChatClientBuilder<T, R, A, S> {
             auth: self.auth,
             storage: self.storage,
             group_v2: self.group_v2,
+            group_v3: self.group_v3,
         }
     }
 
@@ -69,6 +75,7 @@ impl<T, R, A, S> ChatClientBuilder<T, R, A, S> {
             auth,
             storage: self.storage,
             group_v2: self.group_v2,
+            group_v3: self.group_v3,
         }
     }
 
@@ -80,6 +87,7 @@ impl<T, R, A, S> ChatClientBuilder<T, R, A, S> {
             auth: self.auth,
             storage,
             group_v2: self.group_v2,
+            group_v3: self.group_v3,
         }
     }
 
@@ -95,6 +103,7 @@ impl<T, R, A, S> ChatClientBuilder<T, R, A, S> {
             auth: self.auth,
             storage,
             group_v2: self.group_v2,
+            group_v3: self.group_v3,
         }
     }
 
@@ -104,6 +113,13 @@ impl<T, R, A, S> ChatClientBuilder<T, R, A, S> {
     /// and policy fields stay local).
     pub fn group_v2_config(mut self, config: GroupV2Config) -> Self {
         self.group_v2 = Some(config);
+        self
+    }
+
+    /// Timing for GroupV3 conversations this client creates or joins.
+    /// Defaults to a 30 s commit finalize delay; each member applies its own.
+    pub fn group_v3_config(mut self, config: GroupV3Config) -> Self {
+        self.group_v3 = Some(config);
         self
     }
 }
@@ -126,6 +142,7 @@ where
             self.auth,
             self.storage,
             self.group_v2,
+            self.group_v3,
         )
     }
 }
@@ -144,6 +161,7 @@ where
             self.auth,
             SqliteStore::in_memory(),
             self.group_v2,
+            self.group_v3,
         )
     }
 }
@@ -163,6 +181,7 @@ where
             self.auth,
             SqliteStore::in_memory(),
             self.group_v2,
+            self.group_v3,
         )
     }
 }
@@ -182,6 +201,7 @@ where
             self.auth,
             self.storage,
             self.group_v2,
+            self.group_v3,
         )
     }
 }
