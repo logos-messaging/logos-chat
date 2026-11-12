@@ -5,14 +5,14 @@ use openmls::prelude::{
 };
 use prost::Message as _;
 use sds::Event;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 use crate::conversation::mls_utils::EpochFingerprint;
 use crate::service_context::ServiceContext;
 use crate::{ChatError, Content, ConvoOutcome, ExternalServices, MessageId, Observation, Signer};
 
 use super::payloads::{GroupV3FrameType, protocol_message};
-use super::{Frame, GroupV3Convo};
+use super::{DeferredCommit, Frame, GroupV3Convo};
 
 impl GroupV3Convo {
     /// Act on SDS events in order: a released message goes through MLS, a record is published.
@@ -144,23 +144,13 @@ impl GroupV3Convo {
         cx: &mut ServiceContext<S>,
         commit: StagedCommit,
     ) -> Result<ConvoOutcome, ChatError> {
-        let epoch = self.mls_group.epoch().as_u64();
+        let curr_epoch = self.mls_group.epoch().as_u64();
+        let commit_epoch = commit.epoch();
         let fingerprint = EpochFingerprint::from(&commit);
 
-        self.mls_group
-            .merge_staged_commit(&cx.mls_provider, commit)
-            .map_err(ChatError::generic)?;
-
-        info!(
-            convo = %self.convo_id,
-            epoch,
-            new_epoch = self.mls_group.epoch().as_u64(),
-            epochfingerprint = fingerprint.as_str(),
-            "incoming commit merged"
-        );
-        Ok(ConvoOutcome {
-            observations: vec![Observation::SignersChanged],
-            ..self.default_outcome()
-        })
+        // Save the commit and apply only after its been finalized.
+        self.defer_commit(cx, fingerprint.clone(), DeferredCommit::Staged(commit));
+        debug!(convo = %self.convo_id, epoch=%curr_epoch, %commit_epoch, ?fingerprint, "incoming commit deferred");
+        Ok(self.default_outcome())
     }
 }
