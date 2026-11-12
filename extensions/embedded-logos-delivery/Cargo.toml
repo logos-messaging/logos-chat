@@ -12,8 +12,13 @@ logos-delivery = { workspace = true }
 logos-generic-chat = { workspace = true }
 
 # External dependencies (sorted)
+hex = "0.4.3"
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 tracing = "0.1"
 
 [dev-dependencies]
+# Workspace dependencies (sorted)
+libchat = { workspace = true, features = ["test-support"] }
+
+# External dependencies (sorted)
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
