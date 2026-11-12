@@ -2,13 +2,11 @@
 //!
 //! Each function takes the bytes a delivery service carries for one envelope.
 
-use openmls::framing::{ContentType, MlsMessageIn, ProtocolMessage};
-use openmls::prelude::tls_codec::DeserializeBytes as _;
 use openmls_traits::OpenMlsProvider as _;
 use prost::Message as _;
 
-use super::external::{EpochBeacon, GroupV3External, GroupV3ExternalKind, verify_beacon};
-use super::payloads::GroupV3Payload;
+use super::external::{EpochBeacon, verify_beacon};
+use super::payloads::{GroupV3Body, GroupV3External, GroupV3ExternalKind, GroupV3Payload};
 use crate::SignerKey;
 use crate::inbox_v2::MlsEphemeralPqProvider;
 use crate::proto::EnvelopeV1;
@@ -24,7 +22,9 @@ fn payload(data: &[u8]) -> Option<GroupV3Payload> {
 }
 
 fn beacon_frame(data: &[u8]) -> Option<EpochBeacon> {
-    let external = payload(data)?.external;
+    let Some(GroupV3Body::External(external)) = payload(data)?.body else {
+        return None;
+    };
     match GroupV3External::decode(external.as_ref()).ok()?.kind? {
         GroupV3ExternalKind::Beacon(beacon) => Some(beacon),
     }
@@ -40,24 +40,4 @@ pub fn beacon_signed_by(data: &[u8], convo_id: &str, signer: &SignerKey) -> Opti
     let beacon = beacon_frame(data)?;
     let provider = MlsEphemeralPqProvider::new().ok()?;
     verify_beacon(provider.crypto(), convo_id, &beacon, [signer.as_bytes()]).then_some(beacon.epoch)
-}
-
-/// For an application message: the epoch of the beacon in its AAD, or `None`
-/// if it carries none. `None` overall if this is not an application message.
-pub fn application_aad_beacon(data: &[u8]) -> Option<Option<u64>> {
-    let payload = payload(data)?;
-    if !payload.external.is_empty() {
-        return None;
-    }
-    let message = MlsMessageIn::tls_deserialize_exact_bytes(payload.encrypted_frame.as_ref())
-        .ok()?
-        .try_into_protocol_message()
-        .ok()?;
-    if message.content_type() != ContentType::Application {
-        return None;
-    }
-    let ProtocolMessage::PrivateMessage(private) = &message else {
-        return None;
-    };
-    Some(EpochBeacon::decode(private.aad()).ok().map(|b| b.epoch))
 }

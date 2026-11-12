@@ -20,7 +20,7 @@ fn drain(wire: &mut LocalBroadcaster) -> Vec<Vec<u8>> {
     std::iter::from_fn(|| wire.poll()).collect()
 }
 
-fn reject_beacons(envelope: &libchat::AddressedEnvelope) -> bool {
+fn is_beacon(envelope: &libchat::AddressedEnvelope) -> bool {
     group_v3_wire::is_beacon(&envelope.data)
 }
 
@@ -29,7 +29,7 @@ fn count_beacons(ds: &mut LocalBroadcaster, fail: Rc<Cell<bool>>) -> Rc<Cell<u32
     let attempts = Rc::new(Cell::new(0));
     let counted = attempts.clone();
     ds.reject_publishes(move |envelope| {
-        if !reject_beacons(envelope) {
+        if !is_beacon(envelope) {
             return false;
         }
         counted.set(counted.get() + 1);
@@ -38,32 +38,12 @@ fn count_beacons(ds: &mut LocalBroadcaster, fail: Rc<Cell<bool>>) -> Rc<Cell<u32
     attempts
 }
 
-/// Advances virtual time in small steps, so each retry is scheduled from the
-/// moment the previous one fired.
+/// Advances virtual time in small steps, so no tick is skipped.
 fn advance<const N: usize>(h: &mut TestHarness<N>, total: Duration) {
     let step = Duration::from_millis(100);
     for _ in 0..total.as_millis() / step.as_millis() {
         h.process(step);
     }
-}
-
-#[test]
-fn every_message_in_an_epoch_carries_the_beacon() {
-    let mut h = TestHarness::<2>::new(|_, _| {});
-    let raya = [h.raya().account()];
-    let convo = h.saro().create_group_convo_v3(&raya, "", "").unwrap();
-    h.process_until(|h| h.raya().convo_count() == 1);
-
-    let mut wire = watch(&mut h, &convo);
-    for text in [b"one", b"two", b"six"] {
-        h.saro().send_content(&convo, text).unwrap();
-    }
-
-    let aad: Vec<_> = drain(&mut wire)
-        .iter()
-        .filter_map(|data| group_v3_wire::application_aad_beacon(data))
-        .collect();
-    assert_eq!(aad, vec![Some(1); 3]);
 }
 
 #[test]
@@ -90,7 +70,7 @@ fn a_member_publishes_a_beacon_after_a_peers_commit() {
 #[test]
 fn a_failed_beacon_does_not_stop_the_invitation() {
     let mut h = TestHarness::<2>::new(|_, _| {});
-    h.saro().ds().reject_publishes(reject_beacons);
+    h.saro().ds().reject_publishes(is_beacon);
 
     let raya = [h.raya().account()];
     let convo = h.saro().create_group_convo_v3(&raya, "", "").unwrap();
@@ -100,11 +80,11 @@ fn a_failed_beacon_does_not_stop_the_invitation() {
     h.process_until(|h| h.raya().check(&convo, b"hello"));
 }
 
-/// Nobody sends and nothing arrives: only a scheduled retry can deliver it.
+/// Nobody sends and nothing arrives: only a retry on a later tick can send it.
 #[test]
 fn an_idle_member_delivers_its_beacon_once_the_transport_recovers() {
     let mut h = TestHarness::<2>::new(|_, _| {});
-    h.saro().ds().reject_publishes(reject_beacons);
+    h.saro().ds().reject_publishes(is_beacon);
     let raya = [h.raya().account()];
     let convo = h.saro().create_group_convo_v3(&raya, "", "").unwrap();
     h.process_until(|h| h.raya().convo_count() == 1);
@@ -124,7 +104,7 @@ fn an_idle_member_delivers_its_beacon_once_the_transport_recovers() {
 #[test]
 fn a_failed_beacon_does_not_stop_a_join() {
     let mut h = TestHarness::<2>::new(|_, _| {});
-    h.raya().ds().reject_publishes(reject_beacons);
+    h.raya().ds().reject_publishes(is_beacon);
 
     let raya = [h.raya().account()];
     let convo = h.saro().create_group_convo_v3(&raya, "", "").unwrap();
@@ -176,7 +156,7 @@ fn retries_do_not_multiply_across_epochs() {
 
 /// A delivery between two failing epochs must not start another schedule.
 #[test]
-fn a_delivery_between_epochs_does_not_start_another_chain() {
+fn a_delivery_between_epochs_does_not_start_another_schedule() {
     let mut h = TestHarness::<4>::new(|_, _| {});
     let convo = h.saro().create_group_convo_v3(&[], "", "").unwrap();
 

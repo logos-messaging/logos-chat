@@ -38,7 +38,7 @@ use crate::{
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
 use self::beacons::Beacons;
-use self::payloads::{GroupV3Payload, message_id, to_envelope};
+use self::payloads::{GroupV3Body, GroupV3External, GroupV3Payload, message_id, to_envelope};
 
 // Type Aliases
 type Frame = payloads::GroupV3Frame;
@@ -161,8 +161,6 @@ impl GroupV3Convo {
     ) -> Result<super::MessageId, SendError> {
         let frame = frame.encode();
 
-        // OpenMLS clears the AAD after every message it creates.
-        self.mls_group.set_aad(self.beacons.aad().to_vec());
         let mls_msg =
             self.mls_group
                 .create_message(&cx.mls_provider, &cx.mls_identity, frame.as_slice())?;
@@ -260,7 +258,25 @@ impl GroupV3Convo {
     /// Call after merging any commit, ours or a peer's.
     fn enter_epoch<S: ExternalServices>(&mut self, cx: &mut ServiceContext<S>) {
         self.beacons
-            .enter_epoch(&self.mls_group, &self.convo_id, cx);
+            .enter_epoch(cx, &self.mls_group, &self.convo_id);
+        self.send_beacon(cx);
+    }
+
+    /// Send our beacon once it is due. A failure is retried on a later tick
+    /// rather than failing the operation that changed the epoch.
+    fn send_beacon<S: ExternalServices>(&mut self, cx: &mut ServiceContext<S>) {
+        let now = cx.clock.now();
+        let Some(beacon) = self.beacons.due(now) else {
+            return;
+        };
+        let payload = GroupV3Payload::external(GroupV3External::beacon(beacon.clone()));
+        match self.publish_payload(cx, payload) {
+            Ok(()) => self.beacons.sent(),
+            Err(e) => {
+                warn!(convo = %self.convo_id, error = %e, "beacon not sent");
+                self.beacons.failed(now);
+            }
+        }
     }
 }
 
@@ -332,11 +348,11 @@ where
         payload: &[u8],
     ) -> Result<ConvoOutcome, ChatError> {
         let payload = GroupV3Payload::decode(payload)?;
-        if !payload.external.is_empty() {
+        if let Some(GroupV3Body::External(frame)) = &payload.body {
             let crypto = cx.mls_provider.crypto();
-            let ours = self.mls_group.ciphersuite();
+            let keys = self.mls_group.members().map(|m| m.signature_key);
             self.beacons
-                .receive_frame(crypto, &self.convo_id, ours, &payload.external);
+                .receive_frame(crypto, &self.convo_id, keys, frame);
             return Ok(self.default_outcome());
         }
 
@@ -354,7 +370,7 @@ where
         cx.wakeup_service
             .wakeup_in(SDS_TICK_INTERVAL, self.convo_id.clone());
         let events = self.channel.tick(now_ms(cx), &mut rand_0_10::rng());
-        self.beacons.wakeup(&self.convo_id, cx);
+        self.send_beacon(cx);
         Ok(ConvoOutcome {
             observations: self.handle_sds_events(cx, events),
             ..self.default_outcome()

@@ -56,14 +56,6 @@ impl GroupV3Convo {
         message_id: MessageId,
         protocol_message: ProtocolMessage,
     ) -> Result<ConvoOutcome, ChatError> {
-        // Before anything can reject the message: a forked client still gets
-        // the AAD of messages it cannot decrypt.
-        if let ProtocolMessage::PrivateMessage(msg) = &protocol_message {
-            let ours = self.mls_group.ciphersuite();
-            self.beacons
-                .receive_aad(ours, msg.aad(), protocol_message.epoch().as_u64());
-        }
-
         if protocol_message.epoch() < self.mls_group.epoch() {
             debug!(convo = %self.convo_id, epoch = protocol_message.epoch().as_u64(), "dropping message from past epoch");
             return Ok(self.default_outcome());

@@ -5,12 +5,13 @@
 //! └── GroupV3Payload                       protobuf
 //!     ├── encrypted_header                 bytes
 //!     │   └── SdsHeader                    protobuf; the SDS spec's Message without content
-//!     ├── encrypted_frame                  bytes; TLS-serialized; empty for an SDS sync
-//!     │   └── MlsMessage                   Commit | ApplicationMessage
-//!     │       └── GroupV3Frame             protobuf; ApplicationMessage only
-//!     │           └── GroupV3FrameType     Content
-//!     └── external                         bytes; instead of encrypted_frame
-//!         └── GroupV3External              protobuf; non-MLS frames
+//!     └── body                             oneof; absent for an SDS sync
+//!         ├── encrypted_frame              bytes; TLS-serialized
+//!         │   └── MlsMessage               Commit | ApplicationMessage
+//!         │       └── GroupV3Frame         protobuf; ApplicationMessage only
+//!         │           └── GroupV3FrameType Content
+//!         └── external                     bytes; outside SDS, with an empty header
+//!             └── GroupV3External          protobuf; non-MLS frames: Beacon
 //! ```
 //!
 //! Commits and application messages travel through SDS, which orders them and resends what goes
@@ -30,6 +31,7 @@ use crate::{
 };
 
 use super::delivery_address_from_id;
+use super::external::EpochBeacon;
 
 pub(super) fn message_id(mls_message: &[u8]) -> MessageId {
     blake2b_hex::<hash_size::MessageId>(&["logos-chat|message_id|".as_bytes(), mls_message])
@@ -61,20 +63,11 @@ impl GroupV3Frame {
 }
 
 pub fn to_envelope(convo_id: String, payload: GroupV3Payload) -> AddressedEnvelope {
-    AddressedEnvelope::with_payload(
+    AddressedEnvelope::new(
         delivery_address_from_id(&convo_id),
         convo_id,
         payload.encode_to_vec(),
     )
-}
-
-/// Address a non-MLS frame to a conversation.
-pub fn to_external_envelope(convo_id: &str, bytes: Vec<u8>) -> AddressedEnvelope {
-    let payload = GroupV3Payload {
-        external: bytes.into(),
-        ..Default::default()
-    };
-    to_envelope(convo_id.to_string(), payload)
 }
 
 pub fn protocol_message(mls_message: &[u8]) -> Result<ProtocolMessage, ChatError> {
@@ -88,19 +81,35 @@ pub fn protocol_message(mls_message: &[u8]) -> Result<ProtocolMessage, ChatError
 pub struct GroupV3Payload {
     #[prost(bytes = "bytes", tag = "1")]
     pub encrypted_header: Bytes,
+    #[prost(oneof = "GroupV3Body", tags = "2, 3")]
+    pub body: Option<GroupV3Body>,
+}
+
+#[derive(Clone, PartialEq, Oneof)]
+pub enum GroupV3Body {
     #[prost(bytes = "bytes", tag = "2")]
-    pub encrypted_frame: Bytes,
-    /// Set instead of `encrypted_frame` for a non-MLS frame.
+    EncryptedFrame(Bytes),
+    /// Kept as bytes so the receiver can bound it before decoding.
     #[prost(bytes = "bytes", tag = "3")]
-    pub external: Bytes,
+    External(Bytes),
+}
+
+impl GroupV3Payload {
+    pub fn external(frame: GroupV3External) -> Self {
+        Self {
+            encrypted_header: Bytes::new(),
+            body: Some(GroupV3Body::External(frame.encode_to_vec().into())),
+        }
+    }
 }
 
 impl From<SDSRecord> for GroupV3Payload {
     fn from(record: SDSRecord) -> Self {
         Self {
             encrypted_header: SdsHeader::from(record.header).encode_to_vec().into(),
-            encrypted_frame: record.content.unwrap_or_default().into(),
-            external: Bytes::new(),
+            body: record
+                .content
+                .map(|content| GroupV3Body::EncryptedFrame(content.into())),
         }
     }
 }
@@ -109,11 +118,35 @@ impl TryFrom<GroupV3Payload> for SDSRecord {
     type Error = prost::DecodeError;
 
     fn try_from(payload: GroupV3Payload) -> Result<Self, Self::Error> {
-        let content = payload.encrypted_frame;
+        let content = match payload.body {
+            Some(GroupV3Body::EncryptedFrame(frame)) if !frame.is_empty() => Some(frame.into()),
+            _ => None,
+        };
         Ok(Self {
             header: SdsHeader::decode(payload.encrypted_header)?.into(),
-            content: (!content.is_empty()).then(|| content.into()),
+            content,
         })
+    }
+}
+
+/// A frame on the delivery address that is not an MLS message.
+#[derive(Clone, PartialEq, Message)]
+pub struct GroupV3External {
+    #[prost(oneof = "GroupV3ExternalKind", tags = "1")]
+    pub kind: Option<GroupV3ExternalKind>,
+}
+
+#[derive(Clone, PartialEq, Oneof)]
+pub enum GroupV3ExternalKind {
+    #[prost(message, tag = "1")]
+    Beacon(EpochBeacon),
+}
+
+impl GroupV3External {
+    pub fn beacon(beacon: EpochBeacon) -> Self {
+        Self {
+            kind: Some(GroupV3ExternalKind::Beacon(beacon)),
+        }
     }
 }
 
@@ -234,5 +267,21 @@ mod tests {
         ];
         assert_eq!(payload.encrypted_header, expected[..]);
         assert_eq!(SDSRecord::try_from(payload).unwrap(), record);
+    }
+
+    /// The oneof kept the tags of the two fields it replaced.
+    #[test]
+    fn the_body_keeps_its_wire_tags() {
+        let frame = GroupV3Payload {
+            encrypted_header: Bytes::new(),
+            body: Some(GroupV3Body::EncryptedFrame(Bytes::from_static(&[7]))),
+        };
+        let external = GroupV3Payload {
+            encrypted_header: Bytes::new(),
+            body: Some(GroupV3Body::External(Bytes::from_static(&[7]))),
+        };
+
+        assert_eq!(frame.encode_to_vec(), [0x12, 1, 7]);
+        assert_eq!(external.encode_to_vec(), [0x1a, 1, 7]);
     }
 }

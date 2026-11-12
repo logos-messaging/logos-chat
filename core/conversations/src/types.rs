@@ -13,16 +13,7 @@ pub struct AddressedEnvelope {
 }
 
 impl AddressedEnvelope {
-    pub fn new(delivery_address: String, convo_id: String, data: &[u8]) -> Self {
-        Self::with_payload(
-            delivery_address,
-            convo_id,
-            proto::Bytes::copy_from_slice(data),
-        )
-    }
-
-    /// Like [`Self::new`], taking the payload rather than copying it.
-    pub(crate) fn with_payload(
+    pub fn new(
         delivery_address: String,
         convo_id: String,
         payload: impl Into<proto::Bytes>,
@@ -72,11 +63,7 @@ pub struct AddressedEncryptedPayload {
 impl AddressedEncryptedPayload {
     // Wrap in an envelope and prepare for transmission
     pub fn into_envelope(self, convo_id: String) -> AddressedEnvelope {
-        AddressedEnvelope::new(
-            self.delivery_address,
-            convo_id,
-            self.data.encode_to_vec().as_slice(),
-        )
+        AddressedEnvelope::new(self.delivery_address, convo_id, self.data.encode_to_vec())
     }
 }
 
