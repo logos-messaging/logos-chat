@@ -26,10 +26,6 @@ ignore = [
     "RUSTSEC-2026-0173", # proc-macro-error2, unmaintained
     "RUSTSEC-2026-0387", # crypto-bigint 0.5 via alloy (GroupV2 + de-mls); patched 0.7 needs alloy on k256 0.14.
 ]
-# RUSTSEC-2026-0459 (SQLite WAL uninitialized memory) clears by version range,
-# but libsqlite3-sys 0.39's bundled-sqlcipher build pins sqlcipher-src
-# =419.0.6, which still bundles SQLite 3.53.4. The fix is in SQLite 3.54.
-# Revisit when libsqlite3-sys depends on sqlcipher-src >= 420.
 
 [licenses]
 version = 2
