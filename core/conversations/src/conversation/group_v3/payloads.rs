@@ -1,20 +1,25 @@
 //! Wire framing for GroupV3.
 //!
 //! ```text
-//! AddressedEnvelope                        delivery address + convo id
-//! └── GroupV3Payload                       protobuf
-//!     ├── encrypted_header                 bytes
-//!     │   └── SdsHeader                    protobuf; the SDS spec's Message without content
-//!     └── encrypted_frame                  bytes; TLS-serialized; empty for an SDS sync
-//!         └── MlsMessage                   Commit | ApplicationMessage
-//!             └── GroupV3Frame             protobuf; ApplicationMessage only
-//!                 └── GroupV3FrameType     Content
+//! AddressedEnvelope                                 delivery address + convo id
+//! └── EncryptedSdsMessage                           protobuf
+//!     ├── encrypted_sds_header                      bytes
+//!     │   └── SdsHeader                             protobuf; the SDS spec's Message without content
+//!     └── payload                                   bytes; SDS content; empty for an SDS sync
+//!         └── GroupV3Envelope                       protobuf
+//!             ├── encrypted_header                  bytes
+//!             │   └── GroupV3Header                 protobuf; one field per item
+//!             │       └── epoch_data                the sender's epoch
+//!             └── encoded_frame                     oneof
+//!                 ├── mls_message                   bytes; TLS-serialized
+//!                 │   └── MlsMessage                Commit | ApplicationMessage
+//!                 │       └── GroupV3Frame          protobuf; ApplicationMessage only
+//!                 │           └── GroupV3FrameType  Content
+//!                 └── beacon                        bytes; reserved
 //! ```
 //!
-//! Commits and application messages travel through SDS, which orders them and resends what goes
-//! unacknowledged. The SDS message id, `message_id`, hashes the MLS message, so two sends of
-//! the same content get different ids, and receivers read it from the SDS header. `GroupV3Frame`
-//! tags 1–5 are reserved for frame parameters.
+//! `GroupV3Envelope` goes to SDS as bytes, so the SDS message id is a deterministic hash of them.
+//! Frames that need no ordering or resends still go in an `EncryptedSdsMessage`, sent ephemeral.
 
 use openmls::framing::ProtocolMessage;
 use openmls::prelude::MlsMessageIn;
