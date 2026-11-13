@@ -28,7 +28,7 @@ use prost::{Message, Oneof, bytes::Bytes};
 use sds::OutgoingMessage;
 
 use crate::{
-    ChatError,
+    ChatError, MessageId,
     errors::SendError,
     utils::{blake2b_hex, hash_size},
 };
@@ -36,6 +36,10 @@ use crate::{
 mod sds_message;
 
 pub use sds_message::EncryptedSdsMessage;
+
+fn message_id_for(content: &[u8]) -> MessageId {
+    blake2b_hex::<hash_size::MessageId>(&["logos-chat|message_id|".as_bytes(), content])
+}
 
 #[derive(Clone, PartialEq, Message)]
 pub struct GroupV3Frame {
@@ -92,22 +96,31 @@ impl GroupV3Envelope {
     pub fn into_outgoing_message(self) -> OutgoingMessage {
         let content = self.encode_to_vec();
         OutgoingMessage {
-            message_id: blake2b_hex::<hash_size::MessageId>(&[
-                "logos-chat|message_id|".as_bytes(),
-                &content,
-            ]),
+            message_id: message_id_for(&content),
             content,
             retrieval_hint: None,
         }
     }
 
-    pub fn protocol_message(&self) -> Result<ProtocolMessage, ChatError> {
+    /// Rejects `content` that does not hash to `message_id`, or whose header does not decode.
+    pub fn from_sds_content(message_id: &str, content: &[u8]) -> Result<Self, ChatError> {
+        if message_id_for(content) != message_id {
+            return Err(ChatError::generic("message id does not match its content"));
+        }
+        let envelope = Self::decode(content)?;
+        GroupV3Header::decode(envelope.encrypted_header.as_ref())?;
+        Ok(envelope)
+    }
+
+    /// `None` for a frame that is not an MLS message.
+    pub fn protocol_message(&self) -> Result<Option<ProtocolMessage>, ChatError> {
         let Some(EncodedFrame::MlsMessage(mls_message)) = &self.encoded_frame else {
-            return Err(ChatError::generic("not an mls message"));
+            return Ok(None);
         };
         MlsMessageIn::tls_deserialize_exact_bytes(mls_message)
             .map_err(ChatError::generic)?
             .try_into_protocol_message()
+            .map(Some)
             .map_err(ChatError::generic)
     }
 }
@@ -136,5 +149,28 @@ mod tests {
             other_header.into_outgoing_message().message_id,
             message.message_id
         );
+    }
+
+    fn mls_envelope() -> GroupV3Envelope {
+        GroupV3Envelope {
+            encrypted_header: GroupV3Header::default().encode_to_vec().into(),
+            encoded_frame: Some(EncodedFrame::MlsMessage(Bytes::from_static(&[2]))),
+        }
+    }
+
+    #[test]
+    fn sds_content_decodes_back_to_the_envelope() {
+        let envelope = mls_envelope();
+        let message = envelope.clone().into_outgoing_message();
+        assert_eq!(
+            GroupV3Envelope::from_sds_content(&message.message_id, &message.content).unwrap(),
+            envelope
+        );
+    }
+
+    #[test]
+    fn sds_content_under_another_message_id_is_rejected() {
+        let message = mls_envelope().into_outgoing_message();
+        assert!(GroupV3Envelope::from_sds_content("other", &message.content).is_err());
     }
 }
