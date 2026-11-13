@@ -34,7 +34,9 @@ impl GroupV3Convo {
                     message_id,
                     content,
                     ..
-                } => match self.handle_sds_content(cx, message_id, &content) {
+                } => match GroupV3Envelope::from_sds_content(&message_id, &content)
+                    .and_then(|envelope| self.handle_group_v3_envelope(cx, message_id, envelope))
+                {
                     Ok(outcome) => observations.extend(outcome.observations),
                     Err(e) => {
                         warn!(convo = %self.convo_id, error = %e, "dropping released message")
@@ -84,14 +86,13 @@ impl GroupV3Convo {
         }
     }
 
-    /// Handle content SDS released: unwrap the envelope and pass an MLS message on.
-    fn handle_sds_content<S: ExternalServices>(
+    /// Handle an envelope SDS released: pass its MLS message on.
+    fn handle_group_v3_envelope<S: ExternalServices>(
         &mut self,
         cx: &mut ServiceContext<S>,
         message_id: MessageId,
-        content: &[u8],
+        envelope: GroupV3Envelope,
     ) -> Result<ConvoOutcome, ChatError> {
-        let envelope = GroupV3Envelope::from_sds_content(&message_id, content)?;
         let Some(message) = envelope.protocol_message()? else {
             debug!(convo = %self.convo_id, "ignoring non-mls frame");
             return Ok(self.default_outcome());
