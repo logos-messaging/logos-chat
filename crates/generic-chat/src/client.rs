@@ -6,8 +6,8 @@ use components::{ThreadedWakeupService, WakeupEvent};
 use crossbeam_channel::{Receiver, Sender, select};
 use libchat::{
     AuthService, ConversationId, ConversationStore, ConvoMetadata, ConvoOutcome, Core, DeliveryAck,
-    DeliveryInfo, DeliveryService, GroupV2Config, InboxOutcome, MessageId, MissingMessage,
-    Observation, ParticipantId, PayloadOutcome, RegistrationService,
+    DeliveryInfo, DeliveryService, GroupV2Config, GroupV3Config, InboxOutcome, MessageId,
+    MissingMessage, Observation, ParticipantId, PayloadOutcome, RegistrationService,
 };
 use logos_account::AccountAddr;
 use parking_lot::Mutex;
@@ -100,6 +100,7 @@ where
         auth: A,
         storage: S,
         group_v2: Option<GroupV2Config>,
+        group_v3: Option<GroupV3Config>,
     ) -> Result<(Self, Receiver<Event>), ClientError> {
         installation.validate(&auth)?;
         let inbound = transport.inbound();
@@ -111,6 +112,9 @@ where
             Core::new_with_name(installation, auth, transport, reg, wakeup_service, storage)?;
         if let Some(config) = group_v2 {
             core.set_group_v2_config(config);
+        }
+        if let Some(config) = group_v3 {
+            core.set_group_v3_config(config);
         }
         Ok(Self::spawn(core, account, inbound, wakeup_rx))
     }
@@ -164,7 +168,7 @@ where
             .map_err(Into::into)
     }
 
-    /// Create a GroupV2 conversation with every installation of the given
+    /// Create a GroupV3 conversation with every installation of the given
     /// accounts. The core resolves each account to its signers through the
     /// auth service; the
     /// group invite goes to every one of them. An empty slice creates a group
@@ -181,15 +185,29 @@ where
 
         self.core
             .lock()
+            .create_group_convo_v3(&accounts, &metadata.name, &metadata.desc)
+            .map_err(Into::into)
+    }
+
+    /// [`Self::create_group_conversation`] for a GroupV2 conversation, whose
+    /// members de-mls admits and removes by vote.
+    pub fn create_group_conversation_v2(
+        &mut self,
+        accounts: &[AccountAddressRef],
+        metadata: GroupMetadata,
+    ) -> Result<ConversationId, ClientError> {
+        let accounts = account_ids(accounts)?;
+
+        self.core
+            .lock()
             .create_group_convo_v2(&accounts, &metadata.name, &metadata.desc)
             .map_err(Into::into)
     }
 
     /// Add every installation of the given accounts to an existing group
-    /// conversation. The add is
-    /// staged as an MLS proposal and merged by the group's next commit (driven
-    /// asynchronously by the wakeup loop); each joiner's welcome is sent when
-    /// that commit lands, not when this call returns.
+    /// conversation. The add's commit
+    /// lands asynchronously (driven by the wakeup loop); each joiner's welcome
+    /// is sent when that commit lands, not when this call returns.
     pub fn add_group_participants(
         &mut self,
         convo_id: &str,
@@ -205,7 +223,8 @@ where
 
     /// Remove every installation of the given accounts from a group
     /// conversation. Those with no seat are skipped, and the call fails if none
-    /// holds one.
+    /// holds one. A GroupV3 conversation cannot remove members yet and fails
+    /// with [`ChatError::UnsupportedFunction`](libchat::ChatError::UnsupportedFunction).
     pub fn remove_group_participants(
         &mut self,
         convo_id: &str,

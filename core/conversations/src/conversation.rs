@@ -16,7 +16,7 @@ use crate::utils::{blake2b_hex, hash_size};
 pub use direct_v1::DirectV1Convo;
 pub use group_v1::GroupV1Convo;
 pub use group_v2::{GroupV2Convo, GroupV2Frame, GroupV2Payload};
-pub use group_v3::GroupV3Convo;
+pub use group_v3::{GroupV3Config, GroupV3Convo};
 
 pub type ConversationId = String;
 pub type ConversationIdRef<'a> = &'a str;
