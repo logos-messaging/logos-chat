@@ -19,7 +19,7 @@ use openmls::key_packages::KeyPackage;
 use openmls::messages::Welcome;
 use openmls_traits::OpenMlsProvider;
 use prost::Message;
-use sds::{Channel, Config, OutgoingMessage, SDSRecord, StartPoint};
+use sds::{Channel, Config, SDSRecord, StartPoint};
 use tracing::{info, instrument, warn};
 
 use crate::conversation::mls_groups::{HasMlsConvo, create_group, group_join_config};
@@ -35,7 +35,7 @@ use crate::{
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
-use self::payloads::{GroupV3Envelope, message_id, to_envelope};
+use self::payloads::{EncryptedSdsMessage, GroupV3Envelope};
 
 // Type Aliases
 type Frame = payloads::GroupV3Frame;
@@ -167,19 +167,14 @@ impl GroupV3Convo {
         cx: &mut ServiceContext<S>,
         frame: Frame,
     ) -> Result<super::MessageId, SendError> {
-        let frame = frame.encode();
+        let mls_message = self.mls_group.create_message(
+            &cx.mls_provider,
+            &cx.mls_identity,
+            frame.encode().as_slice(),
+        )?;
+        let message = GroupV3Envelope::from_mls_message(mls_message)?.into_outgoing_message();
+        let message_id = message.message_id.clone();
 
-        let mls_msg =
-            self.mls_group
-                .create_message(&cx.mls_provider, &cx.mls_identity, frame.as_slice())?;
-        let mls_bytes = mls_msg.to_bytes()?;
-        let message_id = message_id(&mls_bytes);
-
-        let message = OutgoingMessage {
-            message_id: message_id.clone(),
-            content: mls_bytes,
-            retrieval_hint: None,
-        };
         let record = self.channel.send(message, now_ms(cx))?;
         self.publish_record(cx, record)?;
 
@@ -194,17 +189,11 @@ impl GroupV3Convo {
         commit_msg: MlsMessageOut,
     ) -> Result<StartPoint, ChatError> {
         // Send Commit
-        let sent = commit_msg
-            .to_bytes()
-            .map_err(SendError::from)
-            .and_then(|commit| {
-                let message = OutgoingMessage {
-                    message_id: message_id(&commit),
-                    content: commit,
-                    retrieval_hint: None,
-                };
-                Ok(self.channel.send(message, now_ms(cx))?)
-            });
+        let sent = GroupV3Envelope::from_mls_message(commit_msg).and_then(|envelope| {
+            Ok(self
+                .channel
+                .send(envelope.into_outgoing_message(), now_ms(cx))?)
+        });
         let record = match sent {
             Ok(record) => record,
             Err(e) => {
@@ -333,7 +322,8 @@ impl GroupV3Convo {
         record: SDSRecord,
     ) -> Result<(), SendError> {
         let message_id = record.header.message_id.clone();
-        if let Some(delivery_msg_id) = self.publish_payload(cx, record.into())?
+        if let Some(delivery_msg_id) =
+            self.publish_payload(cx, EncryptedSdsMessage::from_record(record))?
             && let Err(e) = self
                 .channel
                 .set_retrieval_hint(&message_id, delivery_msg_id.as_bytes().to_vec())
@@ -346,10 +336,9 @@ impl GroupV3Convo {
     fn publish_payload<S: ExternalServices>(
         &self,
         cx: &mut ServiceContext<S>,
-        payload: GroupV3Envelope,
+        message: EncryptedSdsMessage,
     ) -> Result<Option<DeliveryMsgId>, SendError> {
-        let env = to_envelope(self.convo_id.to_string(), payload);
-        Self::publish_envelope(cx, env)
+        Self::publish_envelope(cx, message.into_envelope(self.convo_id.to_string()))
     }
 
     fn publish_envelope<S: ExternalServices>(
@@ -437,11 +426,11 @@ where
         payload: &[u8],
         delivery_info: Option<&DeliveryInfo>,
     ) -> Result<ConvoOutcome, ChatError> {
-        let payload = GroupV3Envelope::decode(payload)?;
+        let record = EncryptedSdsMessage::decode(payload)?.try_into_record()?;
         let retrieval_hint = delivery_info.map(|info| info.delivery_msg_id.as_bytes().to_vec());
         let events = self
             .channel
-            .receive(SDSRecord::try_from(payload)?, retrieval_hint, now_ms(cx))
+            .receive(record, retrieval_hint, now_ms(cx))
             .map_err(ChatError::generic)?;
         Ok(ConvoOutcome {
             observations: self.handle_sds_events(cx, events),
