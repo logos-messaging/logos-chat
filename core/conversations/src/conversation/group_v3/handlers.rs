@@ -14,7 +14,7 @@ use crate::{
     Observation, Signer,
 };
 
-use super::payloads::{GroupV3FrameType, protocol_message};
+use super::payloads::{EncryptedSdsMessage, GroupV3Envelope, GroupV3FrameType};
 use super::{DeferredCommit, Frame, GroupV3Convo, delivery_address_from_id};
 
 impl GroupV3Convo {
@@ -34,7 +34,9 @@ impl GroupV3Convo {
                     message_id,
                     content,
                     ..
-                } => match protocol_message(&content)
+                } => match GroupV3Envelope::decode(content.as_slice())
+                    .map_err(ChatError::from)
+                    .and_then(|envelope| envelope.protocol_message())
                     .and_then(|message| self.handle_mls_protocol_msg(cx, message_id, message))
                 {
                     Ok(outcome) => observations.extend(outcome.observations),
@@ -49,7 +51,9 @@ impl GroupV3Convo {
                 }
                 // SDS logs no sync message, so it has no hint to keep.
                 Event::Sync(record) => {
-                    if let Err(e) = self.publish_payload(cx, record.into()) {
+                    if let Err(e) =
+                        self.publish_payload(cx, EncryptedSdsMessage::from_record(record))
+                    {
                         warn!(convo = %self.convo_id, error = %e, "failed to publish sds record");
                     }
                 }
