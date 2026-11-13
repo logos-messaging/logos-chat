@@ -34,11 +34,7 @@ impl GroupV3Convo {
                     message_id,
                     content,
                     ..
-                } => match GroupV3Envelope::decode(content.as_slice())
-                    .map_err(ChatError::from)
-                    .and_then(|envelope| envelope.protocol_message())
-                    .and_then(|message| self.handle_mls_protocol_msg(cx, message_id, message))
-                {
+                } => match self.handle_sds_content(cx, message_id, &content) {
                     Ok(outcome) => observations.extend(outcome.observations),
                     Err(e) => {
                         warn!(convo = %self.convo_id, error = %e, "dropping released message")
@@ -86,6 +82,21 @@ impl GroupV3Convo {
         {
             warn!(convo = %self.convo_id, error = %e, "failed to fetch missing messages");
         }
+    }
+
+    /// Handle content SDS released: unwrap the envelope and pass an MLS message on.
+    fn handle_sds_content<S: ExternalServices>(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        message_id: MessageId,
+        content: &[u8],
+    ) -> Result<ConvoOutcome, ChatError> {
+        let envelope = GroupV3Envelope::from_sds_content(&message_id, content)?;
+        let Some(message) = envelope.protocol_message()? else {
+            debug!(convo = %self.convo_id, "ignoring non-mls frame");
+            return Ok(self.default_outcome());
+        };
+        self.handle_mls_protocol_msg(cx, message_id, message)
     }
 
     /// Handle inbound mls encrypted messages. Accepts a successfully decoded ProtocolMessage

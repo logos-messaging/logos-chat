@@ -419,6 +419,7 @@ where
         self.send_frame(cx, frame).map_err(Into::into)
     }
 
+    /// Unwrap Envelope -> SDS -> MlsDecrypt -> DecodeFrame
     #[instrument(name = "groupv3.handle_frame", skip_all, fields(user_id = %cx.mls_identity.display_name()))]
     fn handle_payload(
         &mut self,
