@@ -61,6 +61,17 @@ where
     ) -> Result<crate::ConvoOutcome, ChatError> {
         self.inner_group.wakeup(service_ctx)
     }
+
+    fn handle_delivery_report(
+        &mut self,
+        _message_id: &str,
+        _info: &DeliveryInfo,
+    ) -> Result<(), ChatError> {
+        Err(ChatError::UnsupportedFunction(
+            self.id().into(),
+            "Delivery Report".into(),
+        ))
+    }
 }
 
 impl ConvoBase for DirectV1Convo {

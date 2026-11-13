@@ -289,3 +289,34 @@ fn groupv3_member_fetches_a_lost_message_only_its_sender_names() {
         .collect();
     assert_eq!(contents, [b"m1", b"m2"]);
 }
+
+#[test]
+fn groupv3_member_fetches_a_lost_message_by_an_id_learned_after_its_send() {
+    let mut harness = TestHarness::<2>::new(|_, _| {});
+    let convo_id = create_group(&mut harness);
+    harness.saro().report_delivery_ids_late();
+
+    harness
+        .saro()
+        .send_content(&convo_id, b"m1")
+        .expect("saro send m1");
+    harness.raya().drop_pending_payloads();
+    // Saro's delivery service reports m1's id after the send, and m2 names m1 by it.
+    harness.saro().handle_delivery_reports();
+    harness
+        .saro()
+        .send_content(&convo_id, b"m2")
+        .expect("saro send m2");
+
+    // A minute at most, which runs out before Saro's resend of m1 can arrive.
+    harness.process_until_label("raya gets both", |h| {
+        h.raya().received_messages().len() == 2
+    });
+    let contents: Vec<&[u8]> = harness
+        .raya()
+        .received_messages()
+        .iter()
+        .map(|message| message.contents.as_slice())
+        .collect();
+    assert_eq!(contents, [b"m1", b"m2"]);
+}

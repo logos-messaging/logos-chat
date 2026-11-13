@@ -75,6 +75,7 @@ impl TestClient {
     }
 
     fn drain_outcomes(&mut self) -> Vec<PayloadOutcome> {
+        self.handle_delivery_reports();
         let mut messages = vec![];
         while let Some(data) = self.inner.ds().poll() {
             messages.push(data);
@@ -126,6 +127,21 @@ impl TestClient {
     pub fn drop_pending_payloads(&mut self) {
         let ds = self.inner.ds();
         while ds.poll().is_some() {}
+    }
+
+    /// Makes this client's delivery service learn each id after `publish` returns, as a delivery
+    /// node does; [`Self::handle_delivery_reports`] hands the ids to the client.
+    pub fn report_delivery_ids_late(&mut self) {
+        self.inner.ds().report_ids_late();
+    }
+
+    /// Hands the client every id its delivery service learned after `publish` returned.
+    pub fn handle_delivery_reports(&mut self) {
+        while let Some((tag, info)) = self.inner.ds().poll_report() {
+            self.inner
+                .handle_delivery_report(&tag, &info)
+                .expect("delivery report");
+        }
     }
 
     pub fn received_messages(&self) -> &[ReceivedMessage<Vec<u8>>] {

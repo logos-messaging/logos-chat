@@ -38,6 +38,7 @@ impl MessageBus {
         published.push(AddressedEnvelope {
             delivery_address: address.to_string(),
             data: data.clone(),
+            tag: None,
         });
         let message = Message {
             data,
@@ -145,6 +146,7 @@ mod tests {
         AddressedEnvelope {
             delivery_address: delivery_address.into(),
             data: data.to_vec(),
+            tag: None,
         }
     }
 

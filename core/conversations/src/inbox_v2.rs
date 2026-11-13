@@ -101,6 +101,7 @@ pub fn invite_user_v2<DS: DeliveryService>(
     ds.publish(AddressedEnvelope {
         delivery_address: delivery_address_for(signer),
         data: envelope.encode_to_vec(),
+        tag: None,
     })
     .map_err(ChatError::generic)
     .map(drop)
@@ -127,6 +128,7 @@ pub fn create_invite_v3(
     Ok(AddressedEnvelope {
         delivery_address: delivery_address_for(signer),
         data: envelope.encode_to_vec(),
+        tag: None,
     })
 }
 

@@ -10,6 +10,9 @@ use crate::proto::{self, Message};
 pub struct AddressedEnvelope {
     pub delivery_address: String,
     pub data: Vec<u8>,
+    /// Set when the conversation keeps the payload's id: a delivery service whose `publish`
+    /// returns no id hands this back with the id once it learns it.
+    pub tag: Option<DeliveryTag>,
 }
 
 impl AddressedEnvelope {
@@ -24,6 +27,7 @@ impl AddressedEnvelope {
         AddressedEnvelope {
             delivery_address,
             data: envelope.encode_to_vec(),
+            tag: None,
         }
     }
 }
@@ -69,6 +73,16 @@ impl From<Vec<u8>> for DeliveryMsgId {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeliveryInfo {
     pub delivery_msg_id: DeliveryMsgId,
+}
+
+/// Names the message an envelope carries, for a delivery service that learns the payload's id
+/// only after `publish` returns: the service hands the tag back with the id, and the client
+/// passes both to [`Core::handle_delivery_report`](crate::Core::handle_delivery_report). Opaque
+/// to the service.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeliveryTag {
+    pub(crate) convo_id: String,
+    pub(crate) message_id: String,
 }
 
 // Internal type Definitions

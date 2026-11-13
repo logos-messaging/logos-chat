@@ -43,5 +43,5 @@ pub use storage::{
     ConversationKind, ConversationMeta, ConversationStore, IdentityStore, KvPair, KvStore, KvTx,
     Namespace, Scope, StorageError, StoredInstallation,
 };
-pub use types::{AddressedEnvelope, ConvoMetadata, DeliveryInfo, DeliveryMsgId};
+pub use types::{AddressedEnvelope, ConvoMetadata, DeliveryInfo, DeliveryMsgId, DeliveryTag};
 pub use utils::{hex_trunc, trunc};
