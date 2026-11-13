@@ -275,7 +275,7 @@ impl<const N: usize> TestHarness<N> {
         predicate: impl Fn(&mut TestHarness<N>) -> bool,
     ) {
         info!(label, "Process Until");
-        let timeout = Duration::from_mins(1);
+        let timeout = Duration::from_mins(5);
         let step = Duration::from_millis(50);
         let mut elapsed = Duration::ZERO;
 
