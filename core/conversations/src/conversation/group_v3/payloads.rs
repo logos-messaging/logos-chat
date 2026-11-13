@@ -1,36 +1,44 @@
 //! Wire framing for GroupV3.
 //!
 //! ```text
-//! AddressedEnvelope                        delivery address + convo id
-//! └── GroupV3Payload                       protobuf
-//!     ├── encrypted_header                 bytes
-//!     │   └── SdsHeader                    protobuf; the SDS spec's Message without content
-//!     └── encrypted_frame                  bytes; TLS-serialized; empty for an SDS sync
-//!         └── MlsMessage                   Commit | ApplicationMessage
-//!             └── GroupV3Frame             protobuf; ApplicationMessage only
-//!                 └── GroupV3FrameType     Content
+//! AddressedEnvelope                                 delivery address + convo id
+//! └── EncryptedSdsMessage                           protobuf
+//!     ├── encrypted_sds_header                      bytes
+//!     │   └── SdsHeader                             protobuf; the SDS spec's Message without content
+//!     └── payload                                   bytes; SDS content; empty for an SDS sync
+//!         └── GroupV3Envelope                       protobuf
+//!             ├── encrypted_header                  bytes
+//!             │   └── GroupV3Header                 protobuf; one field per item
+//!             │       └── epoch_data                the sender's epoch
+//!             └── encoded_frame                     oneof
+//!                 ├── mls_message                   bytes; TLS-serialized
+//!                 │   └── MlsMessage                Commit | ApplicationMessage
+//!                 │       └── GroupV3Frame          protobuf; ApplicationMessage only
+//!                 │           └── GroupV3FrameType  Content
+//!                 └── beacon                        bytes; reserved
 //! ```
 //!
-//! Commits and application messages travel through SDS, which orders them and resends what goes
-//! unacknowledged. The SDS message id, `message_id`, hashes the MLS message, so two sends of
-//! the same content get different ids, and receivers read it from the SDS header. `GroupV3Frame`
-//! tags 1–5 are reserved for frame parameters.
+//! `GroupV3Envelope` goes to SDS as bytes, so the SDS message id is a deterministic hash of them.
+//! Frames that need no ordering or resends still go in an `EncryptedSdsMessage`, sent ephemeral.
 
-use openmls::framing::ProtocolMessage;
+use openmls::framing::{MlsMessageOut, ProtocolMessage};
 use openmls::prelude::MlsMessageIn;
 use openmls::prelude::tls_codec::DeserializeBytes as _;
 use prost::{Message, Oneof, bytes::Bytes};
-use sds::SDSRecord;
+use sds::OutgoingMessage;
 
 use crate::{
-    AddressedEnvelope, ChatError, MessageId,
+    ChatError, MessageId,
+    errors::SendError,
     utils::{blake2b_hex, hash_size},
 };
 
-use super::delivery_address_from_id;
+mod sds_message;
 
-pub(super) fn message_id(mls_message: &[u8]) -> MessageId {
-    blake2b_hex::<hash_size::MessageId>(&["logos-chat|message_id|".as_bytes(), mls_message])
+pub use sds_message::EncryptedSdsMessage;
+
+fn message_id_for(content: &[u8]) -> MessageId {
+    blake2b_hex::<hash_size::MessageId>(&["logos-chat|message_id|".as_bytes(), content])
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -58,124 +66,62 @@ impl GroupV3Frame {
     }
 }
 
-pub fn to_envelope(convo_id: String, payload: GroupV3Payload) -> AddressedEnvelope {
-    AddressedEnvelope::new(
-        delivery_address_from_id(&convo_id),
-        convo_id,
-        payload.encode_to_vec().as_slice(),
-    )
-}
-
-pub fn protocol_message(mls_message: &[u8]) -> Result<ProtocolMessage, ChatError> {
-    MlsMessageIn::tls_deserialize_exact_bytes(mls_message)
-        .map_err(ChatError::generic)?
-        .try_into_protocol_message()
-        .map_err(ChatError::generic)
-}
+/// Empty until it carries header items, such as the sender's epoch.
+#[derive(Clone, PartialEq, Message)]
+pub struct GroupV3Header {}
 
 #[derive(Clone, PartialEq, Message)]
-pub struct GroupV3Payload {
+pub struct GroupV3Envelope {
     #[prost(bytes = "bytes", tag = "1")]
-    pub encrypted_header: Bytes,
+    encrypted_header: Bytes,
+    #[prost(oneof = "EncodedFrame", tags = "2")]
+    encoded_frame: Option<EncodedFrame>,
+}
+
+/// Tag 3 is reserved for beacons.
+#[derive(Clone, PartialEq, Oneof)]
+pub enum EncodedFrame {
     #[prost(bytes = "bytes", tag = "2")]
-    pub encrypted_frame: Bytes,
+    MlsMessage(Bytes),
 }
 
-impl From<SDSRecord> for GroupV3Payload {
-    fn from(record: SDSRecord) -> Self {
-        Self {
-            encrypted_header: SdsHeader::from(record.header).encode_to_vec().into(),
-            encrypted_frame: record.content.unwrap_or_default().into(),
-        }
-    }
-}
-
-impl TryFrom<GroupV3Payload> for SDSRecord {
-    type Error = prost::DecodeError;
-
-    fn try_from(payload: GroupV3Payload) -> Result<Self, Self::Error> {
-        let content = payload.encrypted_frame;
+impl GroupV3Envelope {
+    pub fn from_mls_message(mls_message: MlsMessageOut) -> Result<Self, SendError> {
         Ok(Self {
-            header: SdsHeader::decode(payload.encrypted_header)?.into(),
-            content: (!content.is_empty()).then(|| content.into()),
+            encrypted_header: GroupV3Header::default().encode_to_vec().into(),
+            encoded_frame: Some(EncodedFrame::MlsMessage(mls_message.to_bytes()?.into())),
         })
     }
-}
 
-/// The SDS spec's `Message` without its content, which travels as `encrypted_frame`.
-#[derive(Clone, PartialEq, Message)]
-struct SdsHeader {
-    #[prost(string, tag = "1")]
-    sender_id: String,
-    #[prost(string, tag = "2")]
-    message_id: String,
-    #[prost(string, tag = "3")]
-    channel_id: String,
-    #[prost(uint64, optional, tag = "10")]
-    lamport_timestamp: Option<u64>,
-    #[prost(message, repeated, tag = "11")]
-    causal_history: Vec<SdsHistoryEntry>,
-    #[prost(bytes = "vec", optional, tag = "12")]
-    bloom_filter: Option<Vec<u8>>,
-    #[prost(message, repeated, tag = "13")]
-    repair_request: Vec<SdsHistoryEntry>,
-}
-
-#[derive(Clone, PartialEq, Message)]
-struct SdsHistoryEntry {
-    #[prost(string, tag = "1")]
-    message_id: String,
-    #[prost(bytes = "vec", optional, tag = "2")]
-    retrieval_hint: Option<Vec<u8>>,
-    #[prost(string, optional, tag = "3")]
-    sender_id: Option<String>,
-}
-
-impl From<sds::Header> for SdsHeader {
-    fn from(header: sds::Header) -> Self {
-        Self {
-            sender_id: header.sender_id,
-            message_id: header.message_id,
-            channel_id: header.channel_id,
-            lamport_timestamp: header.lamport_timestamp,
-            causal_history: header.causal_history.into_iter().map(Into::into).collect(),
-            bloom_filter: header.bloom_filter,
-            repair_request: header.repair_request.into_iter().map(Into::into).collect(),
+    pub fn into_outgoing_message(self) -> OutgoingMessage {
+        let content = self.encode_to_vec();
+        OutgoingMessage {
+            message_id: message_id_for(&content),
+            content,
+            retrieval_hint: None,
         }
     }
-}
 
-impl From<SdsHeader> for sds::Header {
-    fn from(header: SdsHeader) -> Self {
-        Self {
-            sender_id: header.sender_id,
-            message_id: header.message_id,
-            channel_id: header.channel_id,
-            lamport_timestamp: header.lamport_timestamp,
-            causal_history: header.causal_history.into_iter().map(Into::into).collect(),
-            bloom_filter: header.bloom_filter,
-            repair_request: header.repair_request.into_iter().map(Into::into).collect(),
+    /// Rejects `content` that does not hash to `message_id`, or whose header does not decode.
+    pub fn from_sds_content(message_id: &str, content: &[u8]) -> Result<Self, ChatError> {
+        if message_id_for(content) != message_id {
+            return Err(ChatError::generic("message id does not match its content"));
         }
+        let envelope = Self::decode(content)?;
+        GroupV3Header::decode(envelope.encrypted_header.as_ref())?;
+        Ok(envelope)
     }
-}
 
-impl From<sds::HistoryEntry> for SdsHistoryEntry {
-    fn from(entry: sds::HistoryEntry) -> Self {
-        Self {
-            message_id: entry.message_id,
-            retrieval_hint: entry.retrieval_hint,
-            sender_id: entry.sender_id,
-        }
-    }
-}
-
-impl From<SdsHistoryEntry> for sds::HistoryEntry {
-    fn from(entry: SdsHistoryEntry) -> Self {
-        Self {
-            message_id: entry.message_id,
-            retrieval_hint: entry.retrieval_hint,
-            sender_id: entry.sender_id,
-        }
+    /// `None` for a frame that is not an MLS message.
+    pub fn protocol_message(&self) -> Result<Option<ProtocolMessage>, ChatError> {
+        let Some(EncodedFrame::MlsMessage(mls_message)) = &self.encoded_frame else {
+            return Ok(None);
+        };
+        MlsMessageIn::tls_deserialize_exact_bytes(mls_message)
+            .map_err(ChatError::generic)?
+            .try_into_protocol_message()
+            .map(Some)
+            .map_err(ChatError::generic)
     }
 }
 
@@ -184,40 +130,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn encodes_the_sds_header_with_the_spec_field_numbers() {
-        let record = SDSRecord {
-            header: sds::Header {
-                sender_id: "a".into(),
-                message_id: "b".into(),
-                channel_id: "c".into(),
-                lamport_timestamp: Some(1),
-                causal_history: vec![sds::HistoryEntry {
-                    message_id: "d".into(),
-                    retrieval_hint: Some(vec![8]),
-                    sender_id: Some("e".into()),
-                }],
-                bloom_filter: Some(vec![9]),
-                repair_request: vec![sds::HistoryEntry {
-                    message_id: "f".into(),
-                    retrieval_hint: None,
-                    sender_id: None,
-                }],
-            },
-            content: Some(vec![7]),
+    fn outgoing_message_id_covers_the_whole_envelope() {
+        let envelope = GroupV3Envelope {
+            encrypted_header: Bytes::from_static(&[1]),
+            encoded_frame: Some(EncodedFrame::MlsMessage(Bytes::from_static(&[2]))),
         };
+        let message = envelope.clone().into_outgoing_message();
+        assert_eq!(
+            GroupV3Envelope::decode(message.content.as_slice()).unwrap(),
+            envelope
+        );
 
-        let payload = GroupV3Payload::from(record.clone());
+        let other_header = GroupV3Envelope {
+            encrypted_header: Bytes::from_static(&[3]),
+            ..envelope
+        };
+        assert_ne!(
+            other_header.into_outgoing_message().message_id,
+            message.message_id
+        );
+    }
 
-        let expected = [
-            0x0a, 1, b'a', // 1: sender_id
-            0x12, 1, b'b', // 2: message_id
-            0x1a, 1, b'c', // 3: channel_id
-            0x50, 1, // 10: lamport_timestamp
-            0x5a, 9, 0x0a, 1, b'd', 0x12, 1, 8, 0x1a, 1, b'e', // 11: causal_history
-            0x62, 1, 9, // 12: bloom_filter
-            0x6a, 3, 0x0a, 1, b'f', // 13: repair_request
-        ];
-        assert_eq!(payload.encrypted_header, expected[..]);
-        assert_eq!(SDSRecord::try_from(payload).unwrap(), record);
+    fn mls_envelope() -> GroupV3Envelope {
+        GroupV3Envelope {
+            encrypted_header: GroupV3Header::default().encode_to_vec().into(),
+            encoded_frame: Some(EncodedFrame::MlsMessage(Bytes::from_static(&[2]))),
+        }
+    }
+
+    #[test]
+    fn sds_content_decodes_back_to_the_envelope() {
+        let envelope = mls_envelope();
+        let message = envelope.clone().into_outgoing_message();
+        assert_eq!(
+            GroupV3Envelope::from_sds_content(&message.message_id, &message.content).unwrap(),
+            envelope
+        );
+    }
+
+    #[test]
+    fn sds_content_under_another_message_id_is_rejected() {
+        let message = mls_envelope().into_outgoing_message();
+        assert!(GroupV3Envelope::from_sds_content("other", &message.content).is_err());
     }
 }

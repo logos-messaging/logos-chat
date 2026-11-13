@@ -14,7 +14,7 @@ use crate::{
     Observation, Signer,
 };
 
-use super::payloads::{GroupV3FrameType, protocol_message};
+use super::payloads::{EncryptedSdsMessage, GroupV3Envelope, GroupV3FrameType};
 use super::{DeferredCommit, Frame, GroupV3Convo, delivery_address_from_id};
 
 impl GroupV3Convo {
@@ -34,8 +34,8 @@ impl GroupV3Convo {
                     message_id,
                     content,
                     ..
-                } => match protocol_message(&content)
-                    .and_then(|message| self.handle_mls_protocol_msg(cx, message_id, message))
+                } => match GroupV3Envelope::from_sds_content(&message_id, &content)
+                    .and_then(|envelope| self.handle_group_v3_envelope(cx, message_id, envelope))
                 {
                     Ok(outcome) => observations.extend(outcome.observations),
                     Err(e) => {
@@ -49,7 +49,9 @@ impl GroupV3Convo {
                 }
                 // SDS logs no sync message, so it has no hint to keep.
                 Event::Sync(record) => {
-                    if let Err(e) = self.publish_payload(cx, record.into()) {
+                    if let Err(e) =
+                        self.publish_payload(cx, EncryptedSdsMessage::from_record(record))
+                    {
                         warn!(convo = %self.convo_id, error = %e, "failed to publish sds record");
                     }
                 }
@@ -82,6 +84,20 @@ impl GroupV3Convo {
         {
             warn!(convo = %self.convo_id, error = %e, "failed to fetch missing messages");
         }
+    }
+
+    /// Handle an envelope SDS released: pass its MLS message on.
+    fn handle_group_v3_envelope<S: ExternalServices>(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        message_id: MessageId,
+        envelope: GroupV3Envelope,
+    ) -> Result<ConvoOutcome, ChatError> {
+        let Some(message) = envelope.protocol_message()? else {
+            debug!(convo = %self.convo_id, "ignoring non-mls frame");
+            return Ok(self.default_outcome());
+        };
+        self.handle_mls_protocol_msg(cx, message_id, message)
     }
 
     /// Handle inbound mls encrypted messages. Accepts a successfully decoded ProtocolMessage
