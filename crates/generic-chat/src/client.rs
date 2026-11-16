@@ -6,8 +6,8 @@ use components::{ThreadedWakeupService, WakeupEvent};
 use crossbeam_channel::{Receiver, Sender, select};
 use libchat::{
     AuthService, ConversationId, ConversationStore, ConvoMetadata, ConvoOutcome, Core, DeliveryAck,
-    DeliveryInfo, DeliveryService, GroupV2Config, GroupV3Config, InboxOutcome, MessageId,
-    MissingMessage, Observation, ParticipantId, PayloadOutcome, RegistrationService,
+    DeliveryInfo, DeliveryService, GroupV2Config, InboxOutcome, MessageId, MissingMessage,
+    Observation, ParticipantId, PayloadOutcome, RegistrationService,
 };
 use logos_account::AccountAddr;
 use parking_lot::Mutex;
@@ -95,24 +95,11 @@ where
 {
     pub fn new(
         installation: Installation,
-        transport: T,
-        reg: R,
-        auth: A,
-        storage: S,
-        group_v2: Option<GroupV2Config>,
-    ) -> Result<(Self, Receiver<Event>), ClientError> {
-        Self::with_group_v3_config(installation, transport, reg, auth, storage, group_v2, None)
-    }
-
-    /// [`Self::new`] with a GroupV3 timing override.
-    pub(crate) fn with_group_v3_config(
-        installation: Installation,
         mut transport: T,
         reg: R,
         auth: A,
         storage: S,
         group_v2: Option<GroupV2Config>,
-        group_v3: Option<GroupV3Config>,
     ) -> Result<(Self, Receiver<Event>), ClientError> {
         installation.validate(&auth)?;
         let inbound = transport.inbound();
@@ -124,9 +111,6 @@ where
             Core::new_with_name(installation, auth, transport, reg, wakeup_service, storage)?;
         if let Some(config) = group_v2 {
             core.set_group_v2_config(config);
-        }
-        if let Some(config) = group_v3 {
-            core.set_group_v3_config(config);
         }
         Ok(Self::spawn(core, account, inbound, wakeup_rx))
     }

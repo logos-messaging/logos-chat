@@ -12,9 +12,8 @@ use components::HttpAuthClient;
 use components::basic_file_key_vault::BasicFileKeyVault;
 use crossbeam_channel::Receiver;
 use logos_chat::{
-    AuthService, ChatClient, ConversationStore, DbKey, Event, GroupV2Config, GroupV3Config,
-    Installation, LogosConfig, P2pConfig, REGISTRY_ENDPOINT, RegistrationService,
-    RegistryPublishMode, Transport,
+    AuthService, ChatClient, ConversationStore, DbKey, Event, GroupV2Config, Installation,
+    LogosConfig, P2pConfig, REGISTRY_ENDPOINT, RegistrationService, RegistryPublishMode, Transport,
 };
 
 use app::ChatApp;
@@ -53,15 +52,6 @@ fn fast_group_v2_config() -> GroupV2Config {
     }
 }
 
-/// Fast GroupV3 timing: a finalize delay under GroupV3's one-second tick, so
-/// a commit lands, and an add's invites go out, on the next tick instead of
-/// after 30s.
-fn fast_group_v3_config() -> GroupV3Config {
-    GroupV3Config {
-        commit_finalize_delay: Duration::from_millis(100),
-    }
-}
-
 /// Decide whether to override GroupV2 timing with fast commits: always for
 /// `Fast`, never for `Default`, and — for `Auto` — only on the local file
 /// transport.
@@ -90,6 +80,7 @@ struct Cli {
     /// library's default timing.
     /// `auto` (the default) picks `fast` for `--transport file` and `default`
     /// otherwise, since fast timers are too aggressive for a high-latency network.
+    /// GroupV2 only: GroupV3 commits fast in a `test-fast-commits` build.
     #[arg(long, value_enum, default_value_t = GroupCommit::Auto)]
     group_commit: GroupCommit,
 
@@ -189,7 +180,6 @@ fn main() -> Result<()> {
                 // wallclock/timer abstraction replaces this raw config.
                 #[allow(deprecated)]
                 config.set_group_v2_config(group_v2);
-                config.set_group_v3_config(fast_group_v3_config());
             }
 
             // A smoketest's keys are throwaway, so each run starts a fresh identity.
@@ -226,7 +216,6 @@ fn main() -> Result<()> {
                 // wallclock/timer abstraction replaces this raw config.
                 #[allow(deprecated)]
                 config.set_group_v2_config(group_v2);
-                config.set_group_v3_config(fast_group_v3_config());
             }
             let (client, events) = logos_chat::open_with_transport(config, transport)
                 .map_err(|e| anyhow::anyhow!("{e:?}"))

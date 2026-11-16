@@ -10,6 +10,8 @@ crate-type = ["rlib"]
 [features]
 # The in-memory store and the store test assertions, for crates that test against a store.
 test-support = []
+# Shortens the GroupV3 commit finalize delay to 100 ms, for tests and simulations only.
+test-fast-commits = []
 
 [dependencies]
 # Workspace dependencies (sorted)

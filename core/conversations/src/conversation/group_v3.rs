@@ -43,22 +43,12 @@ type Frame = payloads::GroupV3Frame;
 // Fires SDS's resend and sync deadlines within a second. `wakeup_in` adds a timer rather than
 // replacing one, so only `init` and `wakeup` arm it.
 const SDS_TICK_INTERVAL: Duration = Duration::from_secs(1);
+// How long a commit, sent or received, waits before this member finalizes it. The
+// `test-fast-commits` feature puts it under one SDS tick, so a commit lands on the next tick.
+#[cfg(not(feature = "test-fast-commits"))]
 const COMMIT_FINALIZE_DELAY: Duration = Duration::from_secs(30);
-
-/// Timing for GroupV3 conversations, set with [`Core::set_group_v3_config`](crate::Core::set_group_v3_config).
-#[derive(Clone, Debug)]
-pub struct GroupV3Config {
-    /// How long a commit, sent or received, waits before this member finalizes it.
-    pub commit_finalize_delay: Duration,
-}
-
-impl Default for GroupV3Config {
-    fn default() -> Self {
-        Self {
-            commit_finalize_delay: COMMIT_FINALIZE_DELAY,
-        }
-    }
-}
+#[cfg(feature = "test-fast-commits")]
+const COMMIT_FINALIZE_DELAY: Duration = Duration::from_millis(100);
 
 fn delivery_address_from_id(convo_id: &str) -> String {
     blake2b_hex::<hash_size::DeliveryAddr>(&["delivery_addr|", convo_id])
@@ -273,8 +263,7 @@ impl GroupV3Convo {
     ) {
         // Simulate some finalization mechanism
         if self.next_commit.is_none() {
-            let due = cx.clock.now() + cx.group_v3_config.commit_finalize_delay;
-            self.next_commit = Some((due, fingerprint.clone()));
+            self.next_commit = Some((cx.clock.now() + COMMIT_FINALIZE_DELAY, fingerprint.clone()));
         }
         self.deferred_commits.insert(fingerprint, commit);
     }

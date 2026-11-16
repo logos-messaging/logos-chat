@@ -13,22 +13,14 @@ use libchat::ChatError;
 use logos_account::AccountAddr;
 use logos_generic_chat::{
     ChatClient, ChatClientBuilder, ClientError, ConversationClass, Event, GroupMetadata,
-    GroupV3Config, InProcessDelivery, MessageBus, PendingInstallation,
+    InProcessDelivery, MessageBus, PendingInstallation,
 };
-
-/// A finalize delay under GroupV3's one-second tick, so a commit lands on the
-/// next tick instead of after the 30 s default.
-fn fast_group_v3_config() -> GroupV3Config {
-    GroupV3Config {
-        commit_finalize_delay: Duration::from_millis(100),
-    }
-}
 
 type TestClient = ChatClient<InProcessDelivery, EphemeralRegistry, AcceptAllAuth, SqliteStore>;
 
 /// A client for a fresh account: mints the account and an installation, publishes
 /// the endorsing bundle, and builds the client on the shared bus/registry with
-/// the fast GroupV3 timing. Returns the account address peers invite by.
+/// the fast GroupV3 timing (`test-fast-commits`). Returns the account address peers invite by.
 fn create_test_client(
     message_bus: MessageBus,
     reg: EphemeralRegistry,
@@ -40,7 +32,6 @@ fn create_test_client(
         .transport(InProcessDelivery::new(message_bus))
         .registration(reg)
         .auth(auth.clone())
-        .group_v3_config(fast_group_v3_config())
         .build()
         .expect("client create");
     let addr = client.addr().to_string();

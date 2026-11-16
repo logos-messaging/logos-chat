@@ -16,8 +16,6 @@ pub use members::{AuthenticatedSigner, Signer};
 
 // Re-export types callers need to interact with ChatClient.
 pub use chat_sqlite::{DbKey, SqliteStore, StorageConfig};
-#[cfg(feature = "test-support")]
-pub use libchat::GroupV3Config;
 pub use libchat::{
     AddressedEnvelope, AuthService, ConversationClass, ConversationId, ConversationStore,
     ConvoMetadata, DeliveryInfo, DeliveryMsgId, DeliveryService, GroupV2Config, IdentityProvider,
