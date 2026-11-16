@@ -91,7 +91,7 @@ fn validate_keypackage<S: ExternalServices>(
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Eq, Hash)]
+#[derive(Debug, PartialEq, Clone, Eq, Hash, PartialOrd, Ord)]
 pub struct EpochFingerprint {
     val: String,
 }

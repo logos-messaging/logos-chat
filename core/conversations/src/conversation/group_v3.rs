@@ -6,6 +6,7 @@
 //  - Everyone is an "Admin"
 //
 
+mod finality;
 mod handlers;
 mod payloads;
 
@@ -43,7 +44,7 @@ type Frame = payloads::GroupV3Frame;
 // Fires SDS's resend and sync deadlines within a second. `wakeup_in` adds a timer rather than
 // replacing one, so only `init` and `wakeup` arm it.
 const SDS_TICK_INTERVAL: Duration = Duration::from_secs(1);
-const COMMIT_FINALIZE_DELAY: Duration = Duration::from_secs(30);
+const COMMIT_FINALIZE_TIMEOUT: Duration = Duration::from_secs(120);
 
 fn delivery_address_from_id(convo_id: &str) -> String {
     blake2b_hex::<hash_size::DeliveryAddr>(&["delivery_addr|", convo_id])
@@ -79,9 +80,7 @@ pub struct GroupV3Convo {
     mls_group: MlsGroup,
     channel: Channel,
     deferred_commits: HashMap<EpochFingerprint, DeferredCommit>,
-
-    //Temporary
-    next_commit: Option<(Duration, EpochFingerprint)>,
+    finality: finality::Timeout,
 }
 
 // `sds::Channel` implements no `Debug`.
@@ -143,7 +142,7 @@ impl GroupV3Convo {
             mls_group,
             channel,
             deferred_commits: HashMap::default(),
-            next_commit: None,
+            finality: finality::Timeout::new(COMMIT_FINALIZE_TIMEOUT),
         })
     }
 }
@@ -256,10 +255,7 @@ impl GroupV3Convo {
         fingerprint: EpochFingerprint,
         commit: DeferredCommit,
     ) {
-        // Simulate some finalization mechanism
-        if self.next_commit.is_none() {
-            self.next_commit = Some((cx.clock.now() + COMMIT_FINALIZE_DELAY, fingerprint.clone()));
-        }
+        self.finality.defer(fingerprint.clone(), cx.clock.now());
         self.deferred_commits.insert(fingerprint, commit);
     }
 
@@ -455,8 +451,7 @@ where
         let events = self.channel.tick(now_ms(cx), &mut rand_0_10::rng());
         let mut observations = self.handle_sds_events(cx, events);
 
-        let now = cx.clock.now();
-        if let Some((_, fingerprint)) = self.next_commit.take_if(|(due, _)| *due <= now) {
+        if let Some(fingerprint) = self.finality.finalized(cx.clock.now()) {
             match self.finalize_deferred_commit(cx, &fingerprint) {
                 Ok(outcome) => observations.extend(outcome.observations),
                 Err(e) => {

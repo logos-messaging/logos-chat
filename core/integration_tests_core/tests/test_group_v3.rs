@@ -289,3 +289,48 @@ fn groupv3_member_fetches_a_lost_message_only_its_sender_names() {
         .collect();
     assert_eq!(contents, [b"m1", b"m2"]);
 }
+
+#[test]
+fn groupv3_two_commits_for_one_epoch_do_not_fork() {
+    let mut harness = TestHarness::<4>::new(|_, _| {});
+    let convo_id = create_group_for_adds(&mut harness);
+
+    // Saro and Raya each commit before receiving the other's.
+    let pax = harness.pax().account();
+    let mira = harness.mira().account();
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &[pax])
+        .expect("saro adds pax");
+    harness
+        .raya()
+        .group_add_participants(&convo_id, &[mira])
+        .expect("raya adds mira");
+    harness.process_until_label("Saro and Raya apply a commit", |h| {
+        h.saro().group_signers(&convo_id).map_or(0, |s| s.len()) == 3
+            && h.raya().group_signers(&convo_id).map_or(0, |s| s.len()) == 3
+    });
+
+    // Members that applied different commits have different signers and cannot read each other.
+    assert_eq!(
+        harness
+            .saro()
+            .group_signers(&convo_id)
+            .expect("saro signers"),
+        harness
+            .raya()
+            .group_signers(&convo_id)
+            .expect("raya signers"),
+    );
+    harness
+        .saro()
+        .send_content(&convo_id, b"from saro")
+        .expect("saro send");
+    harness
+        .raya()
+        .send_content(&convo_id, b"from raya")
+        .expect("raya send");
+    harness.process_until_label("Saro and Raya get both", |h| {
+        h.saro().check(&convo_id, b"from raya") && h.raya().check(&convo_id, b"from saro")
+    });
+}
