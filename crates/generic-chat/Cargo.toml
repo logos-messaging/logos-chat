@@ -25,6 +25,7 @@ tracing = "0.1"
 [dev-dependencies]
 # Workspace dependencies (sorted)
 integration_tests_core = { workspace = true }
+libchat = { workspace = true, features = ["test-fast-commits"] }
 
 # External dependencies (sorted)
 tempfile = "3"
