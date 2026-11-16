@@ -15,7 +15,9 @@ use crate::{
 };
 
 use super::payloads::{EncryptedSdsMessage, GroupV3FrameType, GroupV3Packet};
-use super::{DeferredCommit, Frame, GroupV3Convo, MAX_LATER_EPOCH_MSGS, delivery_address_from_id};
+use super::{
+    DeferredCommit, Frame, GroupV3Convo, MAX_LATER_EPOCH_MSGS, delivery_address_from_id, trace,
+};
 
 impl GroupV3Convo {
     /// Act on SDS events in order: a released message goes through MLS, a record is published.
@@ -108,8 +110,10 @@ impl GroupV3Convo {
         message_id: MessageId,
         protocol_message: ProtocolMessage,
     ) -> Result<ConvoOutcome, ChatError> {
+        let heard = trace::heard(self, &message_id, &protocol_message);
         if protocol_message.epoch() < self.mls_group.epoch() {
             debug!(convo = %self.convo_id, epoch = protocol_message.epoch().as_u64(), "dropping message from past epoch");
+            trace::dropped(heard);
             return Ok(self.default_outcome());
         }
         if protocol_message.epoch() > self.mls_group.epoch() {
@@ -122,6 +126,7 @@ impl GroupV3Convo {
                 // TODO: Keep commits when full. Content can fill the queue and a dropped commit
                 // leaves this member behind.
                 warn!(convo = %self.convo_id, "dropping message from later epoch");
+                trace::dropped(heard);
             }
             return Ok(self.default_outcome());
         }
@@ -141,6 +146,7 @@ impl GroupV3Convo {
                 if is_commit {
                     self.sync.suspect(self.mls_group.epoch().as_u64());
                 }
+                trace::refused(heard, &e);
                 return Err(ChatError::generic(e));
             }
         };
@@ -175,10 +181,11 @@ impl GroupV3Convo {
             Sender::Member(index) => self.mls_group.member_at(*index),
             _ => None,
         };
+        let epoch = processed.epoch().as_u64();
 
         match processed.into_content() {
             ProcessedMessageContent::ApplicationMessage(msg) => {
-                self.handle_mls_application_message(cx, sender, msg, message_id)
+                self.handle_mls_application_message(cx, sender, msg, message_id, epoch)
             }
             ProcessedMessageContent::StagedCommitMessage(commit) => {
                 self.handle_mls_commit(cx, *commit)
@@ -197,6 +204,7 @@ impl GroupV3Convo {
         sender: Option<Member>,
         app_msg: ApplicationMessage,
         message_id: MessageId,
+        epoch: u64,
     ) -> Result<ConvoOutcome, ChatError> {
         let bytes = app_msg.into_bytes();
 
@@ -217,8 +225,9 @@ impl GroupV3Convo {
             .map(|sender| Content {
                 bytes: content.to_vec(),
                 sender,
-                message_id,
+                message_id: message_id.clone(),
             });
+        trace::read(&message_id, epoch, content.as_ref());
 
         Ok(ConvoOutcome {
             observations: content.into_iter().map(Observation::Content).collect(),

@@ -14,7 +14,6 @@ use std::fmt::{self, Write as _};
 
 use tracing::{Level, trace};
 
-use crate::conversation::frame_id;
 use crate::identity::{ParticipantId, Signer, SignerKey};
 use crate::utils::{blake2b_hex, hash_size};
 
@@ -56,33 +55,32 @@ pub(crate) fn left(epoch: u64) {
     trace!(target: TARGET, epoch, "left");
 }
 
-/// The signer published a post of its own as `frame`, sent at `epoch`.
-pub(crate) fn sent(frame: &[u8], epoch: u64) {
+/// The signer sent message `frame_id` at `epoch`.
+pub(crate) fn sent(frame_id: &str, epoch: u64) {
     trace!(
         target: TARGET,
-        frame = %frame_id(frame),
+        frame = %frame_id,
         epoch,
         "sent"
     );
 }
 
-/// The signer read the post `frame` carries, which `from` sent at
-/// `epoch`.
-pub(crate) fn received(frame: &[u8], from: &SignerKey, epoch: u64) {
+/// The signer read message `frame_id`, which `from` sent at `epoch`.
+pub(crate) fn received(frame_id: &str, from: &SignerKey, epoch: u64) {
     trace!(
         target: TARGET,
-        frame = %frame_id(frame),
+        frame = %frame_id,
         from = %Short(from.as_bytes()),
         epoch,
         "received"
     );
 }
 
-/// `frame`, sent at `epoch`, reached the signer and could not be read.
-pub(crate) fn unreadable(frame: &[u8], epoch: u64, why: Why) {
+/// The signer could not read message `frame_id`, sent at `epoch`.
+pub(crate) fn unreadable(frame_id: &str, epoch: u64, why: Why) {
     trace!(
         target: TARGET,
-        frame = %frame_id(frame),
+        frame = %frame_id,
         epoch,
         why = %why,
         "unreadable"
@@ -170,6 +168,7 @@ impl fmt::Display for Signers<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::conversation::frame_id;
     use std::io;
     use std::sync::{Arc, Mutex};
 
@@ -227,7 +226,7 @@ mod tests {
 
     #[test]
     fn unreadable_line() {
-        let unreadable_for = |why| rendered(|| unreadable(b"an encoded frame", 7, why));
+        let unreadable_for = |why| rendered(|| unreadable(&frame_id(b"an encoded frame"), 7, why));
         for (why, written) in [
             (Why::Epoch, "epoch"),
             (Why::Decrypt, "decrypt"),

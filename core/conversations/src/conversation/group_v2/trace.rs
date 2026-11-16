@@ -8,9 +8,9 @@ use openmls::group::ProcessMessageError;
 
 use super::GroupV2Convo;
 use crate::Observation;
-use crate::conversation::ConvoBase;
 use crate::conversation::mls_trace::record::{self, Why};
 use crate::conversation::mls_trace::{Heard, unable_to_decrypt};
+use crate::conversation::{ConvoBase, frame_id};
 use crate::identity::SignerKey;
 use crate::inbox_v2::MlsEphemeralPqProvider;
 
@@ -60,7 +60,7 @@ pub(super) fn after_op(
 /// `own_epoch`.
 pub(super) fn sent(own_epoch: Option<u64>, post: Option<&[u8]>) {
     if let (Some(epoch), Some(frame)) = (own_epoch, post) {
-        record::sent(frame, epoch);
+        record::sent(&frame_id(frame), epoch);
     }
 }
 
@@ -68,13 +68,13 @@ pub(super) fn sent(own_epoch: Option<u64>, post: Option<&[u8]>) {
 /// name it, when `inner` is an MLS message of this group; `own_epoch` is the
 /// epoch the signer was in when it arrived. Writes `unreadable` when de-mls
 /// ignored it as of another epoch or could not decrypt it.
-pub(super) fn inbound<'a>(
+pub(super) fn inbound(
     convo: &GroupV2Convo,
     own_epoch: Option<u64>,
-    frame: &'a [u8],
+    frame: &[u8],
     inner: &[u8],
     processed: &Result<DispatchOutcome, ConversationError>,
-) -> Option<Heard<'a>> {
+) -> Option<Heard> {
     // Nothing is recorded of our own frame coming back.
     if matches!(processed, Ok(DispatchOutcome::Dropped)) {
         return None;
@@ -84,8 +84,8 @@ pub(super) fn inbound<'a>(
     match processed {
         // de-mls drops a frame of another epoch without a word, so the epoch
         // its MLS header names is what tells.
-        Ok(_) if !heard.at_own_epoch() => unreadable(heard, Why::Epoch),
-        Err(error) if failed_to_decrypt(error) => unreadable(heard, Why::Decrypt),
+        Ok(_) if !heard.at_own_epoch() => unreadable(&heard, Why::Epoch),
+        Err(error) if failed_to_decrypt(error) => unreadable(&heard, Why::Decrypt),
         _ => {}
     }
     Some(heard)
@@ -95,7 +95,7 @@ pub(super) fn inbound<'a>(
 /// carried one: `received`, or `unreadable` when its sender failed auth
 /// and `observations` hold no content.
 pub(super) fn read(
-    heard: Option<Heard<'_>>,
+    heard: Option<Heard>,
     events: &[ConversationEvent],
     observations: &[Observation],
 ) {
@@ -112,8 +112,8 @@ pub(super) fn read(
             _ => None,
         });
     match content {
-        Some(content) => record::received(heard.frame, content.sender.signer(), heard.epoch),
-        None => unreadable(heard, Why::Sender),
+        Some(content) => record::received(&heard.frame, content.sender.signer(), heard.epoch),
+        None => unreadable(&heard, Why::Sender),
     }
 }
 
@@ -132,8 +132,8 @@ fn is_post(event: &ConversationEvent) -> bool {
 }
 
 /// Writes `unreadable` for the frame `heard` names.
-fn unreadable(heard: Heard<'_>, why: Why) {
-    record::unreadable(heard.frame, heard.epoch, why);
+fn unreadable(heard: &Heard, why: Why) {
+    record::unreadable(&heard.frame, heard.epoch, why);
 }
 
 /// Whether `signer` is still seated in `convo`. A commit that removes it
