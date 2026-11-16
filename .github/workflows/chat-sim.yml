@@ -1,0 +1,349 @@
+name: chat-sim
+
+on:
+  # No branches or paths filter: a stacked pull request runs too, and one
+  # that changes docs alone gets its check as skipped rather than none.
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pull-request:
+    name: Start chat-sim's run for the pull request
+    if: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    # A pull request's jobs run one at a time, in the order of its pushes, so
+    # that no start cancels a newer push's run; none is dropped from the queue,
+    # so that every push gets its check.
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+      queue: max
+    env:
+      PR: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      BEFORE: ${{ github.event.before }}
+    steps:
+      # A fork's pull_request run is handed no secrets.
+      - name: Pass over a pull request from a fork
+        if: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+        run: echo "::notice::chat-sim does not run for a pull request from a fork."
+      # A step's if cannot read a secret, so this step reads whether it is set.
+      - name: Ask whether the App's client ID and key are set
+        id: app
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        env:
+          CLIENT_ID: ${{ vars.CHAT_SIM_APP_CLIENT_ID }}
+          KEY: ${{ secrets.CHAT_SIM_APP_PRIVATE_KEY != '' }}
+        run: |
+          if [ -n "$CLIENT_ID" ] && [ "$KEY" = true ]; then
+            echo "set=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::CHAT_SIM_APP_CLIENT_ID or CHAT_SIM_APP_PRIVATE_KEY is not set for this run, so chat-sim does not run for this pull request."
+          fi
+      # A re-run replays its push: its start would cancel a newer push's run
+      # and leave that run's check unfinished.
+      - name: Ask whether the push is still the open pull request's head
+        id: head
+        if: ${{ steps.app.outputs.set == 'true' && github.run_attempt != '1' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" > "$RUNNER_TEMP/pull.json"
+          latest=$(jq -r --arg head "$HEAD_SHA" '.state == "open" and .head.sha == $head' "$RUNNER_TEMP/pull.json")
+          if [ "$latest" != true ]; then
+            echo "replaced=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${HEAD_SHA:0:7} is no longer the open pull request's head, so chat-sim does not run for it again."
+          fi
+      # From the API, not a checkout: the pull request's code never runs here.
+      # A rename counts its old path too, and the API lists 300 files at most,
+      # so a list of 300 may be cut short.
+      - name: Ask for the merge base with main and the files changed since
+        id: changes
+        if: ${{ steps.app.outputs.set == 'true' && steps.head.outputs.replaced != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/compare/main...$HEAD_SHA" > "$RUNNER_TEMP/compare.json"
+          base=$(jq -er '.merge_base_commit.sha' "$RUNNER_TEMP/compare.json")
+          built=$(jq -r '
+            def unbuilt: startswith("docs/") or endswith(".md");
+            (.files | length) >= 300
+            or any(.files[]; [.filename, .previous_filename // empty] | any(unbuilt | not))
+          ' "$RUNNER_TEMP/compare.json")
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "built=$built" >> "$GITHUB_OUTPUT"
+
+      - name: Mint a token for logos-chat's checks
+        id: skipping
+        if: ${{ steps.changes.outputs.built == 'false' }}
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.CHAT_SIM_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CHAT_SIM_APP_PRIVATE_KEY }}
+          owner: logos-messaging
+          repositories: logos-chat
+          permission-checks: write
+      - name: Complete the check as skipped
+        if: ${{ steps.changes.outputs.built == 'false' }}
+        env:
+          GH_TOKEN: ${{ steps.skipping.outputs.token }}
+          BASE: ${{ steps.changes.outputs.base }}
+        run: |
+          jq -n --arg repo "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" --arg head "$HEAD_SHA" --arg base "$BASE" '
+            def commit($sha): "[`\($sha[:7])`](\($repo)/commit/\($sha))";
+            {
+              name: "chat-sim",
+              head_sha: $head,
+              status: "completed",
+              conclusion: "skipped",
+              output: {
+                title: "skipped: nothing chat-sim builds changed",
+                summary: "**chat-sim: skipped** for \(commit($head)) against its merge base \(commit($base)): every file the pull request changes is under `docs/` or is a `.md`."
+              }
+            }
+          ' > "$RUNNER_TEMP/check.json"
+          gh api --silent -X POST "repos/$GITHUB_REPOSITORY/check-runs" --input "$RUNNER_TEMP/check.json"
+
+      - name: Mint a token for logos-chat's checks and comments
+        id: token
+        if: ${{ steps.changes.outputs.built == 'true' }}
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.CHAT_SIM_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CHAT_SIM_APP_PRIVATE_KEY }}
+          owner: logos-messaging
+          repositories: logos-chat
+          permission-checks: write
+          permission-pull-requests: write
+      - name: Mint a token to start chat-sim's workflows
+        id: starting
+        if: ${{ steps.changes.outputs.built == 'true' }}
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.CHAT_SIM_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CHAT_SIM_APP_PRIVATE_KEY }}
+          owner: logos-messaging
+          repositories: chat-sim
+          permission-actions: write
+      # Starting a run cancels the pull request's run still going in chat-sim,
+      # at whatever commit, and leaves that run's check unfinished. Those runs
+      # are found by the title simulate.yml gives each, a status at a time; the
+      # head and the commit before the push are added for a check whose job
+      # failed before its start.
+      - name: List the commits whose checks the start leaves unfinished
+        if: ${{ steps.changes.outputs.built == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.starting.outputs.token }}
+        run: |
+          for status in requested queued pending waiting in_progress; do
+            gh api --paginate --slurp \
+              "repos/logos-messaging/chat-sim/actions/workflows/simulate.yml/runs?status=$status&per_page=100"
+          done > "$RUNNER_TEMP/runs.json"
+          jq -nr --arg pr "$PR" --arg head "$HEAD_SHA" --arg before "$BEFORE" '
+            [$head, $before, (inputs | .[].workflow_runs[].display_title
+              | capture("^Simulate pr at (?<sha>[0-9a-f]{40}) for logos-chat#(?<pr>[0-9]+)$")
+              | select(.pr == $pr) | .sha)]
+            | map(select(. != "")) | unique[]
+          ' "$RUNNER_TEMP/runs.json" > "$RUNNER_TEMP/commits"
+      - name: Create the check, queued on the head
+        id: check
+        if: ${{ steps.changes.outputs.built == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          jq -n --arg head "$HEAD_SHA" --arg pr "$PR" \
+            '{name: "chat-sim", head_sha: $head, status: "queued", external_id: $pr}' \
+            > "$RUNNER_TEMP/check.json"
+          gh api -X POST "repos/$GITHUB_REPOSITORY/check-runs" --input "$RUNNER_TEMP/check.json" \
+            > "$RUNNER_TEMP/created.json"
+          id=$(jq -er '.id' "$RUNNER_TEMP/created.json")
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+      # The answer names the run it started: return_run_details, from API
+      # version 2026-03-10.
+      - name: Start chat-sim's run at the head against the merge base
+        id: run
+        if: ${{ steps.changes.outputs.built == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.starting.outputs.token }}
+          BASE: ${{ steps.changes.outputs.base }}
+          CHECK: ${{ steps.check.outputs.id }}
+        run: |
+          jq -n --arg head "$HEAD_SHA" --arg base "$BASE" --arg pr "$PR" --arg check "$CHECK" '{
+            ref: "master",
+            inputs: {suite: "pr", revision: $head, base: $base, pr: $pr, check_run: $check},
+            return_run_details: true
+          }' > "$RUNNER_TEMP/dispatch.json"
+          gh api -X POST -H "X-GitHub-Api-Version: 2026-03-10" \
+            repos/logos-messaging/chat-sim/actions/workflows/simulate.yml/dispatches \
+            --input "$RUNNER_TEMP/dispatch.json" > "$RUNNER_TEMP/started.json"
+          url=$(jq -er '.html_url' "$RUNNER_TEMP/started.json")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "chat-sim's run: $url"
+      # external_id keeps out another pull request's checks on the same commit,
+      # whose runs the start does not cancel. filter=all lists every check of
+      # the name, not the newest alone.
+      - name: Cancel the checks of the runs it replaces
+        if: ${{ steps.changes.outputs.built == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          SLUG: ${{ steps.token.outputs.app-slug }}
+          CHECK: ${{ steps.check.outputs.id }}
+          RUN_URL: ${{ steps.run.outputs.url }}
+        run: |
+          jq -n --arg repo "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" --arg head "$HEAD_SHA" --arg run "$RUN_URL" '
+            def commit($sha): "[`\($sha[:7])`](\($repo)/commit/\($sha))";
+            {
+              status: "completed",
+              conclusion: "cancelled",
+              output: {
+                title: "cancelled: a newer run took its place",
+                summary: "[The run](\($run)) for \(commit($head)) took its place."
+              }
+            }
+          ' > "$RUNNER_TEMP/cancelled.json"
+          mapfile -t commits < "$RUNNER_TEMP/commits"
+          for sha in "${commits[@]}"; do
+            gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/commits/$sha/check-runs?check_name=chat-sim&filter=all&per_page=100" \
+              > "$RUNNER_TEMP/checks.json"
+            jq -r --arg slug "$SLUG" --arg pr "$PR" --argjson made "$CHECK" '
+              .[].check_runs[]
+              | select(.app.slug == $slug and .external_id == $pr and .status != "completed" and .id != $made)
+              | .id
+            ' "$RUNNER_TEMP/checks.json" > "$RUNNER_TEMP/unfinished"
+            mapfile -t unfinished < "$RUNNER_TEMP/unfinished"
+            for id in "${unfinished[@]}"; do
+              gh api --silent -X PATCH "repos/$GITHUB_REPOSITORY/check-runs/$id" \
+                --input "$RUNNER_TEMP/cancelled.json"
+              echo "Cancelled the check $id on $sha."
+            done
+          done
+      # chat-sim writes its result over the App's oldest comment, whole; until
+      # then the running line stands above the last result, in place of an
+      # older running line.
+      - name: Find the App's comment on the pull request
+        id: comment
+        if: ${{ steps.changes.outputs.built == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          LOGIN: ${{ steps.token.outputs.app-slug }}[bot]
+          BASE: ${{ steps.changes.outputs.base }}
+          RUN_URL: ${{ steps.run.outputs.url }}
+        run: |
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
+            > "$RUNNER_TEMP/comments.json"
+          jq --arg login "$LOGIN" --arg repo "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --arg head "$HEAD_SHA" --arg base "$BASE" --arg run "$RUN_URL" '
+            def commit($sha): "[`\($sha[:7])`](\($repo)/commit/\($sha))";
+            (first(.[][] | select(.user.login == $login)) // {body: ""}) as $found
+            | ($found.body | sub("\\A\\*\\*chat-sim: running\\*\\*[^\r\n]*[\r\n]*"; "")) as $last
+            | "**chat-sim: running** for \(commit($head)) against its merge base \(commit($base)) · [the run](\($run))" as $line
+            | {id: $found.id, body: (if $last == "" then "\($line)\n" else "\($line)\n\n\($last)" end)}
+          ' "$RUNNER_TEMP/comments.json" > "$RUNNER_TEMP/found.json"
+          jq '{body}' "$RUNNER_TEMP/found.json" > "$RUNNER_TEMP/comment.json"
+          id=$(jq -r '.id // empty' "$RUNNER_TEMP/found.json")
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+      - name: Write the running line above the last result
+        if: ${{ steps.changes.outputs.built == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          ID: ${{ steps.comment.outputs.id }}
+        run: |
+          if [ -n "$ID" ]; then
+            gh api --silent -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$ID" \
+              --input "$RUNNER_TEMP/comment.json"
+          else
+            gh api --silent -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
+              --input "$RUNNER_TEMP/comment.json"
+          fi
+
+  closed:
+    name: Remove the pull request's report from chat-sim's site
+    if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask whether the App's client ID and key are set
+        id: app
+        env:
+          CLIENT_ID: ${{ vars.CHAT_SIM_APP_CLIENT_ID }}
+          KEY: ${{ secrets.CHAT_SIM_APP_PRIVATE_KEY != '' }}
+        run: |
+          if [ -n "$CLIENT_ID" ] && [ "$KEY" = true ]; then
+            echo "set=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::CHAT_SIM_APP_CLIENT_ID or CHAT_SIM_APP_PRIVATE_KEY is not set for this run, so chat-sim is not asked to remove the pull request's report."
+          fi
+      - name: Mint a token to start chat-sim's workflows
+        id: starting
+        if: ${{ steps.app.outputs.set == 'true' }}
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.CHAT_SIM_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CHAT_SIM_APP_PRIVATE_KEY }}
+          owner: logos-messaging
+          repositories: chat-sim
+          permission-actions: write
+      - name: Start chat-sim's removal of the pull request's report
+        if: ${{ steps.app.outputs.set == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.starting.outputs.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          jq -n --arg pr "$PR" '{ref: "master", inputs: {pr: $pr}, return_run_details: true}' \
+            > "$RUNNER_TEMP/dispatch.json"
+          gh api -X POST -H "X-GitHub-Api-Version: 2026-03-10" \
+            repos/logos-messaging/chat-sim/actions/workflows/prune-pages.yml/dispatches \
+            --input "$RUNNER_TEMP/dispatch.json" > "$RUNNER_TEMP/started.json"
+          url=$(jq -er '.html_url' "$RUNNER_TEMP/started.json")
+          echo "chat-sim's run: $url"
+
+  main:
+    name: Start chat-sim's run at main
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask whether the App's client ID and key are set
+        id: app
+        env:
+          CLIENT_ID: ${{ vars.CHAT_SIM_APP_CLIENT_ID }}
+          KEY: ${{ secrets.CHAT_SIM_APP_PRIVATE_KEY != '' }}
+        run: |
+          if [ -n "$CLIENT_ID" ] && [ "$KEY" = true ]; then
+            echo "set=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::CHAT_SIM_APP_CLIENT_ID or CHAT_SIM_APP_PRIVATE_KEY is not set for this run, so chat-sim does not run at this commit."
+          fi
+      - name: Mint a token to start chat-sim's workflows
+        id: starting
+        if: ${{ steps.app.outputs.set == 'true' }}
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.CHAT_SIM_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CHAT_SIM_APP_PRIVATE_KEY }}
+          owner: logos-messaging
+          repositories: chat-sim
+          permission-actions: write
+      - name: Start chat-sim's run at the pushed commit
+        if: ${{ steps.app.outputs.set == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.starting.outputs.token }}
+        run: |
+          jq -n --arg revision "$GITHUB_SHA" '{
+            ref: "master",
+            inputs: {suite: "main", revision: $revision},
+            return_run_details: true
+          }' > "$RUNNER_TEMP/dispatch.json"
+          gh api -X POST -H "X-GitHub-Api-Version: 2026-03-10" \
+            repos/logos-messaging/chat-sim/actions/workflows/simulate.yml/dispatches \
+            --input "$RUNNER_TEMP/dispatch.json" > "$RUNNER_TEMP/started.json"
+          url=$(jq -er '.html_url' "$RUNNER_TEMP/started.json")
+          echo "chat-sim's run: $url"
