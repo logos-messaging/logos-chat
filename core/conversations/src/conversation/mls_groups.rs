@@ -31,8 +31,18 @@ impl<T: HasMlsConvo + ?Sized> ConvoBase for T {
         Ok(signers?)
     }
 
+    /// The signers added by the group's pending commit. openmls holds a pending commit only for
+    /// one this member created and has not merged yet.
     fn pending_signers(&self) -> Result<Vec<crate::Signer>, super::ChatError> {
-        todo!()
+        let Some(commit) = self.mls_group().pending_commit() else {
+            return Ok(Vec::new());
+        };
+        let signers: Result<Vec<Signer>, TypeConversionError> = commit
+            .add_proposals()
+            .map(|add| Signer::from_leaf_node(add.add_proposal().key_package().leaf_node()))
+            .collect();
+
+        Ok(signers?)
     }
 
     fn can_send(&self) -> bool {
