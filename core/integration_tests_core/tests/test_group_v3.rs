@@ -365,3 +365,106 @@ fn groupv3_member_fetches_a_lost_message_by_an_id_learned_after_its_send() {
         .collect();
     assert_eq!(contents, [b"m1", b"m2"]);
 }
+
+/// Raya receives Saro's second add before it finalizes the first,
+/// and still ends in the same epoch key as Saro.
+#[test]
+fn groupv3_later_commit_finalizes_the_deferred_commit_at_once() {
+    let mut harness = TestHarness::<4>::new(|_, _| {});
+    let convo_id = create_group_for_adds(&mut harness);
+
+    let pax = harness.pax().account();
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &[pax])
+        .expect("saro adds pax");
+    harness.raya().drop_pending_payloads();
+    // Raya got the add from Saro's resend, 60 s late, so still defers it.
+    harness.process_until_label("Pax join", |h| h.pax().convo_count() == 1);
+    assert_eq!(
+        harness
+            .raya()
+            .group_signers(&convo_id)
+            .expect("raya signers")
+            .len(),
+        2
+    );
+
+    // Saro's next add reaches Raya while Raya still defers the first.
+    let mira = harness.mira().account();
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &[mira])
+        .expect("saro adds mira");
+    harness.process_until_within("Raya applies the first add", Duration::from_secs(5), |h| {
+        h.raya().group_signers(&convo_id).map_or(0, |s| s.len()) == 3
+    });
+    harness.process_until_label("Raya applies the second add", |h| {
+        h.raya().group_signers(&convo_id).map_or(0, |s| s.len()) == 4
+    });
+
+    assert_eq!(
+        harness
+            .saro()
+            .group_signers(&convo_id)
+            .expect("saro signers"),
+        harness
+            .raya()
+            .group_signers(&convo_id)
+            .expect("raya signers"),
+    );
+    harness
+        .saro()
+        .send_content(&convo_id, b"from saro")
+        .expect("saro send");
+    harness
+        .raya()
+        .send_content(&convo_id, b"from raya")
+        .expect("raya send");
+    harness.process_until_label("Saro and Raya get both", |h| {
+        h.saro().check(&convo_id, b"from raya") && h.raya().check(&convo_id, b"from saro")
+    });
+}
+
+#[test]
+fn groupv3_member_four_commits_behind_catches_up_without_waiting() {
+    const SARO: usize = 0;
+    const RAYA: usize = 1;
+    let mut harness = TestHarness::<6>::new(|_, _| {});
+    let raya = harness.client(RAYA).account();
+    let convo_id = harness
+        .client_mut(SARO)
+        .create_group_convo_v3(&[raya], "", "")
+        .expect("saro create group");
+    harness.process_until_label("Raya join", |h| h.client(RAYA).convo_count() == 1);
+
+    // Saro makes four adds, finalizing each after 120 s. Raya loses everything sent meanwhile.
+    for joiner in 2..6 {
+        let account = harness.client(joiner).account();
+        harness
+            .client_mut(SARO)
+            .group_add_participants(&convo_id, &[account])
+            .expect("saro adds");
+        for _ in 0..121 {
+            harness.client_mut(RAYA).drop_pending_payloads();
+            harness.process(Duration::from_secs(1));
+        }
+    }
+    harness.client_mut(RAYA).drop_pending_payloads();
+    let signers = |h: &mut TestHarness<6>, i| {
+        h.client(i)
+            .group_signers(&convo_id)
+            .map_or(0, |signers| signers.len())
+    };
+    assert_eq!(signers(&mut harness, SARO), 6);
+    assert_eq!(signers(&mut harness, RAYA), 2);
+
+    // m1 makes Raya fetch the four lost commits. It opens only after Raya finalizes all four.
+    harness
+        .client_mut(SARO)
+        .send_content(&convo_id, b"m1")
+        .expect("saro send");
+    harness.process_until_within("Raya catches up", Duration::from_secs(10), |h| {
+        signers(h, RAYA) == 6 && h.client(RAYA).check(&convo_id, b"m1")
+    });
+}

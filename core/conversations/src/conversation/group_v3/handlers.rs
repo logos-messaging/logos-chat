@@ -15,7 +15,7 @@ use crate::{
 };
 
 use super::payloads::{EncryptedSdsMessage, GroupV3FrameType, GroupV3Packet};
-use super::{DeferredCommit, Frame, GroupV3Convo, delivery_address_from_id};
+use super::{DeferredCommit, Frame, GroupV3Convo, MAX_LATER_EPOCH_MSGS, delivery_address_from_id};
 
 impl GroupV3Convo {
     /// Act on SDS events in order: a released message goes through MLS, a record is published.
@@ -112,6 +112,19 @@ impl GroupV3Convo {
             debug!(convo = %self.convo_id, epoch = protocol_message.epoch().as_u64(), "dropping message from past epoch");
             return Ok(self.default_outcome());
         }
+        if protocol_message.epoch() > self.mls_group.epoch() {
+            // TODO: The epoch is not verified here. Limit how far ahead it can be.
+            self.finality
+                .later_epoch_seen(protocol_message.epoch().as_u64());
+            if self.later_epoch_msgs.len() < MAX_LATER_EPOCH_MSGS {
+                self.later_epoch_msgs.push((message_id, protocol_message));
+            } else {
+                // TODO: Keep commits when full. Content can fill the queue and a dropped commit
+                // leaves this member behind.
+                warn!(convo = %self.convo_id, "dropping message from later epoch");
+            }
+            return Ok(self.default_outcome());
+        }
 
         let processed = match self
             .mls_group
@@ -126,6 +139,21 @@ impl GroupV3Convo {
         };
 
         self.handle_mls_msg(cx, message_id, processed)
+    }
+
+    /// Handle the deferred messages again. Call after the epoch changes.
+    pub(super) fn handle_later_epoch_msgs<S: ExternalServices>(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+    ) -> Vec<Observation> {
+        let mut observations = Vec::new();
+        for (message_id, message) in std::mem::take(&mut self.later_epoch_msgs) {
+            match self.handle_mls_protocol_msg(cx, message_id, message) {
+                Ok(outcome) => observations.extend(outcome.observations),
+                Err(e) => warn!(convo = %self.convo_id, error = %e, "dropping deferred message"),
+            }
+        }
+        observations
     }
 
     /// Handle MLS ProcessedMessage. Send Commits and Application messages down to different parsers
