@@ -22,7 +22,7 @@ use std::fmt;
 use std::time::Duration;
 
 use openmls::ciphersuite::hash_ref::ProposalRef;
-use openmls::framing::MlsMessageOut;
+use openmls::framing::{MlsMessageOut, ProtocolMessage};
 use openmls::group::{MlsGroup, StagedCommit, StagedWelcome};
 use openmls::key_packages::KeyPackage;
 use openmls::messages::Welcome;
@@ -63,6 +63,9 @@ const SDS_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const COMMIT_FINALIZE_TIMEOUT: Duration = Duration::from_secs(120);
 #[cfg(feature = "test-fast-commits")]
 const COMMIT_FINALIZE_TIMEOUT: Duration = Duration::from_millis(100);
+// Max messages deferred for a later epoch. Copy value from SDS's incoming buffer.
+// TODO: Derive the value from SDS library or based on storage size.
+const MAX_LATER_EPOCH_MSGS: usize = 500;
 
 fn delivery_address_from_id(convo_id: &str) -> String {
     blake2b_hex::<hash_size::DeliveryAddr>(&["delivery_addr|", convo_id])
@@ -106,6 +109,7 @@ pub struct GroupV3Convo {
     /// Our last re-add request's attempt; it picks the answerer.
     readd_attempt: u32,
     epoch_data: EpochData,
+    later_epoch_msgs: Vec<(super::MessageId, ProtocolMessage)>,
 }
 
 // `sds::Channel` implements no `Debug`.
@@ -184,6 +188,7 @@ impl GroupV3Convo {
             beacons: Beacons::default(),
             readds: VecDeque::new(),
             readd_attempt: 0,
+            later_epoch_msgs: Vec::with_capacity(MAX_LATER_EPOCH_MSGS),
         })
     }
 }
@@ -675,9 +680,13 @@ where
         let events = self.channel.tick(now_ms(cx), &mut rand_0_10::rng());
         let mut observations = self.handle_sds_events(cx, events);
 
-        if let Some(fingerprint) = self.finality.finalized(cx.clock.now()) {
+        let epoch = self.mls_group.epoch().as_u64();
+        if let Some(fingerprint) = self.finality.finalized(cx.clock.now(), epoch) {
             match self.finalize_deferred_commit(cx, &fingerprint) {
-                Ok(outcome) => observations.extend(outcome.observations),
+                Ok(outcome) => {
+                    observations.extend(outcome.observations);
+                    observations.extend(self.handle_later_epoch_msgs(cx));
+                }
                 Err(e) => {
                     warn!(convo = %self.convo_id, error = %e, "failed to finalize deferred commit")
                 }

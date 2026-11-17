@@ -97,21 +97,7 @@ impl TestClient {
 
             match &outcome {
                 PayloadOutcome::Empty => continue,
-                PayloadOutcome::Convo(convo_outcome) => {
-                    for observation in &convo_outcome.observations {
-                        let libchat::Observation::Content(data) = observation else {
-                            continue;
-                        };
-                        info!(
-                            content = String::from_utf8_lossy(&data.bytes).to_string(),
-                            "COT"
-                        );
-                        self.received_messages.push(ReceivedMessage {
-                            convo_id: convo_outcome.convo_id.clone(),
-                            contents: data.bytes.clone(),
-                        });
-                    }
-                }
+                PayloadOutcome::Convo(convo_outcome) => self.record_content(convo_outcome),
                 PayloadOutcome::Inbox(_) => {}
             }
 
@@ -120,6 +106,23 @@ impl TestClient {
             }
         }
         outcomes
+    }
+
+    /// Copy released content to the received buffer.
+    fn record_content(&mut self, convo_outcome: &libchat::ConvoOutcome) {
+        for observation in &convo_outcome.observations {
+            let libchat::Observation::Content(data) = observation else {
+                continue;
+            };
+            info!(
+                content = String::from_utf8_lossy(&data.bytes).to_string(),
+                "COT"
+            );
+            self.received_messages.push(ReceivedMessage {
+                convo_id: convo_outcome.convo_id.clone(),
+                contents: data.bytes.clone(),
+            });
+        }
     }
 
     /// Poll and discard every payload waiting for this client — simulates
@@ -337,9 +340,14 @@ impl<const N: usize> TestHarness<N> {
 
     fn process_records(&mut self, records: Vec<WakeupRecord>) {
         for record in records {
-            self.clients[record.client_index]
+            let client = &mut self.clients[record.client_index];
+            let outcome = client
                 .wakeup(&record.convo_id)
                 .expect("Error During wakeup");
+            // A wakeup can release content too.
+            if let PayloadOutcome::Convo(convo_outcome) = &outcome {
+                client.record_content(convo_outcome);
+            }
         }
     }
 }
