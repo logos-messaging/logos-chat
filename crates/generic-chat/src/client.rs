@@ -7,7 +7,7 @@ use crossbeam_channel::{Receiver, Sender, select};
 use libchat::{
     AuthService, ConversationId, ConversationStore, ConvoMetadata, ConvoOutcome, Core, DeliveryAck,
     DeliveryInfo, DeliveryService, GroupV2Config, InboxOutcome, MessageId, MissingMessage,
-    Observation, ParticipantId, PayloadOutcome, RegistrationService,
+    Observation, ParticipantId, PayloadOutcome, PublishReceipt, RegistrationService,
 };
 use logos_account::AccountAddr;
 use parking_lot::Mutex;
@@ -46,6 +46,22 @@ pub trait Transport: DeliveryService + Send + 'static {
     /// Hand over the inbound payload stream. Called once, at client construction,
     /// before the [`Core`] takes ownership of the service.
     fn inbound(&mut self) -> Receiver<InboundPayload>;
+
+    /// Hand over the stream of reports under the receipts `publish` returned. Called once, at
+    /// client construction. The client takes the first report under a receipt it waits on and
+    /// ignores the rest, so a transport can report every payload, and more than once. One whose
+    /// `publish` returns no receipt reports none, the default.
+    fn delivery_reports(&mut self) -> Receiver<DeliveryReport> {
+        crossbeam_channel::never()
+    }
+}
+
+/// What the transport learned of a payload's id after `publish` returned `receipt`: the id, or
+/// `None` once the transport gave up on the payload.
+#[derive(Clone, Debug)]
+pub struct DeliveryReport {
+    pub receipt: PublishReceipt,
+    pub delivery_info: Option<DeliveryInfo>,
 }
 
 /// A payload as the transport received it, with its delivery info when the transport gives it.
@@ -103,6 +119,7 @@ where
     ) -> Result<(Self, Receiver<Event>), ClientError> {
         installation.validate(&auth)?;
         let inbound = transport.inbound();
+        let delivery_reports = transport.delivery_reports();
 
         let (wakeup_tx, wakeup_rx) = crossbeam_channel::unbounded();
         let wakeup_service = ThreadedWakeupService::new(wakeup_tx);
@@ -112,13 +129,20 @@ where
         if let Some(config) = group_v2 {
             core.set_group_v2_config(config);
         }
-        Ok(Self::spawn(core, account, inbound, wakeup_rx))
+        Ok(Self::spawn(
+            core,
+            account,
+            inbound,
+            delivery_reports,
+            wakeup_rx,
+        ))
     }
 
     fn spawn(
         core: ClientCore<T, R, A, S>,
         address: String,
         inbound: Receiver<InboundPayload>,
+        delivery_reports: Receiver<DeliveryReport>,
         wakeup_events: Receiver<WakeupEvent>,
     ) -> (Self, Receiver<Event>) {
         let core = Arc::new(Mutex::new(core));
@@ -127,7 +151,16 @@ where
 
         let worker = thread::spawn({
             let core = Arc::clone(&core);
-            move || worker_loop(core, inbound, wakeup_events, shutdown_rx, event_tx)
+            move || {
+                worker_loop(
+                    core,
+                    inbound,
+                    delivery_reports,
+                    wakeup_events,
+                    shutdown_rx,
+                    event_tx,
+                )
+            }
         });
 
         (
@@ -357,6 +390,7 @@ where
 fn worker_loop<T, R, A, S: ConversationStore + 'static>(
     core: Arc<Mutex<ClientCore<T, R, A, S>>>,
     inbound: Receiver<InboundPayload>,
+    mut delivery_reports: Receiver<DeliveryReport>,
     wakeup_events: Receiver<WakeupEvent>,
     shutdown: Receiver<()>,
     event_tx: Sender<Event>,
@@ -390,6 +424,19 @@ fn worker_loop<T, R, A, S: ConversationStore + 'static>(
                     if event_tx.send(event).is_err() {
                         return; // application dropped the receiver
                     }
+                }
+            }
+            recv(delivery_reports) -> msg => {
+                let Ok(DeliveryReport { receipt, delivery_info }) = msg else {
+                    // A transport that stops reporting keeps its inbound stream running.
+                    delivery_reports = crossbeam_channel::never();
+                    continue;
+                };
+                if let Err(e) = core
+                    .lock()
+                    .handle_delivery_report(&receipt, delivery_info.as_ref())
+                {
+                    tracing::warn!("delivery report failed: {e:?}");
                 }
             }
             recv(wakeup_events) -> msg => {

@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crossbeam_channel::Receiver;
-use libchat::{AddressedEnvelope, DeliveryMsgId, DeliveryService};
+use libchat::{AddressedEnvelope, DeliveryMsgId, DeliveryService, PublishedId};
 use logos_delivery::DeliveryConfig;
 use logos_delivery::blocking::BlockingDeliveryNode;
 use logos_generic_chat::InboundPayload;
@@ -156,15 +156,12 @@ impl EmbeddedLogosDelivery {
 impl DeliveryService for EmbeddedLogosDelivery {
     type Error = DeliveryError;
 
-    fn publish(
-        &mut self,
-        envelope: AddressedEnvelope,
-    ) -> Result<Option<DeliveryMsgId>, DeliveryError> {
+    fn publish(&mut self, envelope: AddressedEnvelope) -> Result<PublishedId, DeliveryError> {
         let topic = content_topic_for(&envelope.delivery_address);
         debug!(topic = &topic, "Publish");
         // The node reports the message hash only in a later event.
         self.shared.inner.publish(&topic, &envelope.data)?;
-        Ok(None)
+        Ok(PublishedId::Unknown)
     }
 
     fn subscribe(&mut self, delivery_address: &str) -> Result<(), DeliveryError> {

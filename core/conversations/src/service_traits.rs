@@ -9,7 +9,7 @@ use std::{
 use crypto::Ed25519Signature;
 
 use crate::identity::{ParticipantId, SignerKey, SignerRef};
-use crate::types::DeliveryMsgId;
+use crate::types::{DeliveryMsgId, PublishedId};
 use crate::{ConversationId, types::AddressedEnvelope};
 
 /// What chat needs from whatever holds this installation's own identity.
@@ -29,11 +29,9 @@ pub trait IdentityProvider {
 /// for providing the inbound payloads to Core::handle_payload.
 pub trait DeliveryService: Debug {
     type Error: Display + Debug;
-    /// Returns the payload's id, or `None` if the service learns it later or never.
-    fn publish(
-        &mut self,
-        envelope: AddressedEnvelope,
-    ) -> Result<Option<DeliveryMsgId>, Self::Error>;
+    /// Returns the payload's id, or the receipt the service reports it under once it learns it, if
+    /// it ever does.
+    fn publish(&mut self, envelope: AddressedEnvelope) -> Result<PublishedId, Self::Error>;
     fn subscribe(&mut self, delivery_address: &str) -> Result<(), Self::Error>;
     /// Asks for the payloads on `delivery_address` that `delivery_msg_ids` name, and returns before
     /// they arrive: a store answers over the network, and Core calls this while handling another

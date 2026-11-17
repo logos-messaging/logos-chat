@@ -13,7 +13,7 @@ use logos_account::AccountAddr;
 use logos_generic_chat::{
     AddressedEnvelope, ChatClient, ChatClientBuilder, ConversationClass, DeliveryMsgId,
     DeliveryService, Event, InProcessDelivery, InboundPayload, MessageBus, PendingInstallation,
-    Transport,
+    PublishedId, Transport,
 };
 
 /// A client for a fresh account: mints the account and an installation, then builds
@@ -416,7 +416,7 @@ impl FailingDelivery {
 impl DeliveryService for FailingDelivery {
     type Error = &'static str;
 
-    fn publish(&mut self, _: AddressedEnvelope) -> Result<Option<DeliveryMsgId>, Self::Error> {
+    fn publish(&mut self, _: AddressedEnvelope) -> Result<PublishedId, Self::Error> {
         Err("simulated transport failure")
     }
 

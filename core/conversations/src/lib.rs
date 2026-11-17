@@ -13,6 +13,7 @@ mod service_traits;
 mod storage;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
+mod tracked_delivery;
 mod types;
 mod utils;
 
@@ -43,5 +44,7 @@ pub use storage::{
     ConversationKind, ConversationMeta, ConversationStore, IdentityStore, KvPair, KvStore, KvTx,
     Namespace, Scope, StorageError, StoredInstallation,
 };
-pub use types::{AddressedEnvelope, ConvoMetadata, DeliveryInfo, DeliveryMsgId};
+pub use types::{
+    AddressedEnvelope, ConvoMetadata, DeliveryInfo, DeliveryMsgId, PublishReceipt, PublishedId,
+};
 pub use utils::{hex_trunc, trunc};

@@ -352,7 +352,7 @@ fn jitter_below(max: u64) -> u64 {
 mod tests {
     use super::*;
     use crypto::Ed25519SigningKey;
-    use libchat::{DeliveryMsgId, SignerKey, SignerRef};
+    use libchat::{DeliveryMsgId, PublishedId, SignerKey, SignerRef};
 
     #[derive(Debug, Default)]
     struct CapturingDelivery {
@@ -361,12 +361,9 @@ mod tests {
 
     impl DeliveryService for CapturingDelivery {
         type Error = std::convert::Infallible;
-        fn publish(
-            &mut self,
-            envelope: AddressedEnvelope,
-        ) -> Result<Option<DeliveryMsgId>, Self::Error> {
+        fn publish(&mut self, envelope: AddressedEnvelope) -> Result<PublishedId, Self::Error> {
             self.published.push(envelope);
-            Ok(None)
+            Ok(PublishedId::Unknown)
         }
         fn subscribe(&mut self, _delivery_address: &str) -> Result<(), Self::Error> {
             Ok(())

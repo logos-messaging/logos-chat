@@ -5,7 +5,9 @@ use std::{
     rc::Rc,
 };
 
-use libchat::{AddressedEnvelope, DeliveryInfo, DeliveryMsgId, DeliveryService};
+use libchat::{
+    AddressedEnvelope, DeliveryInfo, DeliveryMsgId, DeliveryService, PublishReceipt, PublishedId,
+};
 use tracing::info;
 
 #[derive(Debug)]
@@ -32,6 +34,8 @@ pub struct LocalBroadcaster {
     subscriptions: HashSet<String>,
     outbound_msgs: Vec<u64>,
     fetched: VecDeque<(Vec<u8>, DeliveryInfo)>,
+    /// Set by [`Self::report_ids_late`]: the ids `publish` no longer returns.
+    reports: Option<VecDeque<(PublishReceipt, DeliveryInfo)>>,
 }
 
 /// This is Lightweight DeliveryService which can be used for tests
@@ -51,6 +55,7 @@ impl LocalBroadcaster {
             subscriptions: HashSet::new(),
             outbound_msgs: Vec::new(),
             fetched: VecDeque::new(),
+            reports: None,
         }
     }
 
@@ -66,6 +71,7 @@ impl LocalBroadcaster {
             subscriptions: HashSet::new(),
             outbound_msgs: Vec::new(),
             fetched: VecDeque::new(),
+            reports: None,
         }
     }
 
@@ -95,6 +101,17 @@ impl LocalBroadcaster {
                 }
             }
         }
+    }
+
+    /// From the call on, `publish` returns a receipt instead of the id, as a delivery node that
+    /// learns it from a later event does; [`Self::poll_report`] hands out the id under it.
+    pub fn report_ids_late(&mut self) {
+        self.reports.get_or_insert_default();
+    }
+
+    /// The next id learned after `publish` returned, with the receipt `publish` returned for it.
+    pub fn poll_report(&mut self) -> Option<(PublishReceipt, DeliveryInfo)> {
+        self.reports.as_mut()?.pop_front()
     }
 
     fn msg_id(msg: &AddressedEnvelope) -> u64 {
@@ -134,17 +151,19 @@ impl Default for LocalBroadcaster {
 impl DeliveryService for LocalBroadcaster {
     type Error = String;
 
-    fn publish(
-        &mut self,
-        envelope: AddressedEnvelope,
-    ) -> Result<Option<DeliveryMsgId>, Self::Error> {
+    fn publish(&mut self, envelope: AddressedEnvelope) -> Result<PublishedId, Self::Error> {
         info!(?envelope.delivery_address, len=envelope.data.len(), "DS:Publish");
         self.outbound_msgs.push(Self::msg_id(&envelope));
         let mut shared = self.shared.borrow_mut();
         let cursor = shared.tail();
         shared.messages.push_back(envelope);
 
-        Ok(Some(Self::id_for(cursor)))
+        let Some(reports) = &mut self.reports else {
+            return Ok(PublishedId::Known(Self::id_for(cursor)));
+        };
+        let receipt = PublishReceipt::from(format!("request-{cursor}").into_bytes());
+        reports.push_back((receipt.clone(), Self::info_for(cursor)));
+        Ok(PublishedId::Pending(receipt))
     }
 
     fn subscribe(&mut self, delivery_address: &str) -> Result<(), Self::Error> {
@@ -197,14 +216,12 @@ mod tests {
         let mut saro = LocalBroadcaster::new();
         let mut raya = saro.new_consumer();
         raya.subscribe("group").unwrap();
-        let m1 = saro
-            .publish(envelope("group", b"m1"))
-            .unwrap()
-            .expect("delivery message id");
-        let x1 = saro
-            .publish(envelope("elsewhere", b"x1"))
-            .unwrap()
-            .expect("delivery message id");
+        let PublishedId::Known(m1) = saro.publish(envelope("group", b"m1")).unwrap() else {
+            panic!("no delivery message id");
+        };
+        let PublishedId::Known(x1) = saro.publish(envelope("elsewhere", b"x1")).unwrap() else {
+            panic!("no delivery message id");
+        };
         // Raya was there: m1 reaches it live, with the id its publish returned.
         assert_eq!(raya.poll().unwrap().1.delivery_msg_id, m1);
 
