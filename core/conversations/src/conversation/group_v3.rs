@@ -358,7 +358,7 @@ impl GroupV3Convo {
         let fingerprint = self
             .mls_group
             .pending_commit()
-            .and_then(EpochFingerprint::of_commit)
+            .and_then(EpochFingerprint::from_staged_commit)
             .ok_or_else(|| ChatError::generic("no pending commit"))?;
 
         // openmls keeps the commit pending until it is finalized.
@@ -396,7 +396,7 @@ impl GroupV3Convo {
                 let pending = self
                     .mls_group
                     .pending_commit()
-                    .and_then(EpochFingerprint::of_commit);
+                    .and_then(EpochFingerprint::from_staged_commit);
                 if pending.as_ref() != Some(fingerprint) {
                     return Err(ChatError::generic("pending commit no longer exists"));
                 }

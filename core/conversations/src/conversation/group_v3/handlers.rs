@@ -198,8 +198,8 @@ impl GroupV3Convo {
     ) -> Result<ConvoOutcome, ChatError> {
         let curr_epoch = self.mls_group.epoch().as_u64();
         let commit_epoch = commit.epoch();
-        let fingerprint =
-            EpochFingerprint::of_commit(&commit).unwrap_or_else(EpochFingerprint::removing_us);
+        let fingerprint = EpochFingerprint::from_staged_commit(&commit)
+            .unwrap_or_else(EpochFingerprint::removing_us);
 
         // Save the commit and apply only after its been finalized.
         let deferred = DeferredCommit::Staged(commit);

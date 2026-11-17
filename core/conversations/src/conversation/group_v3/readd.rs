@@ -172,7 +172,7 @@ impl GroupV3Convo {
         let current = self.mls_group.epoch().as_u64();
         let epoch = current.min(to.epoch);
         let epoch_id = if epoch == current {
-            EpochFingerprint::from(&self.mls_group).into_string()
+            EpochFingerprint::from(&self.mls_group).to_string()
         } else {
             let Some(id) = self.beacons.our_epoch_id(epoch) else {
                 debug!(convo = %self.convo_id, epoch, "no re-add: our state there is forgotten");
