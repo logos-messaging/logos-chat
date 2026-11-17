@@ -10,7 +10,8 @@ use prost::{Message, Oneof};
 use super::external::{
     ED25519_SIGNATURE_LEN, EPOCH_ID_LEN, EpochBeacon, ExternalError, is_epoch_id, put_bytes,
 };
-use crate::inbox_v2::{CIPHER_SUITE, HPKE_PUBLIC_KEY_LEN, check_hpke_public_key};
+use crate::conversation::mls_utils::{HPKE_PUBLIC_KEY_LEN, check_hpke_public_key};
+use crate::inbox_v2::CIPHER_SUITE;
 
 const HPKE_INFO_LABEL: &[u8] = b"logos-chat/private-external/v1";
 const READD_SIG_LABEL: &[u8] = b"logos-chat/readd-signature/v1";

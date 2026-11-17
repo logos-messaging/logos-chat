@@ -6,12 +6,14 @@ use openmls::{
     versions::ProtocolVersion,
 };
 use openmls_traits::OpenMlsProvider;
+use openmls_traits::types::HpkeKemType;
 use std::collections::HashSet;
 use std::fmt;
 
 use crate::{
     ChatError, ExternalServices, RegistrationService, Signer, SignerKey,
     errors::KeyPackageError,
+    inbox_v2::CIPHER_SUITE,
     service_context::ServiceContext,
     utils::{blake2b_bytes, hash_size},
 };
@@ -31,6 +33,36 @@ pub fn member_diff(
 ) -> impl Iterator<Item = &SignerKey> {
     let existing: HashSet<SignerKey> = existing.map(|s| s.signer).collect();
     new.iter().filter(move |s| !existing.contains(*s))
+}
+
+/// HPKE public key length for [`CIPHER_SUITE`]: a 1184-byte ML-KEM-768 key
+/// followed by a 32-byte X25519 key.
+pub(super) const HPKE_PUBLIC_KEY_LEN: usize = 1184 + 32;
+
+// The length above is XWing-specific; fail the build if the ciphersuite moves.
+const _: () = assert!(matches!(
+    CIPHER_SUITE.hpke_kem_algorithm(),
+    HpkeKemType::XWingKemDraft6
+));
+
+/// Reject an HPKE public key that is not the length [`CIPHER_SUITE`] requires.
+///
+/// RUSTSEC-2026-0331: `KeyPackageIn::validate` checks a key package's signatures
+/// but never its key lengths, and libcrux-kem 0.0.7 indexes `[0..1184]` decoding
+/// an XWing key, so a shorter one panics instead of erroring.
+///
+/// REMOVE, once the build resolves libcrux-kem >= 0.0.10:
+/// it returns `InvalidPublicKey` rather than panicking, so openmls can reject a
+/// malformed key on its own. That is the same gate as the deny.toml ignore, and
+/// `grep RUSTSEC-2026-0331` finds everything to delete.
+pub(super) fn check_hpke_public_key(key: &[u8]) -> Result<(), ChatError> {
+    if key.len() != HPKE_PUBLIC_KEY_LEN {
+        return Err(ChatError::BadBundleValue(format!(
+            "HPKE public key is {} bytes, expected {HPKE_PUBLIC_KEY_LEN}",
+            key.len()
+        )));
+    }
+    Ok(())
 }
 
 /// Fetch each signer's key package, deduped, reading the two ids off the leaf.
@@ -72,6 +104,11 @@ fn validate_keypackage<S: ExternalServices>(
     // Make sure that the protocol version is valid
     let key_package =
         unchecked.validate(service_ctx.mls_provider.crypto(), ProtocolVersion::Mls10)?;
+
+    // RUSTSEC-2026-0331: a short init_key panics libcrux-kem once openmls
+    // encrypts the Welcome to it. Delete when libcrux-kem >= 0.0.10.
+    let init_key = key_package.hpke_init_key().as_slice();
+    check_hpke_public_key(init_key).map_err(|_| KeyPackageError::InitKeyLength(init_key.len()))?;
 
     // Validate that the Keypackage matches expected Signer
     let reported_signer = Signer::from_leaf_node(key_package.leaf_node())?;
@@ -149,5 +186,20 @@ impl fmt::Display for EpochFingerprint {
 impl From<&MlsGroup> for EpochFingerprint {
     fn from(group: &MlsGroup) -> Self {
         Self::calculate_from_authenticator(group.epoch_authenticator())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HPKE_PUBLIC_KEY_LEN, check_hpke_public_key};
+
+    #[test]
+    fn hpke_public_key_length_is_enforced() {
+        assert!(check_hpke_public_key(&vec![0; HPKE_PUBLIC_KEY_LEN]).is_ok());
+        // A key short enough to panic libcrux-kem's decode (RUSTSEC-2026-0331).
+        assert!(check_hpke_public_key(&[]).is_err());
+        assert!(check_hpke_public_key(&vec![0; 1183]).is_err());
+        // Long enough to decode, still the wrong size.
+        assert!(check_hpke_public_key(&vec![0; HPKE_PUBLIC_KEY_LEN + 1]).is_err());
     }
 }
