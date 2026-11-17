@@ -2,16 +2,18 @@ use openmls::{
     group::{MlsGroup, StagedCommit},
     key_packages::{KeyPackage, KeyPackageIn},
     prelude::tls_codec::Deserialize,
+    schedule::EpochAuthenticator,
     versions::ProtocolVersion,
 };
 use openmls_traits::OpenMlsProvider;
 use std::collections::HashSet;
+use std::fmt;
 
 use crate::{
     ChatError, ExternalServices, RegistrationService, Signer, SignerKey,
     errors::KeyPackageError,
     service_context::ServiceContext,
-    utils::{blake2b_hex, hash_size},
+    utils::{blake2b_bytes, hash_size},
 };
 
 pub fn unique<'a, T, I>(iter: I) -> impl Iterator<Item = &'a T>
@@ -94,52 +96,58 @@ fn validate_keypackage<S: ExternalServices>(
 /// Names a group's state at one epoch: a short hash of the epoch authenticator.
 /// Two branches of a fork at the same epoch get different values.
 #[derive(Debug, PartialEq, Clone, Eq, Hash, PartialOrd, Ord)]
-pub struct EpochFingerprint {
-    val: String,
-}
+pub struct EpochFingerprint([u8; 7]);
 
 const EPOCH_FINGERPRINT_LABEL: &[u8] = b"logos-chat|epoch-fingerprint|v1\0";
 
 impl EpochFingerprint {
-    pub fn as_str(&self) -> &str {
-        &self.val
+    pub fn from_group(group: &MlsGroup) -> Self {
+        Self::calculate_from_authenticator(group.epoch_authenticator())
     }
 
-    pub fn into_string(self) -> String {
-        self.val
-    }
-
-    fn of(authenticator: &[u8]) -> Self {
-        Self {
-            val: blake2b_hex::<hash_size::EpochFingerprint>(&[
-                EPOCH_FINGERPRINT_LABEL,
-                authenticator,
-            ]),
-        }
-    }
-}
-
-impl EpochFingerprint {
-    /// `None` for a commit that removes us: we hold no secrets for the epoch
-    /// it starts.
-    pub fn of_commit(commit: &StagedCommit) -> Option<Self> {
+    pub fn from_staged_commit(commit: &StagedCommit) -> Option<Self> {
         commit
             .epoch_authenticator()
-            .map(|authenticator| Self::of(authenticator.as_slice()))
+            .map(Self::calculate_from_authenticator)
+    }
+
+    /// Stands in for a commit that removes us, whose epoch we can't name. Sorts
+    /// after every real fingerprint, so any other commit for the epoch is
+    /// finalized first.
+    pub fn removing_us() -> Self {
+        Self([0xff; 7])
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+
+    fn calculate_from_authenticator(authenticator: &EpochAuthenticator) -> Self {
+        let hash = blake2b_bytes::<hash_size::EpochFingerprint>(&[
+            EPOCH_FINGERPRINT_LABEL,
+            authenticator.as_slice(),
+        ]);
+
+        Self(hash.into())
     }
 }
 
-impl EpochFingerprint {
-    /// Stands in for a commit that removes us, whose epoch we can't name. Sorts
-    /// after every real fingerprint, which are hex, so any other commit for the
-    /// epoch is finalized first.
-    pub fn removing_us() -> Self {
-        Self { val: "~".into() }
+impl TryFrom<&[u8]> for EpochFingerprint {
+    type Error = std::array::TryFromSliceError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        <[u8; 7]>::try_from(bytes).map(Self)
+    }
+}
+
+impl fmt::Display for EpochFingerprint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&hex::encode(self.0))
     }
 }
 
 impl From<&MlsGroup> for EpochFingerprint {
     fn from(group: &MlsGroup) -> Self {
-        Self::of(group.epoch_authenticator().as_slice())
+        Self::calculate_from_authenticator(group.epoch_authenticator())
     }
 }

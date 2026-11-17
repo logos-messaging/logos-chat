@@ -33,6 +33,7 @@ use prost::Message;
 use sds::{Channel, Config, SDSRecord, StartPoint};
 use tracing::{debug, info, instrument, warn};
 
+use crate::conversation::group_v3::payloads::GroupV3Header;
 use crate::conversation::mls_groups::{HasMlsConvo, create_group, group_join_config};
 use crate::conversation::mls_utils::EpochFingerprint;
 use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified};
@@ -47,7 +48,7 @@ use crate::{
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
 use self::beacons::Beacons;
-use self::payloads::{EncryptedSdsMessage, GroupV3External, GroupV3Packet};
+use self::payloads::{EncryptedSdsMessage, EpochData, GroupV3External, GroupV3Packet};
 
 // Type Aliases
 type Frame = payloads::GroupV3Frame;
@@ -104,6 +105,7 @@ pub struct GroupV3Convo {
     readds: VecDeque<(Vec<u8>, u64)>,
     /// Our last re-add request's attempt; it picks the answerer.
     readd_attempt: u32,
+    epoch_data: EpochData,
 }
 
 // `sds::Channel` implements no `Debug`.
@@ -173,6 +175,7 @@ impl GroupV3Convo {
         let convo_id = hex::encode(mls_group.group_id().as_slice());
         let channel = create_sds_channel(cx, &convo_id, start)?;
         Ok(Self {
+            epoch_data: EpochData::starting_at(mls_group.epoch().as_u64()),
             convo_id,
             mls_group,
             channel,
@@ -293,7 +296,9 @@ impl GroupV3Convo {
             &cx.mls_identity,
             frame.encode().as_slice(),
         )?;
-        let message = GroupV3Packet::from_mls_message(mls_message)?.into_outgoing_message();
+
+        let header = GroupV3Header::with_epoch_data(&self.epoch_data);
+        let message = GroupV3Packet::from_mls_message(header, mls_message)?.into_outgoing_message();
         let message_id = message.message_id.clone();
 
         let record = self.channel.send(message, now_ms(cx))?;
@@ -309,8 +314,9 @@ impl GroupV3Convo {
         cx: &mut ServiceContext<S>,
         commit_msg: MlsMessageOut,
     ) -> Result<StartPoint, ChatError> {
+        let header = GroupV3Header::with_epoch_data(&self.epoch_data);
         // Send Commit
-        let sent = GroupV3Packet::from_mls_message(commit_msg).and_then(|envelope| {
+        let sent = GroupV3Packet::from_mls_message(header, commit_msg).and_then(|envelope| {
             Ok(self
                 .channel
                 .send(envelope.into_outgoing_message(), now_ms(cx))?)
@@ -352,7 +358,7 @@ impl GroupV3Convo {
         let fingerprint = self
             .mls_group
             .pending_commit()
-            .and_then(EpochFingerprint::of_commit)
+            .and_then(EpochFingerprint::from_staged_commit)
             .ok_or_else(|| ChatError::generic("no pending commit"))?;
 
         // openmls keeps the commit pending until it is finalized.
@@ -390,7 +396,7 @@ impl GroupV3Convo {
                 let pending = self
                     .mls_group
                     .pending_commit()
-                    .and_then(EpochFingerprint::of_commit);
+                    .and_then(EpochFingerprint::from_staged_commit);
                 if pending.as_ref() != Some(fingerprint) {
                     return Err(ChatError::generic("pending commit no longer exists"));
                 }
@@ -416,13 +422,20 @@ impl GroupV3Convo {
             }
         };
 
+        // Notify Epoch history that we've updated the group state.
+        // Record the fingerprint of the final state, to catch any state bugs
+        self.epoch_data.advance_to(
+            self.mls_group.epoch().as_u64(),
+            EpochFingerprint::from_group(self.mls_group()),
+        );
+
         self.drop_expired_deferred_commits();
         self.enter_epoch(cx);
         info!(
             convo = %self.convo_id,
             epoch = starting_epoch,
             new_epoch = self.mls_group.epoch().as_u64(),
-            epochfingerprint = fingerprint.as_str(),
+            epochfingerprint = %fingerprint,
             "commit merged"
         );
 

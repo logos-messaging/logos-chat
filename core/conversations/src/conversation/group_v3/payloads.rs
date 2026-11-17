@@ -39,8 +39,11 @@ use crate::{
 
 use super::sealed::SealedMessage;
 
+mod epoch_data;
 mod sds_message;
 
+pub use epoch_data::EpochData;
+use epoch_data::EpochDataProto;
 pub use sds_message::EncryptedSdsMessage;
 
 fn message_id_for(content: &[u8]) -> MessageId {
@@ -72,9 +75,20 @@ impl GroupV3Frame {
     }
 }
 
-/// Empty until it carries header items, such as the sender's epoch.
+/// Outgoing headers leave `epoch_data` unset for now.
 #[derive(Clone, PartialEq, Message)]
-pub struct GroupV3Header {}
+pub struct GroupV3Header {
+    #[prost(message, optional, tag = "1")]
+    epoch_data: Option<EpochDataProto>,
+}
+
+impl GroupV3Header {
+    pub fn with_epoch_data(epoch_data: &EpochData) -> Self {
+        Self {
+            epoch_data: Some(epoch_data.into()),
+        }
+    }
+}
 
 #[derive(Clone, PartialEq, Message)]
 pub struct GroupV3Packet {
@@ -94,9 +108,12 @@ pub enum EncodedFrame {
 }
 
 impl GroupV3Packet {
-    pub fn from_mls_message(mls_message: MlsMessageOut) -> Result<Self, SendError> {
+    pub fn from_mls_message(
+        header: GroupV3Header,
+        mls_message: MlsMessageOut,
+    ) -> Result<Self, SendError> {
         Ok(Self {
-            encrypted_header: GroupV3Header::default().encode_to_vec().into(),
+            encrypted_header: header.encode_to_vec().into(),
             encoded_frame: Some(EncodedFrame::MlsMessage(mls_message.to_bytes()?.into())),
         })
     }

@@ -1,3 +1,4 @@
+use blake2::digest::generic_array::GenericArray;
 use blake2::{Blake2b, Digest};
 
 /// Track hash sizes in use across the crate.
@@ -44,15 +45,20 @@ pub mod hash_size {
 /// This establishes an easy to use wrapper for hashes in this crate.
 /// The output is formatted string of hex characters
 pub fn blake2b_hex<LEN: hash_size::HashLen>(components: &[impl AsRef<[u8]>]) -> String {
-    //A
+    hex::encode(blake2b_bytes::<LEN>(components))
+}
+
+/// Raw-bytes form of [`blake2b_hex`].
+pub fn blake2b_bytes<LEN: hash_size::HashLen>(
+    components: &[impl AsRef<[u8]>],
+) -> GenericArray<u8, LEN::Size> {
     let mut hash = Blake2b::<LEN::Size>::new();
 
     for c in components {
         hash.update(c);
     }
 
-    let output = hash.finalize();
-    hex::encode(output)
+    hash.finalize()
 }
 
 /// Shorten byte slices for testing and logging
