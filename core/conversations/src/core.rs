@@ -10,8 +10,8 @@ use crate::storage::{ConversationKind, ConversationMeta, ConversationStore};
 use crate::tracked_delivery::{TrackedDelivery, TrackedMessage};
 use crate::types::ConvoMetadata;
 use crate::{
-    Clock, DeliveryInfo, DeliveryService, GroupV2Config, IdentityProvider, PublishReceipt,
-    RegistrationService, WakeupService,
+    Clock, DeliveryInfo, DeliveryService, GroupV2Config, IdentityProvider, Observation,
+    PublishReceipt, RegistrationService, WakeupService,
 };
 use crate::{
     conversation::{Convo, ConvoBase, GroupConvo, mls_trace::record},
@@ -121,6 +121,7 @@ where
                 wakeup_service,
                 clock: Clock::default(),
                 demls_config: GroupV2Config::default(),
+                readd_pending: HashMap::new(),
             },
             pq_inbox,
             cached_convos: HashMap::new(),
@@ -265,6 +266,51 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
             ConvoTypeOwned::Direct(convo) => Err(ChatError::UnsupportedFunction(
                 convo.id().into(),
                 "Add Member".into(),
+            )),
+        }
+    }
+
+    /// Ask a forked group to re-add us. Returns how many requests went out, 0
+    /// if no other branch is known. Repeating it asks the same member.
+    pub fn group_request_readd(&mut self, convo_id: &str) -> Result<usize, ChatError> {
+        self.request_readd(convo_id, false)
+    }
+
+    /// Ask the next member instead. Only once a repair would have landed: two
+    /// members asked at once both repair and fork the group again.
+    pub fn group_retry_readd(&mut self, convo_id: &str) -> Result<usize, ChatError> {
+        self.request_readd(convo_id, true)
+    }
+
+    /// Have this client remove and re-add `signer` unasked, as an attacker in
+    /// the group could.
+    #[cfg(feature = "test-support")]
+    pub fn group_force_readd(
+        &mut self,
+        convo_id: &str,
+        signer: SignerRef,
+    ) -> Result<(), ChatError> {
+        match self.cached_convos.get_mut(convo_id) {
+            Some(ConvoTypeOwned::Group(group_convo)) => {
+                group_convo.force_readd(&mut self.services, signer)
+            }
+            _ => Err(ChatError::NoConvo(convo_id.to_string())),
+        }
+    }
+
+    fn request_readd(&mut self, convo_id: &str, next_answerer: bool) -> Result<usize, ChatError> {
+        let convo = self
+            .cached_convos
+            .get_mut(convo_id)
+            .ok_or_else(|| ChatError::NoConvo(convo_id.to_string()))?;
+
+        match convo {
+            ConvoTypeOwned::Group(group_convo) => {
+                group_convo.request_readd(&mut self.services, next_answerer)
+            }
+            ConvoTypeOwned::Direct(convo) => Err(ChatError::UnsupportedFunction(
+                convo.id().into(),
+                "Re-add".into(),
             )),
         }
     }
@@ -461,13 +507,23 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
 
     // Dispatch encrypted payload to the post-quantum inbox.
     fn dispatch_to_inbox2(&mut self, payload: &[u8]) -> Result<PayloadOutcome, ChatError> {
-        if let Some((convo, class)) = self.pq_inbox.handle_frame(&mut self.services, payload)? {
+        if let Some((convo, class, replaces)) =
+            self.pq_inbox.handle_frame(&mut self.services, payload)?
+        {
             let convo_id = convo.id().to_string();
             // Cache convos created by InboxV2
             let convo = match class {
                 ConversationClass::Dm => ConvoTypeOwned::Direct(convo),
                 ConversationClass::Group => ConvoTypeOwned::Group(convo),
             };
+            // A re-add we asked for: the same conversation, rejoined.
+            if replaces {
+                self.cached_convos.insert(convo_id.clone(), convo);
+                return Ok(PayloadOutcome::Convo(ConvoOutcome {
+                    convo_id,
+                    observations: vec![Observation::SignersChanged],
+                }));
+            }
             self.register_convo(convo)?;
 
             Ok(PayloadOutcome::Inbox(InboxOutcome {

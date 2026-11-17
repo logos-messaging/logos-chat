@@ -13,19 +13,25 @@ mod handlers;
 #[cfg(any(test, feature = "test-support"))]
 pub mod inspect;
 mod payloads;
+mod readd;
+mod sealed;
 
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::fmt;
 use std::time::Duration;
 
+use openmls::ciphersuite::hash_ref::ProposalRef;
 use openmls::framing::MlsMessageOut;
 use openmls::group::{MlsGroup, StagedCommit, StagedWelcome};
 use openmls::key_packages::KeyPackage;
 use openmls::messages::Welcome;
+use openmls::prelude::GroupId;
 use openmls_traits::OpenMlsProvider;
+use openmls_traits::storage::StorageProvider as _;
 use prost::Message;
 use sds::{Channel, Config, SDSRecord, StartPoint};
-use tracing::{info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 use crate::conversation::mls_groups::{HasMlsConvo, create_group, group_join_config};
 use crate::conversation::mls_utils::EpochFingerprint;
@@ -93,6 +99,11 @@ pub struct GroupV3Convo {
     deferred_commits: HashMap<EpochFingerprint, DeferredCommit>,
     finality: finality::Timeout,
     beacons: Beacons,
+    /// Signers re-added in a commit we merged, with the epoch it started. Kept
+    /// by every member, so a later request can't remove the fresh leaf.
+    readds: VecDeque<(Vec<u8>, u64)>,
+    /// Our last re-add request's attempt; it picks the answerer.
+    readd_attempt: u32,
 }
 
 // `sds::Channel` implements no `Debug`.
@@ -114,7 +125,6 @@ impl GroupV3Convo {
     ) -> Result<Self, ChatError> {
         // Create MlsGroup
         let mls_group = create_group(cx, name, desc)?;
-
         let mut convo = Self::from_group(cx, mls_group, None)?;
 
         convo.init(cx)?;
@@ -122,25 +132,37 @@ impl GroupV3Convo {
         Ok(convo)
     }
 
-    /// Joins from a Welcome, starting our SDS channel at `start`, the commit that added us.
+    /// Joins from a Welcome, starting our SDS channel at `start`, the commit that added us. Also
+    /// returns whether it replaced a group we held, which only a re-add we asked for may do.
     pub fn new_from_welcome<S: ExternalServices>(
         cx: &mut ServiceContext<S>,
         welcome: Welcome,
         start: StartPoint,
-    ) -> Result<Self, ChatError> {
-        let mls_group =
+    ) -> Result<(Self, bool), ChatError> {
+        let staged =
             StagedWelcome::build_from_welcome(&cx.mls_provider, &group_join_config(), welcome)
                 .map_err(ChatError::generic)?
+                .replace_old_group()
                 .build()
-                .map_err(ChatError::generic)?
-                .into_group(&cx.mls_provider)
                 .map_err(ChatError::generic)?;
+        let held = held_group_to_replace(cx, &staged)?;
+        let mls_group = staged
+            .into_group(&cx.mls_provider)
+            .map_err(ChatError::generic)?;
 
         let mut convo = Self::from_group(cx, mls_group, Some(start))?;
 
-        convo.init(cx)?;
+        // A replaced group's subscription and tick carry over.
+        if held.is_none() {
+            convo.init(cx)?;
+        }
+        if let Some(held) = &held {
+            forget_held_group(cx, held, &convo.mls_group)?;
+            cx.readd_pending.remove(&convo.convo_id);
+            info!(convo = %convo.convo_id, "a Welcome replaced a group we held");
+        }
         convo.enter_epoch(cx);
-        Ok(convo)
+        Ok((convo, held.is_some()))
     }
 
     fn from_group<S: ExternalServices>(
@@ -157,8 +179,87 @@ impl GroupV3Convo {
             deferred_commits: HashMap::default(),
             finality: finality::Timeout::new(COMMIT_FINALIZE_TIMEOUT),
             beacons: Beacons::default(),
+            readds: VecDeque::new(),
+            readd_attempt: 0,
         })
     }
+}
+
+/// How long an asker waits for the Welcome that answers it: the repair is
+/// finalized a commit timeout after it is sent, with room for a retry. Fixed,
+/// so fast test commits don't shrink it under an SDS tick.
+const READD_WELCOME_WAIT: Duration = Duration::from_secs(360);
+
+/// A re-add sends a Welcome for a group we hold. Accept it only while we wait
+/// for one, only from a member of that group, and only past the state we asked.
+/// Not proof of descent: a member we still list could build a lookalike group.
+/// Read-only, so a Welcome that fails to install leaves the held group and the
+/// pending re-add as they were.
+fn held_group_to_replace<S: ExternalServices>(
+    cx: &ServiceContext<S>,
+    staged: &StagedWelcome,
+) -> Result<Option<MlsGroup>, ChatError> {
+    let group_id = staged.group_context().group_id();
+    let Some(held) =
+        MlsGroup::load(cx.mls_provider.storage(), group_id).map_err(ChatError::generic)?
+    else {
+        return Ok(None);
+    };
+    let Some(target) = cx.readd_pending.get(&hex::encode(group_id.as_slice())) else {
+        return Err(ChatError::generic(
+            "a Welcome for a group we hold, and we did not ask to be re-added",
+        ));
+    };
+    if cx.clock.now() > target.until {
+        return Err(ChatError::generic(
+            "a Welcome for a re-add we stopped waiting for",
+        ));
+    }
+    if staged.group_context().epoch().as_u64() <= target.epoch {
+        return Err(ChatError::generic(
+            "a Welcome no later than the state we asked",
+        ));
+    }
+    let sender = staged.welcome_sender().map_err(ChatError::generic)?;
+    if !held
+        .members()
+        .any(|m| m.signature_key == sender.signature_key().as_slice())
+    {
+        return Err(ChatError::generic(
+            "a Welcome for a group we hold, from outside it",
+        ));
+    }
+    Ok(Some(held))
+}
+
+/// Drop what the new group, stored under the same id, did not overwrite.
+fn forget_held_group<S: ExternalServices>(
+    cx: &ServiceContext<S>,
+    held: &MlsGroup,
+    new: &MlsGroup,
+) -> Result<(), ChatError> {
+    let storage = cx.mls_provider.storage();
+    let group_id = held.group_id();
+    let (epoch, leaf) = (held.epoch(), held.own_leaf_index());
+    if (epoch, leaf) != (new.epoch(), new.own_leaf_index()) {
+        storage
+            .delete_encryption_epoch_key_pairs(group_id, &epoch, leaf.u32())
+            .map_err(ChatError::generic)?;
+    }
+    // The leaf's own HPKE key pair is stored by public key, not by group.
+    if let (Some(old), Some(fresh)) = (held.own_leaf_node(), new.own_leaf_node())
+        && old.encryption_key() != fresh.encryption_key()
+    {
+        storage
+            .delete_encryption_key_pair(old.encryption_key())
+            .map_err(ChatError::generic)?;
+    }
+    storage
+        .delete_own_leaf_nodes(group_id)
+        .map_err(ChatError::generic)?;
+    storage
+        .clear_proposal_queue::<GroupId, ProposalRef>(group_id)
+        .map_err(ChatError::generic)
 }
 
 impl GroupV3Convo {
@@ -244,7 +345,7 @@ impl GroupV3Convo {
         let fingerprint = self
             .mls_group
             .pending_commit()
-            .map(EpochFingerprint::from)
+            .and_then(EpochFingerprint::of_commit)
             .ok_or_else(|| ChatError::generic("no pending commit"))?;
 
         // openmls keeps the commit pending until it is finalized.
@@ -279,20 +380,31 @@ impl GroupV3Convo {
         let payloads = match deferred {
             DeferredCommit::Pending(payloads) => {
                 // `merge_pending_commit` silently does nothing once the pending commit is gone.
-                let pending = self.mls_group.pending_commit().map(EpochFingerprint::from);
+                let pending = self
+                    .mls_group
+                    .pending_commit()
+                    .and_then(EpochFingerprint::of_commit);
                 if pending.as_ref() != Some(fingerprint) {
                     return Err(ChatError::generic("pending commit no longer exists"));
                 }
+                let readded = self
+                    .mls_group
+                    .pending_commit()
+                    .map(|commit| readd::readded_signers(&self.mls_group, commit))
+                    .unwrap_or_default();
                 self.mls_group.merge_pending_commit(&cx.mls_provider)?;
+                self.note_readds(readded);
                 payloads
             }
             DeferredCommit::Staged(commit) => {
                 if commit.epoch().as_u64() != starting_epoch + 1 {
                     return Err(ChatError::generic("commit is not for the next epoch"));
                 }
+                let readded = readd::readded_signers(&self.mls_group, &commit);
                 self.mls_group
                     .merge_staged_commit(&cx.mls_provider, commit)
                     .map_err(ChatError::generic)?;
+                self.note_readds(readded);
                 vec![]
             }
         };
@@ -412,11 +524,20 @@ impl GroupV3Convo {
         cx: &mut ServiceContext<S>,
         frame: &[u8],
     ) -> Result<ConvoOutcome, ChatError> {
-        let crypto = cx.mls_provider.crypto();
-        let keys = self.mls_group.members().map(|m| m.signature_key);
-        self.beacons
-            .receive_frame(crypto, &self.convo_id, keys, frame);
-        Ok(self.default_outcome())
+        match external::admit_frame(frame) {
+            Some(external::Inbound::Beacon(beacon)) => {
+                let crypto = cx.mls_provider.crypto();
+                let keys = self.mls_group.members().map(|m| m.signature_key);
+                self.beacons
+                    .receive_frame(crypto, &self.convo_id, keys, beacon, frame);
+                Ok(self.default_outcome())
+            }
+            Some(external::Inbound::Sealed(msg)) => self.receive_sealed(cx, msg),
+            None => {
+                debug!(convo = %self.convo_id, "refused a malformed external frame");
+                Ok(self.default_outcome())
+            }
+        }
     }
 }
 
@@ -471,6 +592,23 @@ where
             self.convo_id.clone(),
             "Remove Member".into(),
         ))
+    }
+
+    fn request_readd(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        next_answerer: bool,
+    ) -> Result<usize, ChatError> {
+        GroupV3Convo::request_readd(self, cx, next_answerer)
+    }
+
+    #[cfg(feature = "test-support")]
+    fn force_readd(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        signer: crate::SignerRef,
+    ) -> Result<(), ChatError> {
+        GroupV3Convo::force_readd(self, cx, signer)
     }
 }
 

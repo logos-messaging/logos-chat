@@ -119,10 +119,22 @@ impl EpochFingerprint {
     }
 }
 
-impl From<&StagedCommit> for EpochFingerprint {
-    fn from(value: &StagedCommit) -> Self {
-        let authenticator = value.epoch_authenticator().expect("is member"); // To receive a Staged commit the signer must be a member of the group.
-        Self::of(authenticator.as_slice())
+impl EpochFingerprint {
+    /// `None` for a commit that removes us: we hold no secrets for the epoch
+    /// it starts.
+    pub fn of_commit(commit: &StagedCommit) -> Option<Self> {
+        commit
+            .epoch_authenticator()
+            .map(|authenticator| Self::of(authenticator.as_slice()))
+    }
+}
+
+impl EpochFingerprint {
+    /// Stands in for a commit that removes us, whose epoch we can't name. Sorts
+    /// after every real fingerprint, which are hex, so any other commit for the
+    /// epoch is finalized first.
+    pub fn removing_us() -> Self {
+        Self { val: "~".into() }
     }
 }
 
