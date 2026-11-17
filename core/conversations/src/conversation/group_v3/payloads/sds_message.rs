@@ -6,6 +6,7 @@ use sds::SDSRecord;
 use crate::AddressedEnvelope;
 
 use super::super::delivery_address_from_id;
+use super::GroupV3Packet;
 
 #[derive(Clone, PartialEq, Message)]
 pub struct EncryptedSdsMessage {
@@ -23,6 +24,21 @@ impl EncryptedSdsMessage {
         }
     }
 
+    /// A packet sent outside SDS. Its header is empty, so it names no sender.
+    pub fn outside_sds(packet: &GroupV3Packet) -> Self {
+        Self {
+            encrypted_sds_header: Bytes::new(),
+            payload: packet.encode_to_vec().into(),
+        }
+    }
+
+    /// The packet, if this was sent with [`Self::outside_sds`]. An SDS header is never empty.
+    pub fn packet_outside_sds(&self) -> Option<Result<GroupV3Packet, prost::DecodeError>> {
+        self.encrypted_sds_header
+            .is_empty()
+            .then(|| GroupV3Packet::decode(self.payload.clone()))
+    }
+
     pub fn try_into_record(self) -> Result<SDSRecord, prost::DecodeError> {
         let content = self.payload;
         Ok(SDSRecord {
@@ -35,7 +51,7 @@ impl EncryptedSdsMessage {
         AddressedEnvelope::new(
             delivery_address_from_id(&convo_id),
             convo_id,
-            self.encode_to_vec().as_slice(),
+            self.encode_to_vec(),
         )
     }
 }

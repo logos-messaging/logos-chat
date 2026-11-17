@@ -15,17 +15,21 @@
 //!                 │   └── MlsMessage                Commit | ApplicationMessage
 //!                 │       └── GroupV3Frame          protobuf; ApplicationMessage only
 //!                 │           └── GroupV3FrameType  Content
-//!                 └── beacon                        bytes; reserved
+//!                 └── external                      bytes; outside SDS
+//!                     └── GroupV3External           protobuf; non-MLS frames: Beacon
 //! ```
 //!
 //! `GroupV3Packet` goes to SDS as bytes, so the SDS message id is a deterministic hash of them.
-//! Frames that need no ordering or resends still go in an `EncryptedSdsMessage`, sent ephemeral.
+//! An external frame skips SDS: its `EncryptedSdsMessage` has an empty header, so it names no
+//! sender, and a member on another branch can still read it.
 
 use openmls::framing::{MlsMessageOut, ProtocolMessage};
 use openmls::prelude::MlsMessageIn;
 use openmls::prelude::tls_codec::DeserializeBytes as _;
 use prost::{Message, Oneof, bytes::Bytes};
 use sds::OutgoingMessage;
+
+use super::external::EpochBeacon;
 
 use crate::{
     ChatError, MessageId,
@@ -74,15 +78,17 @@ pub struct GroupV3Header {}
 pub struct GroupV3Packet {
     #[prost(bytes = "bytes", tag = "1")]
     encrypted_header: Bytes,
-    #[prost(oneof = "EncodedFrame", tags = "2")]
+    #[prost(oneof = "EncodedFrame", tags = "2, 3")]
     encoded_frame: Option<EncodedFrame>,
 }
 
-/// Tag 3 is reserved for beacons.
 #[derive(Clone, PartialEq, Oneof)]
 pub enum EncodedFrame {
     #[prost(bytes = "bytes", tag = "2")]
     MlsMessage(Bytes),
+    /// Kept as bytes so the receiver can bound it before decoding.
+    #[prost(bytes = "bytes", tag = "3")]
+    External(Bytes),
 }
 
 impl GroupV3Packet {
@@ -91,6 +97,22 @@ impl GroupV3Packet {
             encrypted_header: GroupV3Header::default().encode_to_vec().into(),
             encoded_frame: Some(EncodedFrame::MlsMessage(mls_message.to_bytes()?.into())),
         })
+    }
+
+    pub fn external(frame: GroupV3External) -> Self {
+        Self {
+            encrypted_header: GroupV3Header::default().encode_to_vec().into(),
+            encoded_frame: Some(EncodedFrame::External(frame.encode_to_vec().into())),
+        }
+    }
+
+    /// The frame of a packet sent outside SDS. Its header must decode too.
+    pub fn into_external(self) -> Result<Bytes, ChatError> {
+        GroupV3Header::decode(self.encrypted_header.as_ref())?;
+        match self.encoded_frame {
+            Some(EncodedFrame::External(frame)) => Ok(frame),
+            _ => Err(ChatError::generic("an MLS message outside SDS")),
+        }
     }
 
     pub fn into_outgoing_message(self) -> OutgoingMessage {
@@ -122,6 +144,27 @@ impl GroupV3Packet {
             .try_into_protocol_message()
             .map(Some)
             .map_err(ChatError::generic)
+    }
+}
+
+/// A frame on the delivery address that is not an MLS message.
+#[derive(Clone, PartialEq, Message)]
+pub struct GroupV3External {
+    #[prost(oneof = "GroupV3ExternalKind", tags = "1")]
+    pub kind: Option<GroupV3ExternalKind>,
+}
+
+#[derive(Clone, PartialEq, Oneof)]
+pub enum GroupV3ExternalKind {
+    #[prost(message, tag = "1")]
+    Beacon(EpochBeacon),
+}
+
+impl GroupV3External {
+    pub fn beacon(beacon: EpochBeacon) -> Self {
+        Self {
+            kind: Some(GroupV3ExternalKind::Beacon(beacon)),
+        }
     }
 }
 
@@ -166,6 +209,48 @@ mod tests {
             GroupV3Packet::from_sds_content(&message.message_id, &message.content).unwrap(),
             envelope
         );
+    }
+
+    fn external_packet() -> GroupV3Packet {
+        GroupV3Packet::external(GroupV3External::default())
+    }
+
+    #[test]
+    fn a_packet_outside_sds_decodes_back() {
+        let packet = external_packet();
+        let wire = EncryptedSdsMessage::outside_sds(&packet).encode_to_vec();
+        let message = EncryptedSdsMessage::decode(wire.as_slice()).unwrap();
+        assert_eq!(message.packet_outside_sds().unwrap().unwrap(), packet);
+    }
+
+    /// SDS always names the sender, message and channel, so its header is
+    /// never empty, a sync included.
+    #[test]
+    fn an_sds_record_is_never_outside_sds() {
+        let header = sds::Header {
+            sender_id: "a".into(),
+            message_id: "b".into(),
+            channel_id: "c".into(),
+            lamport_timestamp: None,
+            causal_history: vec![],
+            bloom_filter: None,
+            repair_request: vec![],
+        };
+        let sync = sds::SDSRecord {
+            header,
+            content: None,
+        };
+        assert!(
+            EncryptedSdsMessage::from_record(sync)
+                .packet_outside_sds()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn an_mls_message_is_not_an_external_frame() {
+        assert!(mls_envelope().into_external().is_err());
+        assert!(external_packet().into_external().is_ok());
     }
 
     #[test]
