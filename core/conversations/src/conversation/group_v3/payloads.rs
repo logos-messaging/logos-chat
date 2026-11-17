@@ -6,7 +6,7 @@
 //!     ├── encrypted_sds_header                      bytes
 //!     │   └── SdsHeader                             protobuf; the SDS spec's Message without content
 //!     └── payload                                   bytes; SDS content; empty for an SDS sync
-//!         └── GroupV3Envelope                       protobuf
+//!         └── GroupV3Packet                       protobuf
 //!             ├── encrypted_header                  bytes
 //!             │   └── GroupV3Header                 protobuf; one field per item
 //!             │       └── epoch_data                the sender's epoch
@@ -18,7 +18,7 @@
 //!                 └── beacon                        bytes; reserved
 //! ```
 //!
-//! `GroupV3Envelope` goes to SDS as bytes, so the SDS message id is a deterministic hash of them.
+//! `GroupV3Packet` goes to SDS as bytes, so the SDS message id is a deterministic hash of them.
 //! Frames that need no ordering or resends still go in an `EncryptedSdsMessage`, sent ephemeral.
 
 use openmls::framing::{MlsMessageOut, ProtocolMessage};
@@ -71,7 +71,7 @@ impl GroupV3Frame {
 pub struct GroupV3Header {}
 
 #[derive(Clone, PartialEq, Message)]
-pub struct GroupV3Envelope {
+pub struct GroupV3Packet {
     #[prost(bytes = "bytes", tag = "1")]
     encrypted_header: Bytes,
     #[prost(oneof = "EncodedFrame", tags = "2")]
@@ -85,7 +85,7 @@ pub enum EncodedFrame {
     MlsMessage(Bytes),
 }
 
-impl GroupV3Envelope {
+impl GroupV3Packet {
     pub fn from_mls_message(mls_message: MlsMessageOut) -> Result<Self, SendError> {
         Ok(Self {
             encrypted_header: GroupV3Header::default().encode_to_vec().into(),
@@ -131,17 +131,17 @@ mod tests {
 
     #[test]
     fn outgoing_message_id_covers_the_whole_envelope() {
-        let envelope = GroupV3Envelope {
+        let envelope = GroupV3Packet {
             encrypted_header: Bytes::from_static(&[1]),
             encoded_frame: Some(EncodedFrame::MlsMessage(Bytes::from_static(&[2]))),
         };
         let message = envelope.clone().into_outgoing_message();
         assert_eq!(
-            GroupV3Envelope::decode(message.content.as_slice()).unwrap(),
+            GroupV3Packet::decode(message.content.as_slice()).unwrap(),
             envelope
         );
 
-        let other_header = GroupV3Envelope {
+        let other_header = GroupV3Packet {
             encrypted_header: Bytes::from_static(&[3]),
             ..envelope
         };
@@ -151,8 +151,8 @@ mod tests {
         );
     }
 
-    fn mls_envelope() -> GroupV3Envelope {
-        GroupV3Envelope {
+    fn mls_envelope() -> GroupV3Packet {
+        GroupV3Packet {
             encrypted_header: GroupV3Header::default().encode_to_vec().into(),
             encoded_frame: Some(EncodedFrame::MlsMessage(Bytes::from_static(&[2]))),
         }
@@ -163,7 +163,7 @@ mod tests {
         let envelope = mls_envelope();
         let message = envelope.clone().into_outgoing_message();
         assert_eq!(
-            GroupV3Envelope::from_sds_content(&message.message_id, &message.content).unwrap(),
+            GroupV3Packet::from_sds_content(&message.message_id, &message.content).unwrap(),
             envelope
         );
     }
@@ -171,6 +171,6 @@ mod tests {
     #[test]
     fn sds_content_under_another_message_id_is_rejected() {
         let message = mls_envelope().into_outgoing_message();
-        assert!(GroupV3Envelope::from_sds_content("other", &message.content).is_err());
+        assert!(GroupV3Packet::from_sds_content("other", &message.content).is_err());
     }
 }

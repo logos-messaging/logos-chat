@@ -36,7 +36,7 @@ use crate::{
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
-use self::payloads::{EncryptedSdsMessage, GroupV3Envelope};
+use self::payloads::{EncryptedSdsMessage, GroupV3Packet};
 
 // Type Aliases
 type Frame = payloads::GroupV3Frame;
@@ -177,7 +177,7 @@ impl GroupV3Convo {
             &cx.mls_identity,
             frame.encode().as_slice(),
         )?;
-        let message = GroupV3Envelope::from_mls_message(mls_message)?.into_outgoing_message();
+        let message = GroupV3Packet::from_mls_message(mls_message)?.into_outgoing_message();
         let message_id = message.message_id.clone();
 
         let record = self.channel.send(message, now_ms(cx))?;
@@ -194,7 +194,7 @@ impl GroupV3Convo {
         commit_msg: MlsMessageOut,
     ) -> Result<StartPoint, ChatError> {
         // Send Commit
-        let sent = GroupV3Envelope::from_mls_message(commit_msg).and_then(|envelope| {
+        let sent = GroupV3Packet::from_mls_message(commit_msg).and_then(|envelope| {
             Ok(self
                 .channel
                 .send(envelope.into_outgoing_message(), now_ms(cx))?)

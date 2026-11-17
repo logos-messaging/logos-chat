@@ -14,7 +14,7 @@ use crate::{
     Observation, Signer,
 };
 
-use super::payloads::{EncryptedSdsMessage, GroupV3Envelope, GroupV3FrameType};
+use super::payloads::{EncryptedSdsMessage, GroupV3FrameType, GroupV3Packet};
 use super::{DeferredCommit, Frame, GroupV3Convo, delivery_address_from_id};
 
 impl GroupV3Convo {
@@ -34,7 +34,7 @@ impl GroupV3Convo {
                     message_id,
                     content,
                     ..
-                } => match GroupV3Envelope::from_sds_content(&message_id, &content)
+                } => match GroupV3Packet::from_sds_content(&message_id, &content)
                     .and_then(|envelope| self.handle_group_v3_envelope(cx, message_id, envelope))
                 {
                     Ok(outcome) => observations.extend(outcome.observations),
@@ -91,7 +91,7 @@ impl GroupV3Convo {
         &mut self,
         cx: &mut ServiceContext<S>,
         message_id: MessageId,
-        envelope: GroupV3Envelope,
+        envelope: GroupV3Packet,
     ) -> Result<ConvoOutcome, ChatError> {
         let Some(message) = envelope.protocol_message()? else {
             debug!(convo = %self.convo_id, "ignoring non-mls frame");
