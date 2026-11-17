@@ -23,7 +23,7 @@ use crate::{
 use openmls::group::GroupId;
 use std::collections::{HashMap, hash_map::Entry};
 use std::fmt::Debug;
-use tracing::{info, instrument};
+use tracing::{instrument, trace};
 
 pub use crate::conversation::ConversationId;
 
@@ -597,7 +597,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
     }
 
     pub fn wakeup(&mut self, convo_id: ConversationIdRef) -> Result<PayloadOutcome, ChatError> {
-        info!(convos = ?self.cached_convos.keys().collect::<Vec<_>>(), id = ?self.services.mls_identity.signer_key(), "Cached Convos");
+        trace!(convos = ?self.cached_convos.keys().collect::<Vec<_>>(), id = ?self.services.mls_identity.signer_key(), "Cached Convos");
 
         match convo_id {
             // InboxV2 registers no timer, so a wakeup naming it comes from a
