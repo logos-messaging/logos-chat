@@ -21,7 +21,7 @@ use crate::types::ConvoMetadata;
 use crate::utils::{blake2b_hex, hash_size};
 use crate::{
     DeliveryInfo, DeliveryService, IdentityProvider,
-    conversation::{ChatError, Convo, ConvoBase, GroupConvo, Identified},
+    conversation::{ChatError, Convo, ConvoBase, GroupConvo, Identified, Typed},
     outcomes::{Content, ConvoOutcome, Observation},
     service_traits::KeyPackageProvider,
     types::AddressedEncryptedPayload,
@@ -254,6 +254,12 @@ impl GroupV1Convo {
 impl Identified for GroupV1Convo {
     fn id(&self) -> ConversationIdRef<'_> {
         &self.convo_id
+    }
+}
+
+impl Typed for GroupV1Convo {
+    fn type_name(&self) -> &'static str {
+        "GroupV1"
     }
 }
 

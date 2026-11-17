@@ -39,7 +39,7 @@ use crate::conversation::mls_trace::record::{ConvoId, Short};
 use crate::conversation::{ConversationIdRef, ExternalServices, MessageId, ServiceContext};
 use crate::{
     ConvoOutcome, DeliveryInfo, DeliveryService, Observation, RegistrationService,
-    conversation::{ChatError, Convo, ConvoBase, GroupConvo, Identified},
+    conversation::{ChatError, Convo, ConvoBase, GroupConvo, Identified, Typed},
 };
 
 /// de-mls measures every conversation deadline (freeze windows, consensus timeouts, auto-votes)
@@ -349,6 +349,12 @@ impl GroupV2Convo {
 impl Identified for GroupV2Convo {
     fn id(&self) -> ConversationIdRef<'_> {
         &self.convo_id
+    }
+}
+
+impl Typed for GroupV2Convo {
+    fn type_name(&self) -> &'static str {
+        "GroupV2"
     }
 }
 

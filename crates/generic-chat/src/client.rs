@@ -304,6 +304,12 @@ where
             .map_err(Into::into)
     }
 
+    /// The name of the protocol a conversation runs, such as `GroupV3`.
+    /// Fails for a conversation that is not loaded.
+    pub fn convo_type(&self, convo_id: &str) -> Result<&'static str, ClientError> {
+        self.core.lock().convo_type(convo_id).map_err(Into::into)
+    }
+
     /// Every conversation ID known to this client, whether or not it can
     /// currently be sent to or read. Existence only — see [`Self::can_send`] /
     /// [`Self::can_receive`] to act on one, or [`Self::list_sendable_conversations`]
