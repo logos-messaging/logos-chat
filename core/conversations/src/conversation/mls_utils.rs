@@ -101,6 +101,14 @@ pub struct EpochFingerprint([u8; 7]);
 const EPOCH_FINGERPRINT_LABEL: &[u8] = b"logos-chat|epoch-fingerprint|v1\0";
 
 impl EpochFingerprint {
+    pub fn from_group(group: &MlsGroup) -> Self {
+        Self::calculate_from_authenticator(group.epoch_authenticator())
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+
     fn calculate_from_authenticator(authenticator: &EpochAuthenticator) -> Self {
         let hash = blake2b_bytes::<hash_size::EpochFingerprint>(&[
             EPOCH_FINGERPRINT_LABEL,
