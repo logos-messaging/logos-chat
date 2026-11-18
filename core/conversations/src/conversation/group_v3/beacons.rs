@@ -589,7 +589,8 @@ mod tests {
         let roster = [a_pub, b_pub, c_pub];
         let mut beacons = Beacons::default();
         let mut again = beacon(41, &id(1));
-        again.external_hpke_pub = vec![2; crate::inbox_v2::HPKE_PUBLIC_KEY_LEN].into();
+        again.external_hpke_pub =
+            vec![2; crate::conversation::mls_utils::HPKE_PUBLIC_KEY_LEN].into();
 
         for (b, key) in [
             (beacon(41, &id(1)), &a),
@@ -842,7 +843,7 @@ mod tests {
     /// A verified beacon for `(epoch, n)` advertising key `[k; ..]`.
     fn keyed(epoch: u64, n: u64, k: u8) -> Admitted {
         let mut b = beacon(epoch, &id(n));
-        b.external_hpke_pub = vec![k; crate::inbox_v2::HPKE_PUBLIC_KEY_LEN].into();
+        b.external_hpke_pub = vec![k; crate::conversation::mls_utils::HPKE_PUBLIC_KEY_LEN].into();
         external::admit(b).expect("well formed")
     }
 

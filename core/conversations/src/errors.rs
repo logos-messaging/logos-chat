@@ -104,6 +104,8 @@ pub enum KeyPackageError {
     },
     #[error("key package decode failed: {0}")]
     Decode(#[from] tls_codec::Error),
+    #[error("init key is {0} bytes")]
+    InitKeyLength(usize),
 }
 
 #[derive(Error, Debug)]

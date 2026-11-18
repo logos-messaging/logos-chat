@@ -24,8 +24,10 @@ use prost::bytes::Bytes;
 
 use super::payloads::{GroupV3External, GroupV3ExternalKind};
 use super::sealed::{MAX_SEALED_LEN, SealedMessage};
-use crate::conversation::mls_utils::EpochFingerprint;
-use crate::inbox_v2::{CIPHER_SUITE, HPKE_PUBLIC_KEY_LEN, check_hpke_public_key};
+use crate::conversation::mls_utils::{
+    EpochFingerprint, HPKE_PUBLIC_KEY_LEN, check_hpke_public_key,
+};
+use crate::inbox_v2::CIPHER_SUITE;
 
 const EXPORTER_LABEL: &str = "logos-chat private external encryption v1";
 const BEACON_SIG_LABEL: &[u8] = b"logos-chat/beacon-signature/v1";
