@@ -48,6 +48,11 @@ pub enum Event {
         message_id: String,
         acked_by: SignerKey,
     },
+    /// At least one other signer has received a message this client sent.
+    MessageDelivered {
+        convo_id: Arc<str>,
+        message_id: String,
+    },
     /// A message this client never received, revealed by the causal history of
     /// one that did arrive. Detection only — nothing is fetched or replayed,
     /// and the gap is reported once.
