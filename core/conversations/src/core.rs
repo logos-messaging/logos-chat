@@ -14,7 +14,7 @@ use crate::{
     PublishReceipt, RegistrationService, WakeupService,
 };
 use crate::{
-    conversation::{Convo, ConvoBase, GroupConvo, mls_trace::record},
+    conversation::{Convo, ConvoBase, GroupConvo, Typed, mls_trace::record},
     errors::ChatError,
     inbox_v2::{InboxV2, MlsEphemeralPqProvider, MlsIdentityProvider},
     outcomes::{ConversationClass, ConvoOutcome, InboxOutcome, PayloadOutcome},
@@ -677,6 +677,14 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         }
     }
 
+    /// The name of the protocol a loaded conversation runs, such as `GroupV3`.
+    pub fn convo_type(&self, convo_id: ConversationIdRef) -> Result<&'static str, ChatError> {
+        self.cached_convos
+            .get(convo_id)
+            .map(Typed::type_name)
+            .ok_or_else(|| ChatError::NoConvo(convo_id.into()))
+    }
+
     fn get_signers_for_participants(
         &self,
         participants: &[ParticipantId],
@@ -713,6 +721,15 @@ impl<S: ExternalServices> Identified for ConvoTypeOwned<S> {
         match self {
             ConvoTypeOwned::Direct(convo) => convo.id(),
             ConvoTypeOwned::Group(group_convo) => group_convo.id(),
+        }
+    }
+}
+
+impl<S: ExternalServices> Typed for ConvoTypeOwned<S> {
+    fn type_name(&self) -> &'static str {
+        match self {
+            ConvoTypeOwned::Group(group_convo) => group_convo.type_name(),
+            ConvoTypeOwned::Direct(convo) => convo.type_name(),
         }
     }
 }

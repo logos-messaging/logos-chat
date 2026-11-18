@@ -559,6 +559,7 @@ fn group_metadata_reaches_joiners() {
     let meta = saro.group_metadata(&convo_id).expect("creator metadata");
     assert_eq!(meta.name, "Book Club");
     assert_eq!(meta.desc, "Weekly reads");
+    assert_eq!(saro.convo_type(&convo_id).unwrap(), "GroupV2");
 
     let raya_convo_id = wait_for_group_started(&raya_events, "raya ConversationStarted");
     let meta = raya

@@ -324,6 +324,7 @@ fn group_metadata_on_direct_conversation_errors() {
     let convo_id = saro
         .create_direct_conversation(raya.addr())
         .expect("convo create");
+    assert_eq!(saro.convo_type(&convo_id).unwrap(), "DirectV1");
     saro.group_metadata(&convo_id)
         .expect_err("direct conversation has no group metadata");
 }

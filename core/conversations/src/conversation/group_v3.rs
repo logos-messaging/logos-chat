@@ -40,7 +40,7 @@ use crate::conversation::group_v3::payloads::GroupV3Header;
 use crate::conversation::mls_groups::{HasMlsConvo, create_group, group_join_config};
 use crate::conversation::mls_trace::record::{ConvoId, Short};
 use crate::conversation::mls_utils::EpochFingerprint;
-use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified};
+use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified, Typed};
 use crate::errors::SendError;
 use crate::service_context::ServiceContext;
 use crate::utils::{blake2b_hex, hash_size};
@@ -762,6 +762,12 @@ where
 impl Identified for GroupV3Convo {
     fn id(&self) -> ConversationIdRef<'_> {
         &self.convo_id
+    }
+}
+
+impl Typed for GroupV3Convo {
+    fn type_name(&self) -> &'static str {
+        "GroupV3"
     }
 }
 

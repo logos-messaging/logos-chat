@@ -2,7 +2,9 @@ use crate::identity::SignerKey;
 
 use crate::{
     ChatError, ConvoMetadata, DeliveryInfo, ExternalServices, MessageId, Signer,
-    conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, GroupV1Convo, Identified},
+    conversation::{
+        ConversationIdRef, Convo, ConvoBase, GroupConvo, GroupV1Convo, Identified, Typed,
+    },
     service_context::ServiceContext,
 };
 
@@ -31,6 +33,12 @@ impl DirectV1Convo {
 impl Identified for DirectV1Convo {
     fn id(&self) -> ConversationIdRef<'_> {
         self.inner_group.id()
+    }
+}
+
+impl Typed for DirectV1Convo {
+    fn type_name(&self) -> &'static str {
+        "DirectV1"
     }
 }
 

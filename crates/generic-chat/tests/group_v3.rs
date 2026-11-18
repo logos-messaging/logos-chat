@@ -138,6 +138,7 @@ fn a_group_carries_messages_and_grows() {
     let convo_id = saro
         .create_group_conversation(&[&raya_addr], GroupMetadata::new("", ""))
         .expect("saro create group");
+    assert_eq!(saro.convo_type(&convo_id).unwrap(), "GroupV3");
 
     // The invite goes out once saro finalizes the add.
     assert_eq!(

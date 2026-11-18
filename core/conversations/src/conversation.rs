@@ -37,7 +37,7 @@ pub(crate) fn frame_id(encoded: &[u8]) -> FrameId {
 }
 
 /// Behaviour shared by every conversation kind.
-pub(crate) trait Convo<S: ExternalServices>: Identified + ConvoBase + Send {
+pub(crate) trait Convo<S: ExternalServices>: Identified + Typed + ConvoBase + Send {
     /// Encrypt and publish `content`, returning the id assigned to it.
     fn send_content(
         &mut self,
@@ -150,4 +150,8 @@ pub(crate) trait GroupConvo<S: ExternalServices>: Convo<S> + std::fmt::Debug + S
 
 pub(crate) trait Identified {
     fn id(&self) -> ConversationIdRef<'_>;
+}
+
+pub(crate) trait Typed {
+    fn type_name(&self) -> &'static str;
 }
