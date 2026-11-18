@@ -12,6 +12,8 @@ application's own tables, and a transaction the application opens covers what th
 - Messages come back oldest first, a page at a time. The `seq` of a page's first message is the cursor for the
   page before it.
 - Content is stored as the bytes it is given, whatever its type.
+- A sent message is marked delivered, by its conversation and message id, once another member is known to hold
+  it.
 
 ```rust
 use message_store::rusqlite::Connection;
