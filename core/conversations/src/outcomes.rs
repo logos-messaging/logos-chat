@@ -31,6 +31,9 @@ pub enum Observation {
     Content(Content),
     /// A commit changed the group's signers.
     SignersChanged,
+    /// A member's group state against ours may have moved: a member was heard at another epoch
+    /// or fingerprint, or our epoch changed.
+    MemberStatesChanged,
 }
 
 #[derive(Debug, Clone)]

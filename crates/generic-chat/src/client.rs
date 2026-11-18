@@ -6,7 +6,7 @@ use components::{ThreadedWakeupService, WakeupEvent};
 use crossbeam_channel::{Receiver, Sender, select};
 use libchat::{
     AuthService, ConversationId, ConversationStore, ConvoMetadata, ConvoOutcome, Core, DeliveryAck,
-    DeliveryInfo, DeliveryService, GroupEpoch, GroupV2Config, InboxOutcome, MessageId,
+    DeliveryInfo, DeliveryService, GroupEpoch, GroupV2Config, InboxOutcome, MemberState, MessageId,
     MissingMessage, Observation, ParticipantId, PayloadOutcome, PublishReceipt,
     RegistrationService,
 };
@@ -318,6 +318,18 @@ where
         self.core.lock().group_epoch(convo_id).map_err(Into::into)
     }
 
+    /// Each member installation's group state against this one's, as far as
+    /// its packets and signed beacons tell, this installation's own as synced
+    /// at its epoch. A header's epoch data is unsigned, so the states are a
+    /// hint. Empty for a conversation that does not track them: today only
+    /// GroupV3 does.
+    pub fn member_states(&self, convo_id: &str) -> Result<Vec<MemberState>, ClientError> {
+        self.core
+            .lock()
+            .group_member_states(convo_id)
+            .map_err(Into::into)
+    }
+
     /// Every conversation ID known to this client, whether or not it can
     /// currently be sent to or read. Existence only — see [`Self::can_send`] /
     /// [`Self::can_receive`] to act on one, or [`Self::list_sendable_conversations`]
@@ -574,6 +586,9 @@ fn observation_event(convo_id: &Arc<str>, observation: Observation) -> Option<Ev
             message_id: c.message_id,
         }),
         Observation::SignersChanged => Some(Event::ConversationMembersChanged {
+            convo_id: Arc::clone(convo_id),
+        }),
+        Observation::MemberStatesChanged => Some(Event::ConversationMemberStatesChanged {
             convo_id: Arc::clone(convo_id),
         }),
     }

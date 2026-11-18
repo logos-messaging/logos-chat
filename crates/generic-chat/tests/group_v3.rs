@@ -17,7 +17,8 @@ use logos_account::AccountAddr;
 use logos_generic_chat::{
     AddressedEnvelope, ChatClient, ChatClientBuilder, ClientError, ConversationClass, DeliveryInfo,
     DeliveryMsgId, DeliveryReport, DeliveryService, Event, GroupMetadata, InProcessDelivery,
-    InboundPayload, MessageBus, PendingInstallation, PublishReceipt, PublishedId, Transport,
+    InboundPayload, MemberSync, MessageBus, PendingInstallation, PublishReceipt, PublishedId,
+    Transport,
 };
 
 type TestClient<T = InProcessDelivery> =
@@ -179,6 +180,52 @@ fn a_group_carries_messages_and_grows() {
     pax.send_message(&convo_id, b"pax is in").unwrap();
     assert_eq!(wait_for_message(&saro_events, b"pax is in"), pax_addr);
     assert_eq!(wait_for_message(&raya_events, b"pax is in"), pax_addr);
+}
+
+/// Raya's beacon on joining tells Saro her state, and Saro is told it moved.
+#[test]
+fn a_members_state_is_reported() {
+    let bus = MessageBus::default();
+    let reg = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
+
+    let (mut saro, saro_events, saro_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
+    let (_raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
+
+    let convo_id = saro
+        .create_group_conversation(&[&raya_addr], GroupMetadata::new("", ""))
+        .expect("saro create group");
+    wait_for_group_started(&raya_events, "raya ConversationStarted");
+    wait_for_participants(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
+    let raya = saro
+        .members(&convo_id)
+        .unwrap()
+        .into_iter()
+        .find(|member| member.account.to_string() == raya_addr)
+        .expect("raya is a member")
+        .signer_key;
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        wait_for_event(
+            &saro_events,
+            "ConversationMemberStatesChanged",
+            deadline.saturating_duration_since(std::time::Instant::now()),
+            |e| match e {
+                Event::ConversationMemberStatesChanged { convo_id: changed } => {
+                    (**changed == *convo_id).then_some(())
+                }
+                _ => None,
+            },
+        );
+        let states = saro.member_states(&convo_id).unwrap();
+        if states
+            .iter()
+            .any(|state| state.signer == raya && state.sync == MemberSync::Synced)
+        {
+            return;
+        }
+    }
 }
 
 /// GroupV3 cannot remove a member yet: the call returns an error, and the

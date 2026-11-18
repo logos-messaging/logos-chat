@@ -29,7 +29,7 @@ const AHEAD_RETAINED: usize = 8;
 
 /// How far past our epoch a beacon may claim to be. Bounds how far a member
 /// can push the store with made-up epochs.
-const EPOCHS_AHEAD: u64 = 64;
+pub(super) const EPOCHS_AHEAD: u64 = 64;
 
 /// Epochs whose state id we remember: never to seal to a state we were in,
 /// and to tell a member that is merely behind from a forked one.
@@ -234,7 +234,8 @@ impl Beacons {
 
     /// A beacon heard on the wire, `bytes` being its whole frame. Kept only if
     /// one of `keys`, our state's leaf keys, signed it. `keys` is read only for
-    /// a new frame. Returns the branch of a peer's verified beacon.
+    /// a new frame. Returns the branch of a peer's verified beacon, and the key
+    /// that signed it.
     pub fn receive_frame<I, K>(
         &mut self,
         crypto: &impl OpenMlsCrypto,
@@ -242,7 +243,7 @@ impl Beacons {
         keys: I,
         beacon: Admitted,
         bytes: &[u8],
-    ) -> Option<Branch>
+    ) -> Option<(Branch, Vec<u8>)>
     where
         I: IntoIterator<Item = K>,
         K: AsRef<[u8]>,
@@ -279,10 +280,11 @@ impl Beacons {
             }
         };
         self.store.vouch(beacon.beacon(), signer.clone());
-        (signer != self.own).then(|| Branch {
+        let branch = Branch {
             epoch,
             epoch_id: beacon.beacon().epoch_id.clone(),
-        })
+        };
+        (signer != self.own).then_some((branch, signer))
     }
 
     /// Every `(branch id, advertised key, signer)` we verified at `epoch`.
@@ -552,7 +554,9 @@ mod tests {
         let Some(external::Inbound::Beacon(beacon)) = external::admit_frame(bytes) else {
             panic!("not a beacon frame");
         };
-        beacons.receive_frame(p, "convo-a", keys, beacon, bytes)
+        beacons
+            .receive_frame(p, "convo-a", keys, beacon, bytes)
+            .map(|(branch, _)| branch)
     }
 
     fn branch(epoch: u64, n: u64) -> Branch {

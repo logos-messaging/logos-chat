@@ -63,6 +63,12 @@ pub enum Event {
     ConversationMembersChanged {
         convo_id: Arc<str>,
     },
+    /// A member's group state against this installation's may have moved:
+    /// a member was heard at another epoch or fingerprint, or this
+    /// installation's epoch changed. Read them with `ChatClient::member_states`.
+    ConversationMemberStatesChanged {
+        convo_id: Arc<str>,
+    },
     InboundError {
         message: String,
     },

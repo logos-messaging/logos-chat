@@ -12,14 +12,15 @@ mod finality;
 mod handlers;
 #[cfg(any(test, feature = "test-support"))]
 pub mod inspect;
+mod member_sync;
 mod payloads;
 mod readd;
 mod sealed;
 mod sync_state;
 mod trace;
 
-use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::time::Duration;
 
@@ -54,6 +55,8 @@ use crate::{
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
 use self::beacons::Beacons;
+use self::member_sync::MemberEpochs;
+pub use self::member_sync::{MemberState, MemberSync};
 use self::payloads::{
     EncryptedSdsMessage, EpochData, GroupV3External, GroupV3FrameType, GroupV3Packet,
 };
@@ -120,6 +123,8 @@ pub struct GroupV3Convo {
     readd_attempt: u32,
     sync: SyncTracker,
     epoch_data: EpochData,
+    /// What each member's packets and beacons say about their state.
+    members_heard: MemberEpochs,
     later_epoch_msgs: Vec<(super::MessageId, ProtocolMessage)>,
 }
 
@@ -207,6 +212,7 @@ impl GroupV3Convo {
             readds: VecDeque::new(),
             readd_attempt: 0,
             sync: SyncTracker::default(),
+            members_heard: MemberEpochs::default(),
             later_epoch_msgs: Vec::with_capacity(MAX_LATER_EPOCH_MSGS),
         })
     }
@@ -539,12 +545,77 @@ impl GroupV3Convo {
             fingerprint: EpochFingerprint::from_group(&self.mls_group).to_string(),
         }
     }
+
+    /// Whether `signer` is a member other than us, in our state's tree.
+    fn is_peer(&self, signer: &SignerKey) -> bool {
+        let own = self
+            .mls_group
+            .own_leaf_node()
+            .map(|leaf| leaf.signature_key().as_slice());
+        own != Some(signer.as_bytes())
+            && self
+                .mls_group
+                .members()
+                .any(|member| member.signature_key == signer.as_bytes())
+    }
+
+    /// File the epoch data a record's header carries under the sender SDS names. Read on
+    /// arrival, as SDS never releases a forked member's packets: they name messages of the
+    /// other branch.
+    fn hear_header(&mut self, record: &SDSRecord) {
+        let Some(data) = record
+            .content
+            .as_deref()
+            .and_then(|content| GroupV3Packet::decode(content).ok())
+            .and_then(|packet| packet.epoch_data())
+        else {
+            return;
+        };
+        let Ok(signer) = SignerKey::try_from(record.header.sender_id.as_str()) else {
+            return;
+        };
+        if self.is_peer(&signer) {
+            let epoch = self.mls_group.epoch().as_u64();
+            self.members_heard.hear_header(&signer, epoch, &data);
+        }
+    }
+
+    /// Adds [`Observation::MemberStatesChanged`] when a member's state may have moved.
+    fn with_member_changes(&mut self, mut outcome: ConvoOutcome) -> ConvoOutcome {
+        if self.members_heard.take_changed() {
+            outcome.observations.push(Observation::MemberStatesChanged);
+        }
+        outcome
+    }
+
+    fn member_states(&self) -> Vec<MemberState> {
+        let current = self.current_epoch();
+        self.mls_group
+            .members()
+            .map(|member| SignerKey::from(member.signature_key.as_slice()))
+            .map(|signer| {
+                if self.is_peer(&signer) {
+                    self.members_heard
+                        .state(&signer, &current, |epoch| self.beacons.our_epoch_id(epoch))
+                } else {
+                    MemberState {
+                        signer,
+                        sync: MemberSync::Synced,
+                        heard: Some(current.clone()),
+                    }
+                }
+            })
+            .collect()
+    }
 }
 
 impl GroupV3Convo {
     /// Call after merging any commit, ours or a peer's.
     fn enter_epoch<S: ExternalServices>(&mut self, cx: &mut ServiceContext<S>) {
         self.sync.enter_epoch();
+        let members: HashSet<Vec<u8>> = self.mls_group.members().map(|m| m.signature_key).collect();
+        self.members_heard
+            .enter_epoch(|signer| members.contains(signer.as_bytes()));
         self.beacons
             .enter_epoch(cx, &self.mls_group, &self.convo_id);
         self.send_beacon(cx);
@@ -587,10 +658,13 @@ impl GroupV3Convo {
             Some(external::Inbound::Beacon(beacon)) => {
                 let crypto = cx.mls_provider.crypto();
                 let keys = self.mls_group.members().map(|m| m.signature_key);
-                if let Some(peer) =
+                if let Some((peer, signer)) =
                     self.beacons
                         .receive_frame(crypto, &self.convo_id, keys, beacon, frame)
                 {
+                    let signer = SignerKey::from(signer.as_slice());
+                    self.members_heard
+                        .hear_beacon(&signer, peer.epoch, &peer.epoch_id);
                     self.observe_beacon(peer);
                 }
                 Ok(self.default_outcome())
@@ -694,6 +768,10 @@ where
     fn group_epoch(&self) -> Option<GroupEpoch> {
         Some(self.current_epoch())
     }
+
+    fn member_states(&self) -> Vec<MemberState> {
+        GroupV3Convo::member_states(self)
+    }
 }
 
 impl<S> Convo<S> for GroupV3Convo
@@ -720,18 +798,21 @@ where
     ) -> Result<ConvoOutcome, ChatError> {
         let message = EncryptedSdsMessage::decode(payload)?;
         if let Some(packet) = message.packet_outside_sds() {
-            return self.receive_external(cx, &packet?.into_external()?);
+            let outcome = self.receive_external(cx, &packet?.into_external()?)?;
+            return Ok(self.with_member_changes(outcome));
         }
         let record = message.try_into_record()?;
+        self.hear_header(&record);
         let retrieval_hint = delivery_info.map(|info| info.delivery_msg_id.as_bytes().to_vec());
         let events = self
             .channel
             .receive(record, retrieval_hint, now_ms(cx))
             .map_err(ChatError::generic)?;
-        Ok(ConvoOutcome {
+        let outcome = ConvoOutcome {
             observations: self.handle_sds_events(cx, events),
             ..self.default_outcome()
-        })
+        };
+        Ok(self.with_member_changes(outcome))
     }
 
     #[instrument(name = "groupv3.wakeup", skip_all, fields(user_id = %cx.mls_identity.display_name(), signer = %Short(cx.mls_identity.signer_key().as_bytes()), convo = %ConvoId(&self.convo_id), epoch = self.mls_group.epoch().as_u64()))]
@@ -755,10 +836,11 @@ where
         }
 
         self.send_beacon(cx);
-        Ok(ConvoOutcome {
+        let outcome = ConvoOutcome {
             observations,
             ..self.default_outcome()
-        })
+        };
+        Ok(self.with_member_changes(outcome))
     }
 
     fn handle_delivery_report(
