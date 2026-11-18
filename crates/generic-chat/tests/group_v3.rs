@@ -165,6 +165,12 @@ fn a_group_carries_messages_and_grows() {
     wait_for_participants(&mut saro, &convo_id, &all);
     wait_for_participants(&mut raya, &convo_id, &all);
     wait_for_participants(&mut pax, &convo_id, &all);
+    let epoch = saro
+        .group_epoch(&convo_id)
+        .unwrap()
+        .expect("a GroupV3 epoch");
+    assert_eq!(raya.group_epoch(&convo_id).unwrap(), Some(epoch.clone()));
+    assert_eq!(pax.group_epoch(&convo_id).unwrap(), Some(epoch));
 
     saro.send_message(&convo_id, b"all three?").unwrap();
     assert_eq!(wait_for_message(&raya_events, b"all three?"), saro_addr);

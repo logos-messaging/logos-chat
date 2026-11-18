@@ -1,7 +1,7 @@
 use crate::causal_history::{CausalHistoryStore, DeliveryAck, MissingMessage};
 use crate::conversation::{
-    ConversationIdRef, DirectV1Convo, GroupV1Convo, GroupV2Convo, GroupV3Convo, Identified,
-    MessageId, SyncState,
+    ConversationIdRef, DirectV1Convo, GroupEpoch, GroupV1Convo, GroupV2Convo, GroupV3Convo,
+    Identified, MessageId, SyncState,
 };
 use crate::identity::{AuthenticatedSigner, ParticipantId, Signer, SignerKey, SignerRef};
 use crate::service_context::{ExternalServices, ServiceContext};
@@ -387,6 +387,20 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         Ok(match convo {
             ConvoTypeOwned::Group(group_convo) => group_convo.sync_state(),
             ConvoTypeOwned::Direct(_) => SyncState::Unknown,
+        })
+    }
+
+    /// This member's group epoch and its fingerprint. `None` for a conversation kind that
+    /// fingerprints no epochs, a direct one included.
+    pub fn group_epoch(&self, convo_id: &str) -> Result<Option<GroupEpoch>, ChatError> {
+        let convo = self
+            .cached_convos
+            .get(convo_id)
+            .ok_or_else(|| ChatError::NoConvo(convo_id.to_string()))?;
+
+        Ok(match convo {
+            ConvoTypeOwned::Group(group_convo) => group_convo.group_epoch(),
+            ConvoTypeOwned::Direct(_) => None,
         })
     }
 

@@ -6,8 +6,9 @@ use components::{ThreadedWakeupService, WakeupEvent};
 use crossbeam_channel::{Receiver, Sender, select};
 use libchat::{
     AuthService, ConversationId, ConversationStore, ConvoMetadata, ConvoOutcome, Core, DeliveryAck,
-    DeliveryInfo, DeliveryService, GroupV2Config, InboxOutcome, MessageId, MissingMessage,
-    Observation, ParticipantId, PayloadOutcome, PublishReceipt, RegistrationService,
+    DeliveryInfo, DeliveryService, GroupEpoch, GroupV2Config, InboxOutcome, MessageId,
+    MissingMessage, Observation, ParticipantId, PayloadOutcome, PublishReceipt,
+    RegistrationService,
 };
 use logos_account::AccountAddr;
 use parking_lot::Mutex;
@@ -308,6 +309,13 @@ where
     /// Fails for a conversation that is not loaded.
     pub fn convo_type(&self, convo_id: &str) -> Result<&'static str, ClientError> {
         self.core.lock().convo_type(convo_id).map_err(Into::into)
+    }
+
+    /// This installation's group epoch and its fingerprint, which every member
+    /// on the same group state shares. `None` for a conversation that
+    /// fingerprints no epochs: today only GroupV3 does.
+    pub fn group_epoch(&self, convo_id: &str) -> Result<Option<GroupEpoch>, ClientError> {
+        self.core.lock().group_epoch(convo_id).map_err(Into::into)
     }
 
     /// Every conversation ID known to this client, whether or not it can

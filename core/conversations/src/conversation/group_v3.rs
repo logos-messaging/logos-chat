@@ -40,7 +40,9 @@ use crate::conversation::group_v3::payloads::GroupV3Header;
 use crate::conversation::mls_groups::{HasMlsConvo, create_group, group_join_config};
 use crate::conversation::mls_trace::record::{ConvoId, Short};
 use crate::conversation::mls_utils::EpochFingerprint;
-use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified, Typed};
+use crate::conversation::{
+    ConversationIdRef, Convo, ConvoBase, GroupConvo, GroupEpoch, Identified, Typed,
+};
 use crate::errors::SendError;
 use crate::service_context::ServiceContext;
 use crate::utils::{blake2b_hex, hash_size};
@@ -530,6 +532,13 @@ impl GroupV3Convo {
     fn default_outcome(&self) -> ConvoOutcome {
         ConvoOutcome::empty(self.convo_id.clone())
     }
+
+    fn current_epoch(&self) -> GroupEpoch {
+        GroupEpoch {
+            epoch: self.mls_group.epoch().as_u64(),
+            fingerprint: EpochFingerprint::from_group(&self.mls_group).to_string(),
+        }
+    }
 }
 
 impl GroupV3Convo {
@@ -680,6 +689,10 @@ where
 
     fn sync_state(&self) -> SyncState {
         self.sync.state().clone()
+    }
+
+    fn group_epoch(&self) -> Option<GroupEpoch> {
+        Some(self.current_epoch())
     }
 }
 

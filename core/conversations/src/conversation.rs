@@ -23,6 +23,15 @@ pub use group_v3::{GroupV3Convo, SyncState};
 pub type ConversationId = String;
 pub type ConversationIdRef<'a> = &'a str;
 
+/// A group state: its epoch and the fingerprint of that epoch, which every member holding the
+/// same state computes alike.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupEpoch {
+    pub epoch: u64,
+    /// Hex.
+    pub fingerprint: String,
+}
+
 /// Identifies one message within a conversation, as carried by the
 /// causal-history envelope. Handed back by a send so a caller can match later
 /// observations — acknowledgements, gaps — to the message that produced them.
@@ -145,6 +154,11 @@ pub(crate) trait GroupConvo<S: ExternalServices>: Convo<S> + std::fmt::Debug + S
     /// Only GroupV3 detects forks.
     fn sync_state(&self) -> SyncState {
         SyncState::Unknown
+    }
+
+    /// Only GroupV3 fingerprints its epochs.
+    fn group_epoch(&self) -> Option<GroupEpoch> {
+        None
     }
 }
 
