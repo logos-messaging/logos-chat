@@ -47,6 +47,8 @@ pub struct StoredMessage {
     /// Grows with every record and is never handed out twice, not even after a delete.
     pub seq: i64,
     pub message: Message,
+    /// Whether [`MessageStore::mark_delivered`] marked it.
+    pub delivered: bool,
 }
 
 /// Chat messages in a SQLite database the application opened.
@@ -101,7 +103,7 @@ impl<'c> MessageStore<'c> {
     ) -> Result<Vec<StoredMessage>> {
         let mut stmt = self.conn.prepare(
             "SELECT seq, chat_id, convo_id, direction, sender_account, sender_installation,
-                    message_id, timestamp_ms, content
+                    message_id, timestamp_ms, content, delivered
              FROM message_store_messages
              WHERE chat_id = ?1 AND seq < ?2
              ORDER BY seq DESC
@@ -115,6 +117,17 @@ impl<'c> MessageStore<'c> {
             .collect::<Result<Vec<_>, _>>()?;
         page.reverse();
         Ok(page)
+    }
+
+    /// Marks the message `message_id` of `convo_id` as held by another member. `false` when no
+    /// message of `convo_id` has that id, or it was marked already.
+    pub fn mark_delivered(&self, convo_id: &str, message_id: &str) -> Result<bool> {
+        let marked = self.conn.execute(
+            "UPDATE message_store_messages SET delivered = 1
+             WHERE convo_id = ?1 AND message_id = ?2 AND delivered = 0",
+            params![convo_id, message_id],
+        )?;
+        Ok(marked > 0)
     }
 
     /// How many messages a chat holds.
@@ -161,6 +174,7 @@ fn stored_message(row: &Row<'_>) -> Result<StoredMessage> {
             timestamp_ms: row.get(7)?,
             content: row.get(8)?,
         },
+        delivered: row.get(9)?,
     })
 }
 
@@ -214,14 +228,37 @@ mod tests {
             [
                 StoredMessage {
                     seq: first,
-                    message: sent
+                    message: sent,
+                    delivered: false,
                 },
                 StoredMessage {
                     seq: second,
-                    message: received
+                    message: received,
+                    delivered: false,
                 },
             ]
         );
+    }
+
+    #[test]
+    fn a_sent_message_is_marked_delivered_once() {
+        let conn = migrated();
+        let store = MessageStore::new(&conn);
+        let sent = Message {
+            direction: Direction::Sent,
+            message_id: Some("msg-1".into()),
+            ..message("saro-raya", "hi raya")
+        };
+        store.record(&sent).unwrap();
+        store.record(&message("saro-raya", "hi saro")).unwrap();
+
+        assert!(store.mark_delivered("convo-1", "msg-1").unwrap());
+        assert!(!store.mark_delivered("convo-1", "msg-1").unwrap());
+        assert!(!store.mark_delivered("convo-2", "msg-1").unwrap());
+
+        let page = store.messages("saro-raya", None, 10).unwrap();
+        let delivered: Vec<bool> = page.iter().map(|stored| stored.delivered).collect();
+        assert_eq!(delivered, [true, false]);
     }
 
     #[test]
