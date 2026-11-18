@@ -16,6 +16,7 @@ mod payloads;
 mod readd;
 mod sealed;
 mod sync_state;
+mod trace;
 
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -32,10 +33,12 @@ use openmls_traits::OpenMlsProvider;
 use openmls_traits::storage::StorageProvider as _;
 use prost::Message;
 use sds::{Channel, Config, SDSRecord, StartPoint};
-use tracing::{debug, info, instrument, warn};
+use tracing::field::{Empty, display};
+use tracing::{Span, debug, info, instrument, warn};
 
 use crate::conversation::group_v3::payloads::GroupV3Header;
 use crate::conversation::mls_groups::{HasMlsConvo, create_group, group_join_config};
+use crate::conversation::mls_trace::record::{ConvoId, Short};
 use crate::conversation::mls_utils::EpochFingerprint;
 use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified};
 use crate::errors::SendError;
@@ -49,7 +52,9 @@ use crate::{
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
 use self::beacons::Beacons;
-use self::payloads::{EncryptedSdsMessage, EpochData, GroupV3External, GroupV3Packet};
+use self::payloads::{
+    EncryptedSdsMessage, EpochData, GroupV3External, GroupV3FrameType, GroupV3Packet,
+};
 pub use self::sync_state::SyncState;
 use self::sync_state::SyncTracker;
 
@@ -127,6 +132,8 @@ impl fmt::Debug for GroupV3Convo {
 }
 
 impl GroupV3Convo {
+    // `convo` is recorded on the span once the group exists.
+    #[instrument(name = "groupv3.new", skip_all, fields(user_id = %cx.mls_identity.display_name(), signer = %Short(cx.mls_identity.signer_key().as_bytes()), convo = Empty))]
     pub fn new<S: ExternalServices>(
         cx: &mut ServiceContext<S>,
         name: &str,
@@ -136,6 +143,8 @@ impl GroupV3Convo {
         // Create MlsGroup
         let mls_group = create_group(cx, name, desc)?;
         let mut convo = Self::from_group(cx, mls_group, None)?;
+        Span::current().record("convo", display(ConvoId(&convo.convo_id)));
+        trace::epoch(&convo);
 
         convo.init(cx)?;
         convo.add_signer(cx, signers)?;
@@ -144,6 +153,7 @@ impl GroupV3Convo {
 
     /// Joins from a Welcome, starting our SDS channel at `start`, the commit that added us. Also
     /// returns whether it replaced a group we held, which only a re-add we asked for may do.
+    #[instrument(name = "groupv3.new_from_welcome", skip_all, fields(user_id = %cx.mls_identity.display_name(), signer = %Short(cx.mls_identity.signer_key().as_bytes()), convo = Empty))]
     pub fn new_from_welcome<S: ExternalServices>(
         cx: &mut ServiceContext<S>,
         welcome: Welcome,
@@ -161,6 +171,8 @@ impl GroupV3Convo {
             .map_err(ChatError::generic)?;
 
         let mut convo = Self::from_group(cx, mls_group, Some(start))?;
+        Span::current().record("convo", display(ConvoId(&convo.convo_id)));
+        trace::epoch(&convo);
 
         // A replaced group's subscription and tick carry over.
         if held.is_none() {
@@ -301,6 +313,7 @@ impl GroupV3Convo {
         cx: &mut ServiceContext<S>,
         frame: Frame,
     ) -> Result<super::MessageId, SendError> {
+        let is_post = matches!(frame.payload, Some(GroupV3FrameType::Content(_)));
         let mls_message = self.mls_group.create_message(
             &cx.mls_provider,
             &cx.mls_identity,
@@ -312,6 +325,10 @@ impl GroupV3Convo {
         let message_id = message.message_id.clone();
 
         let record = self.channel.send(message, now_ms(cx))?;
+        // SDS resends a logged message, so it counts as sent even if the publish fails.
+        if is_post {
+            trace::sent(self, &message_id);
+        }
         self.publish_record(cx, record)?;
 
         Ok(message_id)
@@ -431,6 +448,8 @@ impl GroupV3Convo {
                 vec![]
             }
         };
+        // Recorded before the sends below, so a failed send cannot skip it.
+        trace::epoch(self);
 
         // Notify Epoch history that we've updated the group state.
         // Record the fingerprint of the final state, to catch any state bugs
@@ -592,6 +611,7 @@ impl<S> GroupConvo<S> for GroupV3Convo
 where
     S: ExternalServices,
 {
+    #[instrument(name = "groupv3.add_member", skip_all, fields(user_id = %cx.mls_identity.display_name(), signer = %Short(cx.mls_identity.signer_key().as_bytes()), convo = %ConvoId(&self.convo_id), epoch = self.mls_group.epoch().as_u64()))]
     fn add_signer(
         &mut self,
         cx: &mut ServiceContext<S>,
@@ -667,6 +687,7 @@ impl<S> Convo<S> for GroupV3Convo
 where
     S: ExternalServices,
 {
+    #[instrument(name = "groupv3.send_content", skip_all, fields(user_id = %cx.mls_identity.display_name(), signer = %Short(cx.mls_identity.signer_key().as_bytes()), convo = %ConvoId(&self.convo_id), epoch = self.mls_group.epoch().as_u64()))]
     fn send_content(
         &mut self,
         cx: &mut ServiceContext<S>,
@@ -677,7 +698,7 @@ where
     }
 
     /// Unwrap Envelope -> SDS -> MlsDecrypt -> DecodeFrame
-    #[instrument(name = "groupv3.handle_frame", skip_all, fields(user_id = %cx.mls_identity.display_name()))]
+    #[instrument(name = "groupv3.handle_frame", skip_all, fields(user_id = %cx.mls_identity.display_name(), signer = %Short(cx.mls_identity.signer_key().as_bytes()), convo = %ConvoId(&self.convo_id), epoch = self.mls_group.epoch().as_u64()))]
     fn handle_payload(
         &mut self,
         cx: &mut ServiceContext<S>,
@@ -700,6 +721,7 @@ where
         })
     }
 
+    #[instrument(name = "groupv3.wakeup", skip_all, fields(user_id = %cx.mls_identity.display_name(), signer = %Short(cx.mls_identity.signer_key().as_bytes()), convo = %ConvoId(&self.convo_id), epoch = self.mls_group.epoch().as_u64()))]
     fn wakeup(&mut self, cx: &mut ServiceContext<S>) -> Result<ConvoOutcome, ChatError> {
         cx.wakeup_service
             .wakeup_in(SDS_TICK_INTERVAL, self.convo_id.clone());
