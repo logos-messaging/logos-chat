@@ -38,7 +38,7 @@ pub const REGISTRY_ENDPOINT: &str = "https://devnet.chat-kc.logos.co";
 
 /// How long a peer's endorsed signers are trusted before re-fetching, and so
 /// how long a revoked signer can still pass.
-const AUTH_CACHE_TTL: Duration = Duration::from_mins(10);
+const AUTH_CACHE_TTL: Duration = Duration::from_mins(30);
 
 /// Configuration for opening a Logos client.
 ///
