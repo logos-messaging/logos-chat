@@ -48,6 +48,16 @@ pub enum Event {
         message_id: String,
         acked_by: SignerKey,
     },
+    /// Another member's client holds a message this client sent. GroupV3
+    /// raises it once per message, when SDS counts the message acknowledged:
+    /// one member's message named it, or enough members report holding it.
+    /// Unlike [`Event::MessageAcked`] it names no member, as SDS does not say
+    /// which. `message_id` is the id `send_message` returned; one no send
+    /// returned, a commit's, can come too.
+    MessageDelivered {
+        convo_id: Arc<str>,
+        message_id: String,
+    },
     /// A message this client never received, revealed by the causal history of
     /// one that did arrive. Detection only — nothing is fetched or replayed,
     /// and the gap is reported once.

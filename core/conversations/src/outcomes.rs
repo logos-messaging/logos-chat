@@ -9,7 +9,7 @@
 use crate::storage::ConversationKind;
 use serde::{Deserialize, Serialize};
 
-use crate::conversation::ConversationId;
+use crate::conversation::{ConversationId, MessageId};
 use crate::identity::AuthenticatedSigner;
 
 #[derive(Debug, Clone)]
@@ -31,6 +31,10 @@ pub enum Observation {
     Content(Content),
     /// A commit changed the group's signers.
     SignersChanged,
+    /// Another member holds a frame this member sent, named by its message id: the one
+    /// `send_content` returned, or a commit's. Says neither which member nor whether a person
+    /// read it.
+    Delivered(MessageId),
 }
 
 #[derive(Debug, Clone)]
