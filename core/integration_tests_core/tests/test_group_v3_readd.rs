@@ -494,3 +494,51 @@ fn a_welcome_from_outside_the_chosen_branch_is_refused() {
         .unwrap();
     h.process_until(|h| h.client(1).check(&convo, b"welcome back"));
 }
+
+/// Raya (1) misses Saro's (0) next 17 commits and then hears only Saro's
+/// beacon. Saro still knows the state it held at Raya's epoch, so Raya is
+/// behind, not forked, and is not repaired.
+#[test]
+fn a_member_far_behind_is_not_readded() {
+    let mut h = TestHarness::<19>::new(|_, _| {});
+    let raya = [h.client(1).account()];
+    let convo = h
+        .client_mut(0)
+        .create_group_convo_v3(&raya, "", "")
+        .unwrap();
+    h.process_until(|h| h.client(1).convo_count() == 1);
+    settle(&mut h);
+
+    let mut wire = watch(&mut h, &convo);
+    for i in 2..19 {
+        let joiner = [h.client(i).account()];
+        h.client_mut(1).drop_pending_payloads();
+        h.client_mut(0)
+            .group_add_participants(&convo, &joiner)
+            .unwrap();
+        for _ in 0..125 {
+            h.client_mut(1).drop_pending_payloads();
+            h.process(Duration::from_secs(1));
+        }
+    }
+    h.client_mut(1).drop_pending_payloads();
+    let saro_key = h.client(0).signer_key();
+    let beacon = drain(&mut wire)
+        .into_iter()
+        .rfind(|data| group_v3_wire::beacon_signed_by(data, &convo, &saro_key) == Some(18))
+        .expect("Saro's beacon for epoch 18");
+    let address = group_v3_wire::delivery_address(&convo);
+    h.client_mut(0)
+        .ds()
+        .publish(libchat::AddressedEnvelope {
+            delivery_address: address,
+            data: beacon,
+        })
+        .unwrap();
+    h.process(Duration::ZERO);
+
+    assert_eq!(h.client_mut(1).group_request_readd(&convo).unwrap(), 1);
+    h.process(Duration::from_secs(2));
+
+    assert_eq!(commits(&drain(&mut wire)), 0);
+}

@@ -15,6 +15,7 @@ pub mod inspect;
 mod payloads;
 mod readd;
 mod sealed;
+mod sync_state;
 
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -49,6 +50,8 @@ use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
 use self::beacons::Beacons;
 use self::payloads::{EncryptedSdsMessage, EpochData, GroupV3External, GroupV3Packet};
+pub use self::sync_state::SyncState;
+use self::sync_state::SyncTracker;
 
 // Type Aliases
 type Frame = payloads::GroupV3Frame;
@@ -108,6 +111,7 @@ pub struct GroupV3Convo {
     readds: VecDeque<(Vec<u8>, u64)>,
     /// Our last re-add request's attempt; it picks the answerer.
     readd_attempt: u32,
+    sync: SyncTracker,
     epoch_data: EpochData,
     later_epoch_msgs: Vec<(super::MessageId, ProtocolMessage)>,
 }
@@ -188,6 +192,7 @@ impl GroupV3Convo {
             beacons: Beacons::default(),
             readds: VecDeque::new(),
             readd_attempt: 0,
+            sync: SyncTracker::default(),
             later_epoch_msgs: Vec::with_capacity(MAX_LATER_EPOCH_MSGS),
         })
     }
@@ -511,6 +516,7 @@ impl GroupV3Convo {
 impl GroupV3Convo {
     /// Call after merging any commit, ours or a peer's.
     fn enter_epoch<S: ExternalServices>(&mut self, cx: &mut ServiceContext<S>) {
+        self.sync.enter_epoch();
         self.beacons
             .enter_epoch(cx, &self.mls_group, &self.convo_id);
         self.send_beacon(cx);
@@ -553,8 +559,12 @@ impl GroupV3Convo {
             Some(external::Inbound::Beacon(beacon)) => {
                 let crypto = cx.mls_provider.crypto();
                 let keys = self.mls_group.members().map(|m| m.signature_key);
-                self.beacons
-                    .receive_frame(crypto, &self.convo_id, keys, beacon, frame);
+                if let Some(peer) =
+                    self.beacons
+                        .receive_frame(crypto, &self.convo_id, keys, beacon, frame)
+                {
+                    self.observe_beacon(peer);
+                }
                 Ok(self.default_outcome())
             }
             Some(external::Inbound::Sealed(msg)) => self.receive_sealed(cx, msg),
@@ -562,6 +572,18 @@ impl GroupV3Convo {
                 debug!(convo = %self.convo_id, "refused a malformed external frame");
                 Ok(self.default_outcome())
             }
+        }
+    }
+
+    /// A verified peer beacon: the only evidence that concludes or clears a
+    /// fork. Detection only: nothing here asks for a re-add.
+    fn observe_beacon(&mut self, peer: external::Branch) {
+        let before = self.sync.state().clone();
+        let epoch = self.mls_group.epoch().as_u64();
+        self.sync.observe(&self.beacons, epoch, peer);
+        let now = self.sync.state();
+        if now != &before && matches!(now, SyncState::Forked { .. }) {
+            warn!(convo = %self.convo_id, state = ?now, "fork detected");
         }
     }
 }
@@ -634,6 +656,10 @@ where
         signer: crate::SignerRef,
     ) -> Result<(), ChatError> {
         GroupV3Convo::force_readd(self, cx, signer)
+    }
+
+    fn sync_state(&self) -> SyncState {
+        self.sync.state().clone()
     }
 }
 

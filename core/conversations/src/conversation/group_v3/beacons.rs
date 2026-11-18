@@ -32,8 +32,8 @@ const AHEAD_RETAINED: usize = 8;
 const EPOCHS_AHEAD: u64 = 64;
 
 /// Epochs whose state id we remember: never to seal to a state we were in,
-/// and to tell an asker that is merely behind.
-const STATES_RETAINED: usize = 16;
+/// and to tell a member that is merely behind from a forked one.
+const STATES_RETAINED: usize = 64;
 
 /// Epochs each signer's vouches are kept for, and branches kept per epoch.
 const SIGNED_EPOCHS_RETAINED: usize = 64;
@@ -50,6 +50,8 @@ pub struct Beacons {
     key: Option<HeldKey>,
     /// The states we were in, newest last.
     states: VecDeque<(u64, String)>,
+    /// Our leaf key, so our own beacon coming back is not taken for a peer's.
+    own: Vec<u8>,
     /// Epoch our beacon was made for.
     epoch: Option<u64>,
     /// Frames already verified this epoch, with the key that signed each.
@@ -108,8 +110,8 @@ impl Beacons {
 
         // We count among our own branch's signers.
         if let Some(own) = group.own_leaf_node() {
-            let own_key = own.signature_key().as_slice().to_vec();
-            self.store.vouch(&beacon, own_key);
+            self.own = own.signature_key().as_slice().to_vec();
+            self.store.vouch(&beacon, self.own.clone());
         }
         self.outgoing = Some(beacon);
         Ok(())
@@ -131,16 +133,20 @@ impl Beacons {
     }
 
     fn hold(&mut self, epoch: u64, epoch_id: &str, private: HpkePrivateKey) {
-        self.states.retain(|(e, _)| *e != epoch);
-        if self.states.len() == STATES_RETAINED {
-            self.states.pop_front();
-        }
-        self.states.push_back((epoch, epoch_id.to_string()));
+        self.record_state(epoch, epoch_id);
         self.key = Some(HeldKey {
             epoch,
             epoch_id: epoch_id.to_string(),
             private,
         });
+    }
+
+    fn record_state(&mut self, epoch: u64, epoch_id: &str) {
+        self.states.retain(|(e, _)| *e != epoch);
+        if self.states.len() == STATES_RETAINED {
+            self.states.pop_front();
+        }
+        self.states.push_back((epoch, epoch_id.to_string()));
     }
 
     /// Our external key, if `epoch` and `epoch_id` name the state we are in.
@@ -196,6 +202,24 @@ impl Beacons {
         Some((beacon, vouchers))
     }
 
+    /// Whether every key that signed `branch` has since vouched for a state we
+    /// held. True once its signers are forgotten.
+    pub fn rejoined(&self, branch: &Branch) -> bool {
+        let mut signers = self
+            .heard(branch.epoch)
+            .filter(|(id, ..)| *id == branch.epoch_id)
+            .map(|(.., signer)| signer);
+        signers.all(|signer| {
+            self.store
+                .signers
+                .range((Bound::Excluded(branch.epoch), Bound::Unbounded))
+                .any(|(&later, _)| {
+                    self.heard(later)
+                        .any(|(id, _, s)| s == signer && self.our_epoch_id(later) == Some(id))
+                })
+        })
+    }
+
     fn superseded(&self, epoch: u64, id: &str) -> bool {
         let signers: Vec<_> = self
             .heard(epoch)
@@ -210,7 +234,7 @@ impl Beacons {
 
     /// A beacon heard on the wire, `bytes` being its whole frame. Kept only if
     /// one of `keys`, our state's leaf keys, signed it. `keys` is read only for
-    /// a new frame.
+    /// a new frame. Returns the branch of a peer's verified beacon.
     pub fn receive_frame<I, K>(
         &mut self,
         crypto: &impl OpenMlsCrypto,
@@ -218,7 +242,8 @@ impl Beacons {
         keys: I,
         beacon: Admitted,
         bytes: &[u8],
-    ) where
+    ) -> Option<Branch>
+    where
         I: IntoIterator<Item = K>,
         K: AsRef<[u8]>,
     {
@@ -226,7 +251,7 @@ impl Beacons {
         let ours = self.epoch.unwrap_or_default();
         if epoch > ours + EPOCHS_AHEAD {
             debug!(convo = convo_id, epoch, "refused a beacon too far ahead");
-            return;
+            return None;
         }
 
         let digest: [u8; 32] = Blake2b::<U32>::digest(bytes).into();
@@ -243,7 +268,7 @@ impl Beacons {
                         self.ahead.push_back(bytes.to_vec());
                     }
                     debug!(convo = convo_id, "refused a beacon no member signed");
-                    return;
+                    return None;
                 };
                 let signer = key.as_ref().to_vec();
                 if self.verified.len() == VERIFIED_RETAINED {
@@ -253,7 +278,11 @@ impl Beacons {
                 signer
             }
         };
-        self.store.vouch(beacon.beacon(), signer);
+        self.store.vouch(beacon.beacon(), signer.clone());
+        (signer != self.own).then(|| Branch {
+            epoch,
+            epoch_id: beacon.beacon().epoch_id.clone(),
+        })
     }
 
     /// Every `(branch id, advertised key, signer)` we verified at `epoch`.
@@ -486,6 +515,11 @@ impl Beacons {
         };
         self.store.vouch(&beacon, signer.to_vec());
     }
+
+    /// As if we had been in `epoch_id` at `epoch`.
+    pub(super) fn held(&mut self, epoch: u64, epoch_id: &str) {
+        self.record_state(epoch, epoch_id);
+    }
 }
 
 #[derive(Debug)]
@@ -514,11 +548,11 @@ mod tests {
         p: &impl OpenMlsCrypto,
         keys: &[K],
         bytes: &[u8],
-    ) {
+    ) -> Option<Branch> {
         let Some(external::Inbound::Beacon(beacon)) = external::admit_frame(bytes) else {
             panic!("not a beacon frame");
         };
-        beacons.receive_frame(p, "convo-a", keys, beacon, bytes);
+        beacons.receive_frame(p, "convo-a", keys, beacon, bytes)
     }
 
     fn branch(epoch: u64, n: u64) -> Branch {
@@ -925,6 +959,48 @@ mod tests {
         assert!(beacons.key_for(last, &id(99)).is_none(), "another branch");
         assert_eq!(beacons.our_epoch_id(5), Some(id(5).as_str()));
         assert_eq!(beacons.our_epoch_id(0), None, "oldest state forgotten");
+    }
+
+    /// We were on branch 9 at 41 and have since moved on 40 epochs: its
+    /// signers are still ours, not a branch to ask.
+    #[test]
+    fn a_state_we_held_long_ago_is_never_a_target() {
+        let mut beacons = on_branch_9(&[(41, 9, 1), (41, 9, 2)]);
+        for epoch in 42..=81 {
+            beacons.held(epoch, &id(epoch));
+        }
+
+        assert_eq!(target(&beacons), None);
+    }
+
+    #[test]
+    fn only_a_verified_peer_beacon_is_reported() {
+        let p = provider();
+        let (private, public) = leaf_key(&p);
+        let (outsider, _) = leaf_key(&p);
+        let mut beacons = Beacons::default();
+
+        let forged = frame(&signed(&p, beacon(41, &id(1)), &outsider));
+        let genuine = frame(&signed(&p, beacon(41, &id(2)), &private));
+
+        assert_eq!(receive(&mut beacons, p.crypto(), &[&public], &forged), None);
+        assert_eq!(
+            receive(&mut beacons, p.crypto(), &[&public], &genuine),
+            Some(branch(41, 2))
+        );
+    }
+
+    #[test]
+    fn our_own_beacon_coming_back_is_not_reported() {
+        let p = provider();
+        let (private, public) = leaf_key(&p);
+        let bytes = frame(&signed(&p, beacon(41, &id(1)), &private));
+        let mut beacons = Beacons {
+            own: public.clone(),
+            ..Default::default()
+        };
+
+        assert_eq!(receive(&mut beacons, p.crypto(), &[&public], &bytes), None);
     }
 
     #[test]
