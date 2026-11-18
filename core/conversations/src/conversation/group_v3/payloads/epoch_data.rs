@@ -13,10 +13,12 @@ pub struct EpochData {
 }
 
 impl EpochData {
-    pub fn starting_at(epoch_num: u64) -> Self {
+    /// The history of a member that enters the group at `epoch_num`, in the state `fingerprint`
+    /// names.
+    pub fn starting_at(epoch_num: u64, fingerprint: EpochFingerprint) -> Self {
         Self {
             epoch_num,
-            history: vec![],
+            history: vec![fingerprint],
         }
     }
 

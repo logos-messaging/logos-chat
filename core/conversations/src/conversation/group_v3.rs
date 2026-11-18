@@ -202,7 +202,10 @@ impl GroupV3Convo {
         let convo_id = hex::encode(mls_group.group_id().as_slice());
         let channel = create_sds_channel(cx, &convo_id, start)?;
         Ok(Self {
-            epoch_data: EpochData::starting_at(mls_group.epoch().as_u64()),
+            epoch_data: EpochData::starting_at(
+                mls_group.epoch().as_u64(),
+                EpochFingerprint::from_group(&mls_group),
+            ),
             convo_id,
             mls_group,
             channel,

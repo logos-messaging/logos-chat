@@ -223,3 +223,23 @@ fn a_header_alone_confirms_its_sender() {
 
     assert_eq!(sync_of(&mut h, RAYA, &convo, SARO), MemberSync::Synced);
 }
+
+/// Raya has merged no commit since she joined, and with every beacon dropped,
+/// her message's header is all Saro hears of her state.
+#[test]
+fn a_joiners_first_message_confirms_it() {
+    let mut h = TestHarness::<4>::new(|_, _| {});
+    for i in 0..4 {
+        h.client_mut(i)
+            .ds()
+            .reject_publishes(|e| group_v3_wire::is_beacon(&e.data));
+    }
+    let raya = [h.raya().account()];
+    let convo = h.saro().create_group_convo_v3(&raya, "", "").unwrap();
+    h.process_until(|h| h.raya().convo_count() == 1);
+
+    h.raya().send_content(&convo, b"just joined").unwrap();
+    h.process_until(|h| h.saro().check(&convo, b"just joined"));
+
+    assert_eq!(sync_of(&mut h, SARO, &convo, RAYA), MemberSync::Synced);
+}
