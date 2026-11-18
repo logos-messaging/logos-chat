@@ -198,6 +198,38 @@ fn groupv3_resend_heals_a_lost_commit() {
 }
 
 #[test]
+fn groupv3_an_invite_is_pending_until_its_commit_lands() {
+    let mut harness = TestHarness::<4>::new(|_, _| {});
+    let convo_id = create_group_for_adds(&mut harness);
+
+    let pax = harness.pax().account();
+    let pax_signer = harness.pax().signer_key();
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &[pax])
+        .expect("saro adds pax");
+    let pending: Vec<_> = harness
+        .saro()
+        .group_pending_signers(&convo_id)
+        .expect("saro pending")
+        .into_iter()
+        .map(|signer| signer.signer)
+        .collect();
+    assert_eq!(pending, [pax_signer]);
+
+    harness.process_until_label("Saro applies the add", |h| {
+        h.saro().group_signers(&convo_id).map_or(0, |s| s.len()) == 3
+    });
+    assert!(
+        harness
+            .saro()
+            .group_pending_signers(&convo_id)
+            .expect("saro pending")
+            .is_empty()
+    );
+}
+
+#[test]
 fn groupv3_joiner_fetches_what_was_sent_while_its_invite_was_in_flight() {
     let mut harness = TestHarness::<4>::new(|_, _| {});
     let convo_id = create_group_for_adds(&mut harness);
