@@ -11,7 +11,7 @@ pub use crate::errors::ChatError;
 use crate::identity::{Signer, SignerKey, SignerRef};
 use crate::outcomes::ConvoOutcome;
 use crate::service_context::{ExternalServices, ServiceContext};
-use crate::types::{ConvoMetadata, DeliveryInfo};
+use crate::types::{ConvoMetadata, DebugData, DeliveryInfo};
 use crate::utils::{blake2b_hex, hash_size};
 pub use direct_v1::DirectV1Convo;
 pub use group_v1::GroupV1Convo;
@@ -37,7 +37,9 @@ pub(crate) fn frame_id(encoded: &[u8]) -> FrameId {
 }
 
 /// Behaviour shared by every conversation kind.
-pub(crate) trait Convo<S: ExternalServices>: Identified + Typed + ConvoBase + Send {
+pub(crate) trait Convo<S: ExternalServices>:
+    Identified + Typed + Debuggable + ConvoBase + Send
+{
     /// Encrypt and publish `content`, returning the id assigned to it.
     fn send_content(
         &mut self,
@@ -154,4 +156,9 @@ pub(crate) trait Identified {
 
 pub(crate) trait Typed {
     fn type_name(&self) -> &'static str;
+}
+
+pub(crate) trait Debuggable {
+    /// What the conversation reports about itself for debugging, under its own names.
+    fn debug_data(&self) -> DebugData;
 }

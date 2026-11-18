@@ -45,6 +45,7 @@ pub use storage::{
     Namespace, Scope, StorageError, StoredInstallation,
 };
 pub use types::{
-    AddressedEnvelope, ConvoMetadata, DeliveryInfo, DeliveryMsgId, PublishReceipt, PublishedId,
+    AddressedEnvelope, ConvoMetadata, DebugData, DeliveryInfo, DeliveryMsgId, PublishReceipt,
+    PublishedId,
 };
 pub use utils::{hex_trunc, trunc};

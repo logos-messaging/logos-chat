@@ -118,3 +118,7 @@ pub struct ConvoMetadata {
     pub name: String,
     pub desc: String,
 }
+
+/// Named values a conversation reports about itself for debugging. Each conversation kind picks
+/// its names and may add or drop one. A name keeps its meaning and its JSON type.
+pub type DebugData = serde_json::Map<String, serde_json::Value>;
