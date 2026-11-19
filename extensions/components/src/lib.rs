@@ -5,7 +5,7 @@ mod http_auth_client;
 mod key_vault;
 mod wakeup;
 
-pub use cached_auth::CachedAuth;
+pub use cached_auth::{CachedAuth, CachedAuthError};
 pub use contact_registry::ephemeral::EphemeralRegistry;
 pub use contact_registry::store::{
     ContactRegistry, ContactRegistryError, KEYPACKAGE_SUBMIT_ADDRESS, RegistryPublishMode,
