@@ -1,13 +1,14 @@
 use crate::identity::SignerKey;
 
 use crate::{
-    ChatError, ConvoMetadata, DebugData, DeliveryInfo, ExternalServices, MessageId, Signer,
+    ChatError, ConvoMetadata, DeliveryInfo, ExternalServices, MessageId, Signer,
     conversation::{
-        ConversationIdRef, Convo, ConvoBase, Debuggable, GroupConvo, GroupV1Convo, Identified,
-        Typed,
+        ConversationIdRef, Convo, ConvoBase, GroupConvo, GroupV1Convo, Identified, Typed,
     },
     service_context::ServiceContext,
 };
+#[cfg(feature = "debug-data")]
+use crate::{DebugData, conversation::Debuggable};
 
 type DelegateGroup = GroupV1Convo;
 
@@ -43,6 +44,7 @@ impl Typed for DirectV1Convo {
     }
 }
 
+#[cfg(feature = "debug-data")]
 impl Debuggable for DirectV1Convo {
     fn debug_data(&self) -> DebugData {
         DebugData::default()

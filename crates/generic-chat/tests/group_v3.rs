@@ -170,8 +170,10 @@ fn a_group_carries_messages_and_grows() {
         state.contains_key("epoch_fingerprint"),
         "a GroupV3 epoch fingerprint"
     );
-    assert_eq!(raya.debug_data(&convo_id).unwrap(), state);
-    assert_eq!(pax.debug_data(&convo_id).unwrap(), state);
+    for other in [&raya, &pax] {
+        let other_state = other.debug_data(&convo_id).unwrap();
+        assert_eq!(other_state["epoch_fingerprint"], state["epoch_fingerprint"]);
+    }
 
     saro.send_message(&convo_id, b"all three?").unwrap();
     assert_eq!(wait_for_message(&raya_events, b"all three?"), saro_addr);

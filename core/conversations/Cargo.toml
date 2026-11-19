@@ -12,6 +12,9 @@ crate-type = ["rlib"]
 test-support = []
 # Shortens the GroupV3 commit finalize timeout to 100 ms, for tests and simulations only.
 test-fast-commits = []
+# What a conversation reports about itself for debugging (`Core::debug_data`), such as each
+# GroupV3 member's state.
+debug-data = []
 
 [dependencies]
 # Workspace dependencies (sorted)

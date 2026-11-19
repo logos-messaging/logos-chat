@@ -12,7 +12,7 @@ license.workspace = true
 chat-sqlite = { workspace = true }
 components = { workspace = true }
 crypto = { workspace = true }
-libchat = { workspace = true, features = ["test-support"] }
+libchat = { workspace = true, features = ["debug-data", "test-support"] }
 
 # External dependencies (sorted)
 tracing = "0.1"

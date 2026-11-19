@@ -7,6 +7,7 @@
 //
 
 mod beacons;
+mod debug_data;
 mod external;
 mod finality;
 mod handlers;
@@ -40,20 +41,21 @@ use crate::conversation::group_v3::payloads::GroupV3Header;
 use crate::conversation::mls_groups::{HasMlsConvo, create_group, group_join_config};
 use crate::conversation::mls_trace::record::{ConvoId, Short};
 use crate::conversation::mls_utils::EpochFingerprint;
-use crate::conversation::{
-    ConversationIdRef, Convo, ConvoBase, Debuggable, GroupConvo, Identified, Typed,
-};
+use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified, Typed};
 use crate::errors::SendError;
 use crate::service_context::ServiceContext;
 use crate::utils::{blake2b_hex, hash_size};
 use crate::{
-    AddressedEnvelope, ChatError, ConvoOutcome, DebugData, DeliveryInfo, DeliveryService,
-    ExternalServices, IdentityProvider, Observation, SignerKey, WakeupService,
+    AddressedEnvelope, ChatError, ConvoOutcome, DeliveryInfo, DeliveryService, ExternalServices,
+    IdentityProvider, Observation, SignerKey, WakeupService,
 };
+#[cfg(feature = "debug-data")]
+use crate::{DebugData, conversation::Debuggable};
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
 use self::beacons::Beacons;
+use self::debug_data::DebugState;
 use self::payloads::{
     EncryptedSdsMessage, EpochData, GroupV3External, GroupV3FrameType, GroupV3Packet,
 };
@@ -121,6 +123,7 @@ pub struct GroupV3Convo {
     sync: SyncTracker,
     epoch_data: EpochData,
     later_epoch_msgs: Vec<(super::MessageId, ProtocolMessage)>,
+    debug_data: DebugState,
 }
 
 // `sds::Channel` implements no `Debug`.
@@ -197,7 +200,7 @@ impl GroupV3Convo {
         let convo_id = hex::encode(mls_group.group_id().as_slice());
         let channel = create_sds_channel(cx, &convo_id, start)?;
         Ok(Self {
-            epoch_data: EpochData::starting_at(mls_group.epoch().as_u64()),
+            epoch_data: EpochData::from_group(&mls_group),
             convo_id,
             mls_group,
             channel,
@@ -208,6 +211,7 @@ impl GroupV3Convo {
             readd_attempt: 0,
             sync: SyncTracker::default(),
             later_epoch_msgs: Vec::with_capacity(MAX_LATER_EPOCH_MSGS),
+            debug_data: DebugState::default(),
         })
     }
 }
@@ -712,6 +716,7 @@ where
             return self.receive_external(cx, &packet?.into_external()?);
         }
         let record = message.try_into_record()?;
+        self.debug_data.hear(&record, &self.mls_group);
         let retrieval_hint = delivery_info.map(|info| info.delivery_msg_id.as_bytes().to_vec());
         let events = self
             .channel
@@ -773,6 +778,7 @@ impl Typed for GroupV3Convo {
     }
 }
 
+#[cfg(feature = "debug-data")]
 impl Debuggable for GroupV3Convo {
     fn debug_data(&self) -> DebugData {
         let group = self.mls_group();
@@ -781,6 +787,10 @@ impl Debuggable for GroupV3Convo {
             (
                 "epoch_fingerprint".to_owned(),
                 EpochFingerprint::from_group(group).to_string().into(),
+            ),
+            (
+                "members".to_owned(),
+                self.debug_data.members(group, &self.beacons).into(),
             ),
         ])
     }

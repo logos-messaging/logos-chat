@@ -1,3 +1,4 @@
+mod debuggable;
 mod direct_v1;
 pub mod group_v1;
 mod group_v2;
@@ -11,8 +12,9 @@ pub use crate::errors::ChatError;
 use crate::identity::{Signer, SignerKey, SignerRef};
 use crate::outcomes::ConvoOutcome;
 use crate::service_context::{ExternalServices, ServiceContext};
-use crate::types::{ConvoMetadata, DebugData, DeliveryInfo};
+use crate::types::{ConvoMetadata, DeliveryInfo};
 use crate::utils::{blake2b_hex, hash_size};
+pub(crate) use debuggable::Debuggable;
 pub use direct_v1::DirectV1Convo;
 pub use group_v1::GroupV1Convo;
 pub use group_v2::{GroupV2Convo, GroupV2Frame, GroupV2Payload};
@@ -156,9 +158,4 @@ pub(crate) trait Identified {
 
 pub(crate) trait Typed {
     fn type_name(&self) -> &'static str;
-}
-
-pub(crate) trait Debuggable {
-    /// What the conversation reports about itself for debugging, under its own names.
-    fn debug_data(&self) -> DebugData;
 }

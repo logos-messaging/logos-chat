@@ -8,13 +8,15 @@ use crate::service_context::{ExternalServices, ServiceContext};
 use crate::service_traits::AuthService;
 use crate::storage::{ConversationKind, ConversationMeta, ConversationStore};
 use crate::tracked_delivery::{TrackedDelivery, TrackedMessage};
-use crate::types::{ConvoMetadata, DebugData};
+use crate::types::ConvoMetadata;
 use crate::{
     Clock, DeliveryInfo, DeliveryService, GroupV2Config, IdentityProvider, Observation,
     PublishReceipt, RegistrationService, WakeupService,
 };
+#[cfg(feature = "debug-data")]
+use crate::{DebugData, conversation::Debuggable};
 use crate::{
-    conversation::{Convo, ConvoBase, Debuggable, GroupConvo, Typed, mls_trace::record},
+    conversation::{Convo, ConvoBase, GroupConvo, Typed, mls_trace::record},
     errors::ChatError,
     inbox_v2::{InboxV2, MlsEphemeralPqProvider, MlsIdentityProvider},
     outcomes::{ConversationClass, ConvoOutcome, InboxOutcome, PayloadOutcome},
@@ -391,6 +393,7 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
     }
 
     /// What the conversation reports about itself for debugging, such as a GroupV3 group's epoch.
+    #[cfg(feature = "debug-data")]
     pub fn debug_data(&self, convo_id: ConversationIdRef) -> Result<DebugData, ChatError> {
         self.cached_convos
             .get(convo_id)
@@ -742,6 +745,7 @@ impl<S: ExternalServices> Typed for ConvoTypeOwned<S> {
     }
 }
 
+#[cfg(feature = "debug-data")]
 impl<S: ExternalServices> Debuggable for ConvoTypeOwned<S> {
     fn debug_data(&self) -> DebugData {
         match self {

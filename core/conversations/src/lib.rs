@@ -44,8 +44,9 @@ pub use storage::{
     ConversationKind, ConversationMeta, ConversationStore, IdentityStore, KvPair, KvStore, KvTx,
     Namespace, Scope, StorageError, StoredInstallation,
 };
+#[cfg(feature = "debug-data")]
+pub use types::DebugData;
 pub use types::{
-    AddressedEnvelope, ConvoMetadata, DebugData, DeliveryInfo, DeliveryMsgId, PublishReceipt,
-    PublishedId,
+    AddressedEnvelope, ConvoMetadata, DeliveryInfo, DeliveryMsgId, PublishReceipt, PublishedId,
 };
 pub use utils::{hex_trunc, trunc};
