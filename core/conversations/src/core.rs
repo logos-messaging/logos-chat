@@ -8,13 +8,13 @@ use crate::service_context::{ExternalServices, ServiceContext};
 use crate::service_traits::AuthService;
 use crate::storage::{ConversationKind, ConversationMeta, ConversationStore};
 use crate::tracked_delivery::{TrackedDelivery, TrackedMessage};
-use crate::types::ConvoMetadata;
+use crate::types::{ConvoMetadata, DebugData};
 use crate::{
     Clock, DeliveryInfo, DeliveryService, GroupV2Config, IdentityProvider, Observation,
     PublishReceipt, RegistrationService, WakeupService,
 };
 use crate::{
-    conversation::{Convo, ConvoBase, GroupConvo, Typed, mls_trace::record},
+    conversation::{Convo, ConvoBase, Debuggable, GroupConvo, Typed, mls_trace::record},
     errors::ChatError,
     inbox_v2::{InboxV2, MlsEphemeralPqProvider, MlsIdentityProvider},
     outcomes::{ConversationClass, ConvoOutcome, InboxOutcome, PayloadOutcome},
@@ -390,6 +390,14 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         })
     }
 
+    /// What the conversation reports about itself for debugging, such as a GroupV3 group's epoch.
+    pub fn debug_data(&self, convo_id: ConversationIdRef) -> Result<DebugData, ChatError> {
+        self.cached_convos
+            .get(convo_id)
+            .map(Debuggable::debug_data)
+            .ok_or_else(|| ChatError::NoConvo(convo_id.into()))
+    }
+
     /// Invites sent here whose commit has not landed. A direct conversation has
     /// none.
     pub fn group_pending_signers(&self, convo_id: &str) -> Result<Vec<Signer>, ChatError> {
@@ -730,6 +738,15 @@ impl<S: ExternalServices> Typed for ConvoTypeOwned<S> {
         match self {
             ConvoTypeOwned::Group(group_convo) => group_convo.type_name(),
             ConvoTypeOwned::Direct(convo) => convo.type_name(),
+        }
+    }
+}
+
+impl<S: ExternalServices> Debuggable for ConvoTypeOwned<S> {
+    fn debug_data(&self) -> DebugData {
+        match self {
+            ConvoTypeOwned::Group(group_convo) => group_convo.debug_data(),
+            ConvoTypeOwned::Direct(convo) => convo.debug_data(),
         }
     }
 }

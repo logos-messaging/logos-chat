@@ -165,6 +165,13 @@ fn a_group_carries_messages_and_grows() {
     wait_for_participants(&mut saro, &convo_id, &all);
     wait_for_participants(&mut raya, &convo_id, &all);
     wait_for_participants(&mut pax, &convo_id, &all);
+    let state = saro.debug_data(&convo_id).unwrap();
+    assert!(
+        state.contains_key("epoch_fingerprint"),
+        "a GroupV3 epoch fingerprint"
+    );
+    assert_eq!(raya.debug_data(&convo_id).unwrap(), state);
+    assert_eq!(pax.debug_data(&convo_id).unwrap(), state);
 
     saro.send_message(&convo_id, b"all three?").unwrap();
     assert_eq!(wait_for_message(&raya_events, b"all three?"), saro_addr);

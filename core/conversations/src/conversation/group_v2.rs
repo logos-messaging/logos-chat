@@ -8,7 +8,7 @@ use crate::conversation::mls_extensions::{
     ConvoMetaInfo, GROUP_METADATA_EXTENSION_TYPE, capabilities_with_group_metadata,
 };
 use crate::identity::{Signer, SignerKey, SignerRef};
-use crate::types::{AddressedEncryptedPayload, ConvoMetadata};
+use crate::types::{AddressedEncryptedPayload, ConvoMetadata, DebugData};
 use crate::{Clock, Content, WakeupService};
 use alloy::signers::local::PrivateKeySigner;
 use blake2::{Blake2b, Digest, digest::consts::U6};
@@ -39,7 +39,7 @@ use crate::conversation::mls_trace::record::{ConvoId, Short};
 use crate::conversation::{ConversationIdRef, ExternalServices, MessageId, ServiceContext};
 use crate::{
     ConvoOutcome, DeliveryInfo, DeliveryService, Observation, RegistrationService,
-    conversation::{ChatError, Convo, ConvoBase, GroupConvo, Identified, Typed},
+    conversation::{ChatError, Convo, ConvoBase, Debuggable, GroupConvo, Identified, Typed},
 };
 
 /// de-mls measures every conversation deadline (freeze windows, consensus timeouts, auto-votes)
@@ -355,6 +355,12 @@ impl Identified for GroupV2Convo {
 impl Typed for GroupV2Convo {
     fn type_name(&self) -> &'static str {
         "GroupV2"
+    }
+}
+
+impl Debuggable for GroupV2Convo {
+    fn debug_data(&self) -> DebugData {
+        DebugData::default()
     }
 }
 

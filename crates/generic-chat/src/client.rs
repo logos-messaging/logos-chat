@@ -5,9 +5,10 @@ use std::thread::{self, JoinHandle};
 use components::{ThreadedWakeupService, WakeupEvent};
 use crossbeam_channel::{Receiver, Sender, select};
 use libchat::{
-    AuthService, ConversationId, ConversationStore, ConvoMetadata, ConvoOutcome, Core, DeliveryAck,
-    DeliveryInfo, DeliveryService, GroupV2Config, InboxOutcome, MessageId, MissingMessage,
-    Observation, ParticipantId, PayloadOutcome, PublishReceipt, RegistrationService,
+    AuthService, ConversationId, ConversationStore, ConvoMetadata, ConvoOutcome, Core, DebugData,
+    DeliveryAck, DeliveryInfo, DeliveryService, GroupV2Config, InboxOutcome, MessageId,
+    MissingMessage, Observation, ParticipantId, PayloadOutcome, PublishReceipt,
+    RegistrationService,
 };
 use logos_account::AccountAddr;
 use parking_lot::Mutex;
@@ -308,6 +309,14 @@ where
     /// Fails for a conversation that is not loaded.
     pub fn convo_type(&self, convo_id: &str) -> Result<&'static str, ClientError> {
         self.core.lock().convo_type(convo_id).map_err(Into::into)
+    }
+
+    /// What the conversation reports about itself for debugging, as named
+    /// values, such as a GroupV3 group's `epoch` and `epoch_fingerprint`.
+    /// Each conversation kind picks its names. A name keeps its meaning and
+    /// its JSON type, and any name may be missing.
+    pub fn debug_data(&self, convo_id: &str) -> Result<DebugData, ClientError> {
+        self.core.lock().debug_data(convo_id).map_err(Into::into)
     }
 
     /// Every conversation ID known to this client, whether or not it can
