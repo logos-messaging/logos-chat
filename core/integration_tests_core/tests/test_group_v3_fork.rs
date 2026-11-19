@@ -99,6 +99,25 @@ fn a_commit_on_the_other_branch_is_only_a_suspicion() {
     );
 }
 
+/// Each side of a fork reaches epoch 2 on its own commit, so the two share the
+/// epoch but not its fingerprint.
+#[test]
+fn a_fork_shares_the_epoch_not_the_fingerprint() {
+    let (mut h, convo) = group_of_saro_and_raya();
+    let before = h.saro().debug_data(&convo).unwrap();
+    assert!(before.contains_key("epoch_fingerprint"));
+    assert_eq!(h.raya().debug_data(&convo).unwrap(), before);
+
+    fork(&mut h, &convo, nothing);
+
+    let saro = h.saro().debug_data(&convo).unwrap();
+    let raya = h.raya().debug_data(&convo).unwrap();
+    assert_eq!(saro["epoch"], 2);
+    assert_eq!(raya["epoch"], 2);
+    assert_ne!(saro["epoch_fingerprint"], raya["epoch_fingerprint"]);
+    assert_eq!(h.pax().debug_data(&convo).unwrap(), saro);
+}
+
 #[test]
 fn a_healthy_group_is_synced() {
     let (mut h, convo) = group_of_saro_and_raya();

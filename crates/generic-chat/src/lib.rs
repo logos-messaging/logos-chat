@@ -18,8 +18,9 @@ pub use members::{AuthenticatedSigner, Signer};
 pub use chat_sqlite::{DbKey, SqliteStore, StorageConfig};
 pub use libchat::{
     AddressedEnvelope, AuthService, ConversationClass, ConversationId, ConversationStore,
-    ConvoMetadata, DeliveryInfo, DeliveryMsgId, DeliveryService, GroupV2Config, IdentityProvider,
-    IdentityStore, MessageId, PublishReceipt, PublishedId, RegistrationService, StorageError,
+    ConvoMetadata, DebugData, DeliveryInfo, DeliveryMsgId, DeliveryService, GroupV2Config,
+    IdentityProvider, IdentityStore, MessageId, PublishReceipt, PublishedId, RegistrationService,
+    StorageError,
 };
 // A participant is an account, so callers name peers by their address.
 pub use logos_account::AccountAddr;

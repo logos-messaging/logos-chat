@@ -1,9 +1,10 @@
 use crate::identity::SignerKey;
 
 use crate::{
-    ChatError, ConvoMetadata, DeliveryInfo, ExternalServices, MessageId, Signer,
+    ChatError, ConvoMetadata, DebugData, DeliveryInfo, ExternalServices, MessageId, Signer,
     conversation::{
-        ConversationIdRef, Convo, ConvoBase, GroupConvo, GroupV1Convo, Identified, Typed,
+        ConversationIdRef, Convo, ConvoBase, Debuggable, GroupConvo, GroupV1Convo, Identified,
+        Typed,
     },
     service_context::ServiceContext,
 };
@@ -39,6 +40,12 @@ impl Identified for DirectV1Convo {
 impl Typed for DirectV1Convo {
     fn type_name(&self) -> &'static str {
         "DirectV1"
+    }
+}
+
+impl Debuggable for DirectV1Convo {
+    fn debug_data(&self) -> DebugData {
+        DebugData::default()
     }
 }
 

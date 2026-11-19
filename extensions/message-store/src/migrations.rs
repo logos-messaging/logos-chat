@@ -3,8 +3,13 @@
 
 use rusqlite::{Connection, TransactionBehavior};
 
-const MIGRATIONS: &[(&str, &str)] =
-    &[("001_messages", include_str!("migrations/001_messages.sql"))];
+const MIGRATIONS: &[(&str, &str)] = &[
+    ("001_messages", include_str!("migrations/001_messages.sql")),
+    (
+        "002_delivered",
+        include_str!("migrations/002_delivered.sql"),
+    ),
+];
 
 pub(crate) fn apply(conn: &mut Connection) -> rusqlite::Result<()> {
     conn.execute_batch(

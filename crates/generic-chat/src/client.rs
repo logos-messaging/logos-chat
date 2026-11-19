@@ -5,9 +5,10 @@ use std::thread::{self, JoinHandle};
 use components::{ThreadedWakeupService, WakeupEvent};
 use crossbeam_channel::{Receiver, Sender, select};
 use libchat::{
-    AuthService, ConversationId, ConversationStore, ConvoMetadata, ConvoOutcome, Core, DeliveryAck,
-    DeliveryInfo, DeliveryService, GroupV2Config, InboxOutcome, MessageId, MissingMessage,
-    Observation, ParticipantId, PayloadOutcome, PublishReceipt, RegistrationService,
+    AuthService, ConversationId, ConversationStore, ConvoMetadata, ConvoOutcome, Core, DebugData,
+    DeliveryAck, DeliveryInfo, DeliveryService, GroupV2Config, InboxOutcome, MessageId,
+    MissingMessage, Observation, ParticipantId, PayloadOutcome, PublishReceipt,
+    RegistrationService,
 };
 use logos_account::AccountAddr;
 use parking_lot::Mutex;
@@ -310,6 +311,14 @@ where
         self.core.lock().convo_type(convo_id).map_err(Into::into)
     }
 
+    /// What the conversation reports about itself for debugging, as named
+    /// values, such as a GroupV3 group's `epoch` and `epoch_fingerprint`.
+    /// Each conversation kind picks its names. A name keeps its meaning and
+    /// its JSON type, and any name may be missing.
+    pub fn debug_data(&self, convo_id: &str) -> Result<DebugData, ClientError> {
+        self.core.lock().debug_data(convo_id).map_err(Into::into)
+    }
+
     /// Every conversation ID known to this client, whether or not it can
     /// currently be sent to or read. Existence only — see [`Self::can_send`] /
     /// [`Self::can_receive`] to act on one, or [`Self::list_sendable_conversations`]
@@ -567,6 +576,10 @@ fn observation_event(convo_id: &Arc<str>, observation: Observation) -> Option<Ev
         }),
         Observation::SignersChanged => Some(Event::ConversationMembersChanged {
             convo_id: Arc::clone(convo_id),
+        }),
+        Observation::Delivered(message_id) => Some(Event::MessageDelivered {
+            convo_id: Arc::clone(convo_id),
+            message_id,
         }),
     }
 }

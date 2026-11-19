@@ -165,6 +165,13 @@ fn a_group_carries_messages_and_grows() {
     wait_for_participants(&mut saro, &convo_id, &all);
     wait_for_participants(&mut raya, &convo_id, &all);
     wait_for_participants(&mut pax, &convo_id, &all);
+    let state = saro.debug_data(&convo_id).unwrap();
+    assert!(
+        state.contains_key("epoch_fingerprint"),
+        "a GroupV3 epoch fingerprint"
+    );
+    assert_eq!(raya.debug_data(&convo_id).unwrap(), state);
+    assert_eq!(pax.debug_data(&convo_id).unwrap(), state);
 
     saro.send_message(&convo_id, b"all three?").unwrap();
     assert_eq!(wait_for_message(&raya_events, b"all three?"), saro_addr);
@@ -173,6 +180,40 @@ fn a_group_carries_messages_and_grows() {
     pax.send_message(&convo_id, b"pax is in").unwrap();
     assert_eq!(wait_for_message(&saro_events, b"pax is in"), pax_addr);
     assert_eq!(wait_for_message(&raya_events, b"pax is in"), pax_addr);
+}
+
+/// Saro's message is reported delivered once Raya replies.
+#[test]
+fn a_sent_message_is_reported_delivered() {
+    let bus = MessageBus::default();
+    let reg = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
+
+    let (mut saro, saro_events, saro_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
+    let (mut raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
+
+    let convo_id = saro
+        .create_group_conversation(&[&raya_addr], GroupMetadata::new("", ""))
+        .expect("saro create group");
+    wait_for_group_started(&raya_events, "raya ConversationStarted");
+    wait_for_participants(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
+
+    let sent = saro.send_message(&convo_id, b"hello raya").unwrap();
+    wait_for_message(&raya_events, b"hello raya");
+    raya.send_message(&convo_id, b"hi saro").unwrap();
+
+    wait_for_event(
+        &saro_events,
+        "MessageDelivered",
+        Duration::from_secs(10),
+        |e| match e {
+            Event::MessageDelivered {
+                convo_id: delivered_in,
+                message_id,
+            } if **delivered_in == *convo_id && *message_id == sent => Some(()),
+            _ => None,
+        },
+    );
 }
 
 /// GroupV3 cannot remove a member yet: the call returns an error, and the

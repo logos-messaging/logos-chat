@@ -40,13 +40,15 @@ use crate::conversation::group_v3::payloads::GroupV3Header;
 use crate::conversation::mls_groups::{HasMlsConvo, create_group, group_join_config};
 use crate::conversation::mls_trace::record::{ConvoId, Short};
 use crate::conversation::mls_utils::EpochFingerprint;
-use crate::conversation::{ConversationIdRef, Convo, ConvoBase, GroupConvo, Identified, Typed};
+use crate::conversation::{
+    ConversationIdRef, Convo, ConvoBase, Debuggable, GroupConvo, Identified, Typed,
+};
 use crate::errors::SendError;
 use crate::service_context::ServiceContext;
 use crate::utils::{blake2b_hex, hash_size};
 use crate::{
-    AddressedEnvelope, ChatError, ConvoOutcome, DeliveryInfo, DeliveryService, ExternalServices,
-    IdentityProvider, Observation, SignerKey, WakeupService,
+    AddressedEnvelope, ChatError, ConvoOutcome, DebugData, DeliveryInfo, DeliveryService,
+    ExternalServices, IdentityProvider, Observation, SignerKey, WakeupService,
 };
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
@@ -768,6 +770,19 @@ impl Identified for GroupV3Convo {
 impl Typed for GroupV3Convo {
     fn type_name(&self) -> &'static str {
         "GroupV3"
+    }
+}
+
+impl Debuggable for GroupV3Convo {
+    fn debug_data(&self) -> DebugData {
+        let group = self.mls_group();
+        DebugData::from_iter([
+            ("epoch".to_owned(), group.epoch().as_u64().into()),
+            (
+                "epoch_fingerprint".to_owned(),
+                EpochFingerprint::from_group(group).to_string().into(),
+            ),
+        ])
     }
 }
 
