@@ -7,6 +7,7 @@
 //
 
 mod beacons;
+mod debug_data;
 mod external;
 mod finality;
 mod handlers;
@@ -54,6 +55,7 @@ use crate::{
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
 use self::beacons::Beacons;
+use self::debug_data::DebugState;
 use self::payloads::{
     EncryptedSdsMessage, EpochData, GroupV3External, GroupV3FrameType, GroupV3Packet,
 };
@@ -121,6 +123,7 @@ pub struct GroupV3Convo {
     sync: SyncTracker,
     epoch_data: EpochData,
     later_epoch_msgs: Vec<(super::MessageId, ProtocolMessage)>,
+    debug_data: DebugState,
 }
 
 // `sds::Channel` implements no `Debug`.
@@ -197,7 +200,7 @@ impl GroupV3Convo {
         let convo_id = hex::encode(mls_group.group_id().as_slice());
         let channel = create_sds_channel(cx, &convo_id, start)?;
         Ok(Self {
-            epoch_data: EpochData::starting_at(mls_group.epoch().as_u64()),
+            epoch_data: EpochData::from_group(&mls_group),
             convo_id,
             mls_group,
             channel,
@@ -208,6 +211,7 @@ impl GroupV3Convo {
             readd_attempt: 0,
             sync: SyncTracker::default(),
             later_epoch_msgs: Vec::with_capacity(MAX_LATER_EPOCH_MSGS),
+            debug_data: DebugState::default(),
         })
     }
 }
@@ -732,6 +736,7 @@ where
             return self.receive_external(cx, &packet?.into_external()?);
         }
         let record = message.try_into_record()?;
+        self.debug_data.record_epoch_data(&record, &self.mls_group);
         let retrieval_hint = delivery_info.map(|info| info.delivery_msg_id.as_bytes().to_vec());
         let events = self
             .channel
@@ -801,6 +806,10 @@ impl Debuggable for GroupV3Convo {
             (
                 "epoch_fingerprint".to_owned(),
                 EpochFingerprint::from_group(group).to_string().into(),
+            ),
+            (
+                "members".to_owned(),
+                self.debug_data.members(group, &self.beacons).into(),
             ),
         ])
     }
