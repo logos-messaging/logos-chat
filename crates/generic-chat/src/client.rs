@@ -577,6 +577,10 @@ fn observation_event(convo_id: &Arc<str>, observation: Observation) -> Option<Ev
         Observation::SignersChanged => Some(Event::ConversationMembersChanged {
             convo_id: Arc::clone(convo_id),
         }),
+        Observation::Delivered(message_id) => Some(Event::MessageDelivered {
+            convo_id: Arc::clone(convo_id),
+            message_id,
+        }),
     }
 }
 
