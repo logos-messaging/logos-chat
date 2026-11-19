@@ -74,6 +74,10 @@ jobs:
         with:
           attic-token-ci: ${{ secrets.ATTIC_TOKEN_CI }}
           attic-token-public: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
+          # TODO: drop once logos-co/setup-nix-cache-action#13 lands in v1;
+          # until then v1 trusts only the cache's old keys.
+          extra-nix-config: |
+            extra-trusted-public-keys = public:zaDAOkd+E3cQyFm9J7qejQYd9HoLJc1SJvnk68hNWeI= ci:X+0FRwBzGnCKlopUJn2PR6xfiP2hnFAW90ruKaLumng=
       - name: Build logos-delivery
         run: nix build .#logos-delivery --print-build-logs
       # Build and run chat-cli through the dev shell so it links against the
