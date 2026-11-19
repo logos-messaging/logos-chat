@@ -57,6 +57,9 @@ impl GroupV3Convo {
                         warn!(convo = %self.convo_id, error = %e, "failed to publish sds record");
                     }
                 }
+                Event::MessageAcknowledged { message_id } => {
+                    observations.push(Observation::Delivered(message_id))
+                }
                 Event::MissingDependencies { missing, .. } => to_fetch.extend(
                     missing
                         .into_iter()
