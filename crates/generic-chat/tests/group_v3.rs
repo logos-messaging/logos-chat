@@ -12,10 +12,9 @@ use chat_sqlite::SqliteStore;
 use components::EphemeralRegistry;
 use crossbeam_channel::{Receiver, Sender};
 use integration_tests_core::AcceptAllAuth;
-use libchat::ChatError;
 use logos_account::AccountAddr;
 use logos_generic_chat::{
-    AddressedEnvelope, ChatClient, ChatClientBuilder, ClientError, ConversationClass, DeliveryInfo,
+    AddressedEnvelope, ChatClient, ChatClientBuilder, ConversationClass, DeliveryInfo,
     DeliveryMsgId, DeliveryReport, DeliveryService, Event, GroupMetadata, InProcessDelivery,
     InboundPayload, MessageBus, PendingInstallation, PublishReceipt, PublishedId, Transport,
 };
@@ -214,36 +213,6 @@ fn a_sent_message_is_reported_delivered() {
             _ => None,
         },
     );
-}
-
-/// GroupV3 cannot remove a member yet: the call returns an error, and the
-/// group keeps working.
-#[test]
-fn removing_a_member_is_unsupported() {
-    let bus = MessageBus::default();
-    let reg = EphemeralRegistry::new();
-    let auth = AcceptAllAuth::default();
-
-    let (mut saro, _saro_events, saro_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
-    let (_raya, raya_events, raya_addr) = create_test_client(bus.clone(), reg.clone(), &auth);
-
-    let convo_id = saro
-        .create_group_conversation(&[&raya_addr], GroupMetadata::new("", ""))
-        .expect("saro create group");
-    wait_for_group_started(&raya_events, "raya ConversationStarted");
-    wait_for_participants(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
-
-    let err = saro
-        .remove_group_participants(&convo_id, &[&raya_addr])
-        .expect_err("GroupV3 cannot remove members");
-    assert!(
-        matches!(err, ClientError::Chat(ChatError::UnsupportedFunction(..))),
-        "{err:?}"
-    );
-
-    wait_for_participants(&mut saro, &convo_id, &[&saro_addr, &raya_addr]);
-    saro.send_message(&convo_id, b"still here").unwrap();
-    wait_for_message(&raya_events, b"still here");
 }
 
 /// Saro's transport learns each id after `publish` returns, as a delivery node does, and

@@ -500,3 +500,38 @@ fn groupv3_member_four_commits_behind_catches_up_without_waiting() {
         signers(h, RAYA) == 6 && h.client(RAYA).check(&convo_id, b"m1")
     });
 }
+
+#[test]
+fn groupv3_removed_member() {
+    const M: &[u8] = b"after";
+    let mut harness = TestHarness::<4>::new(|_, _| {});
+    let convo_id = create_group_for_adds(&mut harness);
+
+    let pax = harness.pax().account();
+    harness
+        .saro()
+        .group_add_participants(&convo_id, std::slice::from_ref(&pax))
+        .expect("saro adds pax");
+    harness.process_until_label("Pax join", |h| {
+        h.pax().convo_count() == 1 && h.raya().group_signers(&convo_id).map_or(0, |s| s.len()) == 3
+    });
+
+    harness
+        .saro()
+        .group_remove_participants(&convo_id, &[pax])
+        .expect("saro removes pax");
+    harness.process_until_label("Saro and Raya apply the removal", |h| {
+        h.saro().group_signers(&convo_id).map_or(0, |s| s.len()) == 2
+            && h.raya().group_signers(&convo_id).map_or(0, |s| s.len()) == 2
+    });
+
+    // The remaining members share the new epoch.
+    harness
+        .saro()
+        .send_content(&convo_id, M)
+        .expect("saro send");
+    harness.process_until_label("Raya receives", |h| h.raya().check(&convo_id, M));
+
+    assert!(!harness.pax().can_send(&convo_id));
+    assert!(!harness.pax().check(&convo_id, M));
+}
