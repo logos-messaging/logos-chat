@@ -652,15 +652,35 @@ where
         self.defer_pending_commit(cx, invites)
     }
 
+    /// Removes a list of signers from the group.
+    ///
+    /// Caveats:
+    ///   - a signer cannot remove themselves from the conversation.
+    ///     Attempting to do so results in the entire call failing,
+    ///     and no state being changed.
+    #[instrument(name = "groupv3.remove_member", skip_all, fields(user_id = %cx.mls_identity.display_name(), signer = %Short(cx.mls_identity.signer_key().as_bytes()), convo = %ConvoId(&self.convo_id), epoch = self.mls_group.epoch().as_u64()))]
     fn remove_signer(
         &mut self,
-        _cx: &mut ServiceContext<S>,
-        _signer: &[crate::SignerRef],
+        cx: &mut ServiceContext<S>,
+        signers: &[crate::SignerRef],
     ) -> Result<(), ChatError> {
-        Err(ChatError::UnsupportedFunction(
-            self.convo_id.clone(),
-            "Remove Member".into(),
-        ))
+        let leaves: Vec<_> = self
+            .mls_group
+            .members()
+            .filter(|m| signers.iter().any(|s| m.signature_key == s.as_bytes()))
+            .map(|m| m.index)
+            .collect();
+        if leaves.is_empty() {
+            return Err(ChatError::NotAGroupMember);
+        }
+
+        let (commit_msg, _welcome, _) = self
+            .mls_group
+            .remove_members(&cx.mls_provider, &cx.mls_identity, &leaves)
+            .map_err(ChatError::generic)?;
+
+        self.send_pending_commit(cx, commit_msg)?;
+        self.defer_pending_commit(cx, vec![])
     }
 
     fn request_readd(

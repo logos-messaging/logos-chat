@@ -46,7 +46,7 @@ impl<T: HasMlsConvo + ?Sized> ConvoBase for T {
     }
 
     fn can_send(&self) -> bool {
-        true
+        self.mls_group().is_active()
     }
 
     fn metadata(&self) -> Option<crate::ConvoMetadata> {
