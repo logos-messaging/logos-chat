@@ -153,6 +153,16 @@ impl GroupV3Packet {
         Ok(envelope)
     }
 
+    /// The sender's epoch data, from the header.
+    #[cfg(feature = "debug-data")]
+    pub fn epoch_data(&self) -> Result<EpochData, ChatError> {
+        let header = GroupV3Header::decode(self.encrypted_header.as_ref())?;
+        header
+            .epoch_data
+            .ok_or(ChatError::BadParsing("packet header without epoch data"))?
+            .try_into()
+    }
+
     /// `None` for a frame that is not an MLS message.
     pub fn protocol_message(&self) -> Result<Option<ProtocolMessage>, ChatError> {
         let Some(EncodedFrame::MlsMessage(mls_message)) = &self.encoded_frame else {

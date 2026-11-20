@@ -7,6 +7,10 @@ license.workspace = true
 [lib]
 crate-type = ["rlib"]
 
+[features]
+# What a conversation reports about itself for debugging (`Client::debug_data`).
+debug-data = ["libchat/debug-data"]
+
 [dependencies]
 # Workspace dependencies (sorted)
 chat-sqlite = { workspace = true }
@@ -26,6 +30,8 @@ tracing = "0.1"
 # Workspace dependencies (sorted)
 integration_tests_core = { workspace = true }
 libchat = { workspace = true, features = ["test-fast-commits"] }
+# The tests read debug data.
+logos-generic-chat = { workspace = true, features = ["debug-data"] }
 
 # External dependencies (sorted)
 tempfile = "3"

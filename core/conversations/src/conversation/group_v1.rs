@@ -17,11 +17,13 @@ use crate::inbox_v2::MlsProvider;
 use crate::service_context::{ExternalServices, ServiceContext};
 use crate::service_traits::AuthService;
 
-use crate::types::{ConvoMetadata, DebugData};
+use crate::types::ConvoMetadata;
 use crate::utils::{blake2b_hex, hash_size};
+#[cfg(feature = "debug-data")]
+use crate::{DebugData, conversation::Debuggable};
 use crate::{
     DeliveryInfo, DeliveryService, IdentityProvider,
-    conversation::{ChatError, Convo, ConvoBase, Debuggable, GroupConvo, Identified, Typed},
+    conversation::{ChatError, Convo, ConvoBase, GroupConvo, Identified, Typed},
     outcomes::{Content, ConvoOutcome, Observation},
     service_traits::KeyPackageProvider,
     types::AddressedEncryptedPayload,
@@ -263,6 +265,7 @@ impl Typed for GroupV1Convo {
     }
 }
 
+#[cfg(feature = "debug-data")]
 impl Debuggable for GroupV1Convo {
     fn debug_data(&self) -> DebugData {
         DebugData::default()

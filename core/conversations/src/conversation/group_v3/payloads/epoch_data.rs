@@ -25,6 +25,17 @@ impl EpochData {
         self.history.insert(0, fingerprint);
         self.history.truncate(MAX_EPOCH_HISTORY);
     }
+
+    /// Each epoch the history covers, newest first, with its fingerprint.
+    #[cfg(feature = "debug-data")]
+    pub fn epochs(&self) -> impl Iterator<Item = (u64, &EpochFingerprint)> {
+        self.history
+            .iter()
+            .enumerate()
+            .filter_map(|(back, fingerprint)| {
+                Some((self.epoch_num.checked_sub(back as u64)?, fingerprint))
+            })
+    }
 }
 
 /// Wire form of [`EpochData`].
