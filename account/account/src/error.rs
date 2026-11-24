@@ -1,4 +1,4 @@
-use account_log::AccountLogError;
+use account_log::{AccountLogError, Context};
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -15,6 +15,10 @@ pub enum AccountError {
     /// shown two histories. The held record stands.
     #[error("account log forks from the log already held")]
     Forked,
+
+    /// A key revoked by value has no live entry under the context.
+    #[error("no live entry under {0} endorses the key")]
+    NotEndorsed(Context),
 }
 
 /// Routed through [`AccountLogError`] rather than added as a variant of its

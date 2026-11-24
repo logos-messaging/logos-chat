@@ -60,7 +60,19 @@ impl<AP: AccountProvider + AccountPublisher> Account<AP> {
 #[must_use = "entries are not written until `publish` is called"]
 pub struct AccountUpdate<'a, AP> {
     account: &'a mut Account<AP>,
-    entries: Vec<AccountEntry>,
+    entries: Vec<Pending>,
+}
+
+/// An edit as given, before `publish` reads the log it extends.
+#[derive(Debug)]
+enum Pending {
+    Entry(AccountEntry),
+    /// Tombstone the live entry endorsing `key` under `context`, whose index is
+    /// known only once the log is read.
+    RevokeKey {
+        context: Context,
+        key: [u8; 32],
+    },
 }
 
 impl<AP: AccountProvider + AccountPublisher> std::fmt::Debug for AccountUpdate<'_, AP> {
@@ -76,7 +88,7 @@ impl<AP: AccountProvider + AccountPublisher> AccountUpdate<'_, AP> {
     /// Append `entry`, built anywhere — the extension point for other crates'
     /// context specifications.
     pub fn push(mut self, entry: AccountEntry) -> Self {
-        self.entries.push(entry);
+        self.entries.push(Pending::Entry(entry));
         self
     }
 
@@ -97,7 +109,18 @@ impl<AP: AccountProvider + AccountPublisher> AccountUpdate<'_, AP> {
 
     /// Tombstone the entry at `index`.
     pub fn revoke(mut self, index: u32) -> Self {
-        self.entries.push(AccountEntry::Remove { index });
+        self.entries
+            .push(Pending::Entry(AccountEntry::Remove { index }));
+        self
+    }
+
+    /// Tombstone the live entry that endorses `key` under `context`. Publishing
+    /// fails with [`AccountError::NotEndorsed`] when no live entry does.
+    pub fn revoke_ed25519_key(mut self, context: Context, key: &Ed25519VerifyingKey) -> Self {
+        self.entries.push(Pending::RevokeKey {
+            context,
+            key: key.to_bytes(),
+        });
         self
     }
 
@@ -105,7 +128,13 @@ impl<AP: AccountProvider + AccountPublisher> AccountUpdate<'_, AP> {
     /// nothing: one rejected entry writes nothing.
     pub fn publish(self) -> Result<SignedAccountLog, AccountError> {
         let mut draft = self.account.draft()?;
-        for entry in self.entries {
+        for pending in self.entries {
+            let entry = match pending {
+                Pending::Entry(entry) => entry,
+                Pending::RevokeKey { context, key } => AccountEntry::Remove {
+                    index: live_index(&draft, context, key)?,
+                },
+            };
             draft.push(entry)?;
         }
 
@@ -120,6 +149,23 @@ impl<AP: AccountProvider + AccountPublisher> AccountUpdate<'_, AP> {
             .map_err(|e| AccountError::Provider(e.to_string()))?;
         Ok(signed)
     }
+}
+
+/// The index of the live entry in `draft` that endorses `key` under `context`.
+fn live_index(
+    draft: &AccountLogDraft,
+    context: Context,
+    key: [u8; 32],
+) -> Result<u32, AccountError> {
+    draft
+        .live_entries()
+        .into_iter()
+        .find(|live| {
+            matches!(live.entry, AccountEntry::Add { context: c, data: EntryData::Ed25519Key(k) }
+                if *c == context && *k == key)
+        })
+        .map(|live| live.index)
+        .ok_or(AccountError::NotEndorsed(context))
 }
 
 #[cfg(test)]
@@ -288,6 +334,61 @@ mod tests {
         let log = after.verify(&addr).unwrap();
         assert!(log.ed25519_keys_for(&CONTEXT).is_empty());
         assert_eq!(log.entries_for(&CONTEXT).len(), 0);
+    }
+
+    /// A key revoked by value tombstones the live entry endorsing it, found in
+    /// the log the update extends, and an endorsement can ride in the same
+    /// publish.
+    #[test]
+    fn revoking_a_key_tombstones_its_live_entry() {
+        let mut account = Account::new(FakeProvider::default());
+        let addr = account.addr();
+        let (old, kept, new) = (device(), device(), device());
+
+        account
+            .update()
+            .endorse_ed25519_key(CONTEXT, &old)
+            .endorse_ed25519_key(CONTEXT, &kept)
+            .publish()
+            .unwrap();
+        let after = account
+            .update()
+            .revoke_ed25519_key(CONTEXT, &old)
+            .endorse_ed25519_key(CONTEXT, &new)
+            .publish()
+            .unwrap();
+
+        let log = after.verify(&addr).unwrap();
+        assert_eq!(log.ed25519_keys_for(&CONTEXT), vec![kept, new]);
+        assert_eq!(log.revoked_ed25519_keys_for(&CONTEXT), vec![old]);
+    }
+
+    /// A key no live entry endorses, never endorsed or already revoked, fails
+    /// the publish and writes nothing.
+    #[test]
+    fn revoking_a_key_that_is_not_endorsed_publishes_nothing() {
+        let mut account = Account::new(FakeProvider::default());
+        let addr = account.addr();
+        let revoked = device();
+
+        account
+            .update()
+            .endorse_ed25519_key(CONTEXT, &revoked)
+            .publish()
+            .unwrap();
+        let before = account
+            .update()
+            .revoke_ed25519_key(CONTEXT, &revoked)
+            .publish()
+            .unwrap();
+
+        for key in [revoked, device()] {
+            assert_eq!(
+                account.update().revoke_ed25519_key(CONTEXT, &key).publish(),
+                Err(AccountError::NotEndorsed(CONTEXT))
+            );
+        }
+        assert_eq!(account.provider.fetch(&addr).unwrap().unwrap(), before);
     }
 
     /// One bad entry fails the whole publish; earlier ones are discarded too.
