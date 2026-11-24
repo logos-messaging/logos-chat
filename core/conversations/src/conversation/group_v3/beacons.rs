@@ -220,6 +220,21 @@ impl Beacons {
         })
     }
 
+    /// The branches peers signed at `epoch` that we verified.
+    pub fn peers_at(&self, epoch: u64) -> Vec<Branch> {
+        let ids: BTreeSet<_> = self
+            .heard(epoch)
+            .filter(|(.., signer)| *signer != self.own)
+            .map(|(id, ..)| id)
+            .collect();
+        ids.into_iter()
+            .map(|id| Branch {
+                epoch,
+                epoch_id: id.to_string(),
+            })
+            .collect()
+    }
+
     fn superseded(&self, epoch: u64, id: &str) -> bool {
         let signers: Vec<_> = self
             .heard(epoch)

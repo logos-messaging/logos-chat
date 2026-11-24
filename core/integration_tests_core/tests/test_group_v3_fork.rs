@@ -83,6 +83,29 @@ fn both_sides_of_a_fork_see_it() {
     assert_eq!(h.raya().group_sync_state(&convo).unwrap(), forked);
 }
 
+/// Raya's branch, and Pax on it, sign epoch 2 while Saro is still in epoch 1.
+/// Saro must still see the fork once its own commit lands.
+#[test]
+fn a_rival_heard_before_our_own_commit_lands_is_a_fork() {
+    let (mut h, convo) = group_of_saro_and_raya();
+    let pax = [h.pax().account()];
+    for i in 0..2 {
+        h.client_mut(i)
+            .ds()
+            .reject_publishes(|e| group_v3_wire::is_commit(&e.data));
+    }
+    h.raya().group_add_participants(&convo, &pax).unwrap();
+    h.tolerate_inbound_errors();
+    h.process_until(|h| h.pax().convo_count() == 1);
+    h.process(Duration::from_secs(1));
+
+    h.saro().group_add_participants(&convo, &pax).unwrap();
+    settle(&mut h);
+
+    let forked = SyncState::Forked { at_or_before: 2 };
+    assert_eq!(h.saro().group_sync_state(&convo).unwrap(), forked);
+}
+
 /// Saro stays `Forked` through Pax's beacons, and clears only once Raya is
 /// back on Saro's branch.
 #[test]

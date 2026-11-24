@@ -544,6 +544,11 @@ impl GroupV3Convo {
         self.sync.enter_epoch();
         self.beacons
             .enter_epoch(cx, &self.mls_group, &self.convo_id);
+        // Peers who got here first signed this epoch while it was ahead of us.
+        let epoch = self.mls_group.epoch().as_u64();
+        for peer in self.beacons.peers_at(epoch) {
+            self.observe_beacon(peer);
+        }
         self.send_beacon(cx);
     }
 
