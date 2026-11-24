@@ -1,3 +1,4 @@
+use openmls::group::MlsGroup;
 use prost::Message;
 
 use crate::ChatError;
@@ -20,10 +21,29 @@ impl EpochData {
         }
     }
 
+    /// Starts at `group`'s epoch, with its fingerprint, so that peers can check a member's state
+    /// before its first commit.
+    pub fn from_group(group: &MlsGroup) -> Self {
+        let epoch = group.epoch().as_u64();
+        let mut data = Self::starting_at(epoch);
+        data.advance_to(epoch, EpochFingerprint::from_group(group));
+        data
+    }
+
     pub fn advance_to(&mut self, epoch: u64, fingerprint: EpochFingerprint) {
         self.epoch_num = epoch;
         self.history.insert(0, fingerprint);
         self.history.truncate(MAX_EPOCH_HISTORY);
+    }
+
+    /// Each epoch the history covers, newest first, with its fingerprint.
+    pub fn iter(&self) -> impl Iterator<Item = (u64, &EpochFingerprint)> {
+        self.history
+            .iter()
+            .enumerate()
+            .filter_map(|(back, fingerprint)| {
+                Some((self.epoch_num.checked_sub(back as u64)?, fingerprint))
+            })
     }
 }
 
