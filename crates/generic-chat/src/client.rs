@@ -8,7 +8,7 @@ use libchat::{
     AuthService, ConversationId, ConversationStore, ConvoMetadata, ConvoOutcome, Core, DebugData,
     DeliveryAck, DeliveryInfo, DeliveryService, GroupV2Config, InboxOutcome, MessageId,
     MissingMessage, Observation, ParticipantId, PayloadOutcome, PublishReceipt,
-    RegistrationService,
+    RegistrationService, SyncState,
 };
 use logos_account::AccountAddr;
 use parking_lot::Mutex;
@@ -265,6 +265,32 @@ where
         self.core
             .lock()
             .group_remove_participants(convo_id, &accounts)
+            .map_err(Into::into)
+    }
+
+    /// Whether this member is in sync with the group, behind, or forked off it.
+    /// Only a GroupV3 conversation detects forks; others are `Unknown`.
+    pub fn group_sync_state(&self, convo_id: &str) -> Result<SyncState, ClientError> {
+        self.core
+            .lock()
+            .group_sync_state(convo_id)
+            .map_err(Into::into)
+    }
+
+    /// Ask a forked group to re-add this member. Returns how many requests
+    /// went out: 0 when no other branch outranks ours.
+    pub fn request_readd(&mut self, convo_id: &str) -> Result<usize, ClientError> {
+        self.core
+            .lock()
+            .group_request_readd(convo_id)
+            .map_err(Into::into)
+    }
+
+    /// [`Self::request_readd`], asking the next member instead.
+    pub fn retry_readd(&mut self, convo_id: &str) -> Result<usize, ClientError> {
+        self.core
+            .lock()
+            .group_retry_readd(convo_id)
             .map_err(Into::into)
     }
 

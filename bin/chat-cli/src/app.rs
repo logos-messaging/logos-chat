@@ -462,6 +462,8 @@ where
                 self.add_system_message("/add <address> - Add someone to the active group");
                 self.add_system_message("/remove <address> - Remove someone from the active group");
                 self.add_system_message("/members - List members of the active conversation");
+                self.add_system_message("/sync - Is the active group in sync, behind or forked");
+                self.add_system_message("/readd [next] - Ask a forked group to re-add you");
                 self.add_system_message("/reply <text> - Reply to the latest message");
                 self.add_system_message("/nickname <name> - Name the active chat");
                 self.add_system_message("/chats - List all chats");
@@ -635,6 +637,36 @@ where
                     self.add_system_message(&format!("  • {short}…{tags}"));
                 }
                 Ok(Some(format!("{total} member(s)")))
+            }
+            "/sync" => {
+                let chat_id = self
+                    .state
+                    .active_chat
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("No active conversation."))?;
+                let state = self
+                    .client
+                    .group_sync_state(&chat_id)
+                    .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                let msg = format!("Sync state: {state:?}");
+                self.add_system_message(&msg);
+                Ok(Some(msg))
+            }
+            "/readd" => {
+                let chat_id = self
+                    .state
+                    .active_chat
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("No active conversation."))?;
+                let sent = match args.trim() {
+                    "" => self.client.request_readd(&chat_id),
+                    "next" => self.client.retry_readd(&chat_id),
+                    _ => return Err(anyhow::anyhow!("Usage: /readd [next]")),
+                }
+                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                let msg = format!("Re-add requests sent: {sent}");
+                self.add_system_message(&msg);
+                Ok(Some(msg))
             }
             "/reply" => {
                 let text = args.trim();

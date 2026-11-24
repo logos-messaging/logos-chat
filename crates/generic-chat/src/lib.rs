@@ -20,7 +20,7 @@ pub use libchat::{
     AddressedEnvelope, AuthService, ConversationClass, ConversationId, ConversationStore,
     ConvoMetadata, DebugData, DeliveryInfo, DeliveryMsgId, DeliveryService, GroupV2Config,
     IdentityProvider, IdentityStore, MessageId, PublishReceipt, PublishedId, RegistrationService,
-    StorageError,
+    StorageError, SyncState,
 };
 // A participant is an account, so callers name peers by their address.
 pub use logos_account::AccountAddr;
