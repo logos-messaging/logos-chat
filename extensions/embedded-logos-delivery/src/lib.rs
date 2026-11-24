@@ -283,7 +283,7 @@ impl Fetch {
             let page = match page {
                 Ok(page) => page,
                 Err(e) => {
-                    warn!("fetching from the store failed: {e}");
+                    warn!(peer = %self.peer, "fetching from the store failed: {e}");
                     return;
                 }
             };
