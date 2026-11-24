@@ -35,6 +35,9 @@ const DATA_TEXT: u8 = 0x02;
 /// Entry header: opcode (u8) plus body length (u16 LE).
 const ENTRY_HEADER: usize = 3;
 
+/// Longest entry body the header's length can frame.
+const MAX_ENTRY_BYTES: usize = u16::MAX as usize;
+
 impl AccountLog {
     /// Canonical binary encoding — the bytes that are both signed and
     /// transmitted:
@@ -56,8 +59,9 @@ impl AccountLog {
     /// either — the account is identified by the address the caller already
     /// holds, and [`SignedAccountLog::verify`] checks the signature under it.
     ///
-    /// Fails only on [`MAX_PAYLOAD_BYTES`]: an owner must not publish a
-    /// payload no consumer will accept.
+    /// Fails on [`MAX_PAYLOAD_BYTES`], since an owner must not publish a
+    /// payload no consumer will accept, and on an entry too long for its
+    /// `u16` length.
     pub fn encode(&self) -> Result<EncodedAccountLog, AccountLogError> {
         encode_entries(self.entries())
     }
@@ -77,8 +81,10 @@ pub(crate) fn encode_entries(
             AccountEntry::Remove { index } => (OP_REMOVE, index.to_le_bytes().to_vec()),
             AccountEntry::Unknown { opcode, body } => (*opcode, body.clone()),
         };
+        let len = u16::try_from(body.len())
+            .map_err(|_| AccountLogError::EntryTooLarge(MAX_ENTRY_BYTES))?;
         out.push(opcode);
-        out.extend_from_slice(&(body.len() as u16).to_le_bytes());
+        out.extend_from_slice(&len.to_le_bytes());
         out.extend_from_slice(&body);
     }
     check_size(&out)?;
@@ -532,6 +538,26 @@ mod tests {
         assert!(matches!(
             encode_entries(&entries),
             Err(AccountLogError::TooLarge(_))
+        ));
+    }
+
+    /// An entry's length is a `u16`, so a longer body is refused rather than
+    /// written under a length that wrapped.
+    #[test]
+    fn oversize_entries_are_refused() {
+        // The value follows ctx_len, the context and the data tag.
+        let framing = 1 + CONTEXT.as_bytes().len() + 1;
+        let text = |len: usize| vec![AccountEntry::add(CONTEXT, EntryData::Text("x".repeat(len)))];
+
+        let largest = text(MAX_ENTRY_BYTES - framing);
+        assert_eq!(
+            encoded(largest.clone()).decode().unwrap(),
+            make_log(largest)
+        );
+
+        assert!(matches!(
+            encode_entries(&text(MAX_ENTRY_BYTES - framing + 1)),
+            Err(AccountLogError::EntryTooLarge(MAX_ENTRY_BYTES))
         ));
     }
 

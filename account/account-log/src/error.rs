@@ -27,6 +27,10 @@ pub enum AccountLogError {
     #[error("payload exceeds the {0} byte limit")]
     TooLarge(usize),
 
+    /// An entry's body is longer than its `u16` length can frame.
+    #[error("entry body exceeds the {0} byte limit")]
+    EntryTooLarge(usize),
+
     /// The payload carries a domain version this build does not implement.
     #[error("unsupported account log version {0}")]
     Version(String),
