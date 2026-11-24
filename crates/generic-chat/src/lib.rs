@@ -16,11 +16,13 @@ pub use members::{AuthenticatedSigner, Signer};
 
 // Re-export types callers need to interact with ChatClient.
 pub use chat_sqlite::{DbKey, SqliteStore, StorageConfig};
+#[cfg(feature = "debug-data")]
+pub use libchat::DebugData;
 pub use libchat::{
     AddressedEnvelope, AuthService, ConversationClass, ConversationId, ConversationStore,
-    ConvoMetadata, DebugData, DeliveryInfo, DeliveryMsgId, DeliveryService, GroupV2Config,
-    IdentityProvider, IdentityStore, MessageId, PublishReceipt, PublishedId, RegistrationService,
-    StorageError, SyncState,
+    ConvoMetadata, DeliveryInfo, DeliveryMsgId, DeliveryService, GroupV2Config, IdentityProvider,
+    IdentityStore, MessageId, PublishReceipt, PublishedId, RegistrationService, StorageError,
+    SyncState,
 };
 // A participant is an account, so callers name peers by their address.
 pub use logos_account::AccountAddr;

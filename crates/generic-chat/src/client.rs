@@ -5,10 +5,9 @@ use std::thread::{self, JoinHandle};
 use components::{ThreadedWakeupService, WakeupEvent};
 use crossbeam_channel::{Receiver, Sender, select};
 use libchat::{
-    AuthService, ConversationId, ConversationStore, ConvoMetadata, ConvoOutcome, Core, DebugData,
-    DeliveryAck, DeliveryInfo, DeliveryService, GroupV2Config, InboxOutcome, MessageId,
-    MissingMessage, Observation, ParticipantId, PayloadOutcome, PublishReceipt,
-    RegistrationService, SyncState,
+    AuthService, ConversationId, ConversationStore, ConvoMetadata, ConvoOutcome, Core, DeliveryAck,
+    DeliveryInfo, DeliveryService, GroupV2Config, InboxOutcome, MessageId, MissingMessage,
+    Observation, ParticipantId, PayloadOutcome, PublishReceipt, RegistrationService, SyncState,
 };
 use logos_account::AccountAddr;
 use parking_lot::Mutex;
@@ -337,11 +336,11 @@ where
         self.core.lock().convo_type(convo_id).map_err(Into::into)
     }
 
-    /// What the conversation reports about itself for debugging, as named
-    /// values, such as a GroupV3 group's `epoch` and `epoch_fingerprint`.
-    /// Each conversation kind picks its names. A name keeps its meaning and
-    /// its JSON type, and any name may be missing.
-    pub fn debug_data(&self, convo_id: &str) -> Result<DebugData, ClientError> {
+    /// What the conversation reports about itself, for debugging only. The
+    /// data may change without notice and comes with no promises, so don't
+    /// build features on it. Needs the `debug-data` feature.
+    #[cfg(feature = "debug-data")]
+    pub fn debug_data(&self, convo_id: &str) -> Result<libchat::DebugData, ClientError> {
         self.core.lock().debug_data(convo_id).map_err(Into::into)
     }
 
