@@ -157,7 +157,8 @@ impl GroupV3Convo {
     }
 
     /// Joins from a Welcome, starting our SDS channel at `start`, the commit that added us. Also
-    /// returns whether it replaced a group we held, which only a re-add we asked for may do.
+    /// returns whether it replaced a group we held: one we were removed from, or one a re-add we
+    /// asked for answers.
     #[instrument(name = "groupv3.new_from_welcome", skip_all, fields(user_id = %cx.mls_identity.display_name(), signer = %Short(cx.mls_identity.signer_key().as_bytes()), convo = Empty))]
     pub fn new_from_welcome<S: ExternalServices>(
         cx: &mut ServiceContext<S>,
@@ -221,9 +222,11 @@ impl GroupV3Convo {
 /// so fast test commits don't shrink it under an SDS tick.
 const READD_WELCOME_WAIT: Duration = Duration::from_secs(360);
 
-/// A re-add sends a Welcome for a group we hold. Accept it only while we wait
-/// for one, only from a member of that group who vouched for the branch we
-/// asked, and only past that branch's epoch.
+/// A Welcome for a group we hold. Once we were removed from it, any later
+/// Welcome adds us again: a Welcome for a group we don't hold is accepted from
+/// anyone too. Otherwise it is a re-add: accept it only while we wait for one,
+/// only from a member of that group who vouched for the branch we asked, and
+/// only past that branch's epoch.
 /// Not proof of descent: a member we still list could build a lookalike group.
 /// Read-only, so a Welcome that fails to install leaves the held group and the
 /// pending re-add as they were.
@@ -237,6 +240,15 @@ fn held_group_to_replace<S: ExternalServices>(
     else {
         return Ok(None);
     };
+    let epoch = staged.group_context().epoch();
+    if !held.is_active() {
+        if epoch <= held.epoch() {
+            return Err(ChatError::generic(
+                "a Welcome no later than our removal from the group",
+            ));
+        }
+        return Ok(Some(held));
+    }
     let Some(target) = cx.readd_pending.get(&hex::encode(group_id.as_slice())) else {
         return Err(ChatError::generic(
             "a Welcome for a group we hold, and we did not ask to be re-added",
@@ -262,7 +274,7 @@ fn held_group_to_replace<S: ExternalServices>(
             "a Welcome from a member who did not vouch for the branch we asked",
         ));
     }
-    if staged.group_context().epoch().as_u64() <= target.epoch {
+    if epoch.as_u64() <= target.epoch {
         return Err(ChatError::generic(
             "a Welcome no later than the branch we asked",
         ));
