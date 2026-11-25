@@ -33,8 +33,8 @@ pub use identity::{AuthenticatedSigner, ParticipantId, Signer, SignerError, Sign
 pub use inbox_v2::{InboxV2Frame, InviteType};
 pub use kv::{KvTransaction, ScopedKvStore};
 pub use outcomes::{
-    Content, ConversationClass, ConvoOutcome, InboxOutcome, NewConversation, Observation,
-    PayloadOutcome,
+    Content, ConversationClass, ConvoOutcome, DebugEvent, InboxOutcome, LossReason,
+    NewConversation, Observation, PayloadOutcome,
 };
 pub use service_context::ExternalServices;
 pub use service_traits::{

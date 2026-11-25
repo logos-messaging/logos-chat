@@ -8,6 +8,7 @@
 
 mod beacons;
 mod debug_data;
+mod debug_events;
 mod external;
 mod finality;
 mod handlers;
@@ -748,19 +749,23 @@ where
         payload: &[u8],
         delivery_info: Option<&DeliveryInfo>,
     ) -> Result<ConvoOutcome, ChatError> {
+        let mut observations = vec![];
+
         let message = EncryptedSdsMessage::decode(payload)?;
         if let Some(packet) = message.packet_outside_sds() {
             return self.receive_external(cx, &packet?.into_external()?);
         }
         let record = message.try_into_record()?;
+        observations.extend(debug_events::sds_received(&record, delivery_info));
         self.debug_data.record_epoch_data(&record, &self.mls_group);
         let retrieval_hint = delivery_info.map(|info| info.delivery_msg_id.as_bytes().to_vec());
         let events = self
             .channel
             .receive(record, retrieval_hint, now_ms(cx))
             .map_err(ChatError::generic)?;
+        observations.extend(self.handle_sds_events(cx, events));
         Ok(ConvoOutcome {
-            observations: self.handle_sds_events(cx, events),
+            observations,
             ..self.default_outcome()
         })
     }

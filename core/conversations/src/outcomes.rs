@@ -10,7 +10,8 @@ use crate::storage::ConversationKind;
 use serde::{Deserialize, Serialize};
 
 use crate::conversation::{ConversationId, MessageId};
-use crate::identity::AuthenticatedSigner;
+use crate::identity::{AuthenticatedSigner, SignerKey};
+use crate::types::DeliveryMsgId;
 
 #[derive(Debug, Clone)]
 pub struct Content {
@@ -33,6 +34,7 @@ pub enum Observation {
     SignersChanged,
     /// At least one other signer has received this message.
     Delivered(MessageId),
+    Debug(DebugEvent),
 }
 
 #[derive(Debug, Clone)]
@@ -98,4 +100,51 @@ impl ConversationClass {
             ConversationKind::Unknown(_) => None,
         }
     }
+}
+
+// -- Debug
+
+/// A step a message took on its way in, for debugging. Only GroupV3
+/// reports these.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub enum DebugEvent {
+    /// A message reached the conversation from delivery, before ordering.
+    /// Each copy is reported, a duplicate included.
+    SdsReceived {
+        message_id: MessageId,
+        /// Self-asserted; `None` when it names no signer.
+        sender_hint: Option<SignerKey>,
+        delivery_msg_id: Option<DeliveryMsgId>,
+    },
+    /// A message waits for the messages it depends on.
+    SdsBuffered {
+        message_id: MessageId,
+        /// Dependencies that never arrived.
+        missing_dependencies: Vec<MessageId>,
+        /// Dependencies that arrived but are buffered too.
+        buffered_dependencies: Vec<MessageId>,
+    },
+    /// A message is in order and goes on to be decrypted, whatever happens to
+    /// it next.
+    SdsReleased {
+        message_id: MessageId,
+        /// What the message carries, as the conversation names it, such as
+        /// `"commit"`.
+        kind: String,
+    },
+    /// A buffered message was dropped unreleased.
+    SdsLost {
+        message_id: MessageId,
+        reason: LossReason,
+    },
+}
+
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LossReason {
+    /// Its dependencies did not arrive in time.
+    Expired,
+    /// It was the oldest buffered message when the buffer filled.
+    BufferFull,
 }
