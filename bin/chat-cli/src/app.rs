@@ -7,7 +7,7 @@ use arboard::Clipboard;
 use crossbeam_channel::Receiver;
 use logos_chat::{
     AccountAddr, AuthService, ChatClient, ConversationClass, ConversationStore, Event,
-    GroupMetadata, RegistrationService, Transport,
+    GroupMetadata, RegistrationService, SyncState, Transport,
 };
 use message_types::ContentId;
 use serde::{Deserialize, Serialize};
@@ -22,6 +22,21 @@ fn snippet_of(body: &str) -> String {
         format!("{short}…")
     } else {
         short
+    }
+}
+
+/// A group's sync state, for `/sync` and the status line.
+fn describe_sync(state: &SyncState) -> String {
+    match state {
+        SyncState::Synced => "in sync".into(),
+        SyncState::Lagging { peer_epoch } => format!("behind: a peer is at epoch {peer_epoch}"),
+        SyncState::Suspect { epoch } => {
+            format!("possibly forked: a commit for epoch {epoch} did not apply")
+        }
+        SyncState::Forked { at_or_before } => {
+            format!("forked at or before epoch {at_or_before}; /readd to rejoin")
+        }
+        _ => "unknown: no peer beacon heard yet".into(),
     }
 }
 
@@ -383,6 +398,25 @@ where
                     self.is_active = self.client.can_send(&chat_id);
                 }
             }
+            Event::GroupSyncChanged { convo_id, state } => {
+                let Some(session) = self.state.chats.get(convo_id.as_ref()) else {
+                    return;
+                };
+                // Only a fork needs the user; the rest is for /sync.
+                if matches!(state, SyncState::Forked { .. }) {
+                    self.status =
+                        format!("'{}' is {}.", session.display_name(), describe_sync(&state));
+                }
+            }
+            Event::ConversationRejoined { convo_id } => {
+                let chat_id = convo_id.to_string();
+                if let Some(session) = self.state.chats.get(&chat_id) {
+                    self.status = format!("Rejoined '{}' after a fork.", session.display_name());
+                }
+                if self.state.active_chat.as_deref() == Some(&chat_id) {
+                    self.is_active = self.client.can_send(&chat_id);
+                }
+            }
             Event::InboundError { message } => {
                 self.status = format!("Could not process incoming message: {message}");
             }
@@ -463,7 +497,9 @@ where
                 self.add_system_message("/remove <address> - Remove someone from the active group");
                 self.add_system_message("/members - List members of the active conversation");
                 self.add_system_message("/sync - Is the active group in sync, behind or forked");
-                self.add_system_message("/readd [next] - Ask a forked group to re-add you");
+                self.add_system_message(
+                    "/readd [next] - Ask a forked group to re-add you; next asks another member",
+                );
                 self.add_system_message("/reply <text> - Reply to the latest message");
                 self.add_system_message("/nickname <name> - Name the active chat");
                 self.add_system_message("/chats - List all chats");
@@ -647,8 +683,8 @@ where
                 let state = self
                     .client
                     .group_sync_state(&chat_id)
-                    .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-                let msg = format!("Sync state: {state:?}");
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                let msg = format!("Sync: {}", describe_sync(&state));
                 self.add_system_message(&msg);
                 Ok(Some(msg))
             }
@@ -663,7 +699,7 @@ where
                     "next" => self.client.retry_readd(&chat_id),
                     _ => return Err(anyhow::anyhow!("Usage: /readd [next]")),
                 }
-                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
                 let msg = format!("Re-add requests sent: {sent}");
                 self.add_system_message(&msg);
                 Ok(Some(msg))

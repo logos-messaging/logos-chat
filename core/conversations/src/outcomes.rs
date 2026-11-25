@@ -9,7 +9,7 @@
 use crate::storage::ConversationKind;
 use serde::{Deserialize, Serialize};
 
-use crate::conversation::{ConversationId, MessageId};
+use crate::conversation::{ConversationId, MessageId, SyncState};
 use crate::identity::{AuthenticatedSigner, SignerKey};
 use crate::types::DeliveryMsgId;
 
@@ -35,6 +35,11 @@ pub enum Observation {
     /// At least one other signer has received this message.
     Delivered(MessageId),
     Debug(DebugEvent),
+    /// The group's [`SyncState`] changed, e.g. a fork was detected or cleared.
+    SyncChanged(SyncState),
+    /// A re-add we asked for landed: we hold the group again, on the branch
+    /// that answered.
+    Rejoined,
 }
 
 #[derive(Debug, Clone)]

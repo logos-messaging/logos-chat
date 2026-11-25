@@ -154,7 +154,7 @@ impl GroupV3Convo {
         cx: &mut ServiceContext<S>,
         next_answerer: bool,
     ) -> Result<usize, ChatError> {
-        let Some((to, vouchers)) = self.beacons.seal_target() else {
+        let Ok((to, vouchers)) = self.beacons.seal_target() else {
             return Ok(0);
         };
         let own = self
