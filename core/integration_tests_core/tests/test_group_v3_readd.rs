@@ -542,3 +542,48 @@ fn a_member_far_behind_is_not_readded() {
 
     assert_eq!(commits(&drain(&mut wire)), 0);
 }
+
+/// Saro removes Raya, then `adder` adds her again with an ordinary add, not a
+/// re-add. Raya holds the group she was removed from, inactive.
+fn removed_and_added_again(adder: usize) {
+    const SARO: usize = 0;
+    const RAYA: usize = 1;
+    const PAX: usize = 2;
+    let mut h = TestHarness::<3>::new(|_, _| {});
+    let (raya, pax) = (h.raya().account(), h.pax().account());
+    let convo = h
+        .saro()
+        .create_group_convo_v3(&[raya.clone(), pax], "", "")
+        .unwrap();
+    h.process_until(|h| h.raya().convo_count() == 1 && h.pax().convo_count() == 1);
+
+    h.client_mut(SARO)
+        .group_remove_participants(&convo, std::slice::from_ref(&raya))
+        .unwrap();
+    settle(&mut h);
+    assert!(!h.client(RAYA).can_send(&convo), "Raya applied her removal");
+
+    h.tolerate_inbound_errors();
+    h.client_mut(adder)
+        .group_add_participants(&convo, &[raya])
+        .unwrap();
+    settle(&mut h);
+
+    assert!(h.client(RAYA).can_send(&convo));
+    h.client_mut(PAX)
+        .send_content(&convo, b"welcome back")
+        .unwrap();
+    h.process_until(|h| h.client(RAYA).check(&convo, b"welcome back"));
+    h.client_mut(RAYA).send_content(&convo, b"thanks").unwrap();
+    h.process_until(|h| h.client(SARO).check(&convo, b"thanks"));
+}
+
+#[test]
+fn a_removed_member_can_be_added_again() {
+    removed_and_added_again(2);
+}
+
+#[test]
+fn a_removed_member_can_be_added_again_by_whoever_removed_it() {
+    removed_and_added_again(0);
+}
