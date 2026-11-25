@@ -23,7 +23,7 @@ pub use libchat::{
     SyncState,
 };
 #[cfg(feature = "debug-data")]
-pub use libchat::{DebugData, DebugEvent, LossReason};
+pub use libchat::{DebugData, DebugEvent, IgnoreReason, LossReason, SdsDependency};
 // A participant is an account, so callers name peers by their address.
 pub use logos_account::AccountAddr;
 

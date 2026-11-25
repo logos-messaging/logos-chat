@@ -5,7 +5,10 @@ use openmls::framing::ProtocolMessage;
 use openmls::prelude::ContentType;
 use sds::{HistoryEntry, SDSRecord};
 
-use crate::{ChatError, DebugEvent, DeliveryInfo, LossReason, MessageId, Observation, SignerKey};
+use crate::{
+    ChatError, DebugEvent, DeliveryInfo, DeliveryMsgId, IgnoreReason, LossReason, MessageId,
+    Observation, SdsDependency, SignerKey,
+};
 
 /// `None` for a sync, which carries no message.
 pub(super) fn sds_received(record: &SDSRecord, info: Option<&DeliveryInfo>) -> Option<Observation> {
@@ -17,6 +20,33 @@ pub(super) fn sds_received(record: &SDSRecord, info: Option<&DeliveryInfo>) -> O
     }))
 }
 
+pub(super) fn sds_ignored(message_id: MessageId, reason: sds::IgnoreReason) -> Observation {
+    let reason = match reason {
+        sds::IgnoreReason::Own => IgnoreReason::Own,
+        sds::IgnoreReason::Duplicate => IgnoreReason::Duplicate,
+        sds::IgnoreReason::BeforeStart => IgnoreReason::BeforeStart,
+    };
+    Observation::Debug(DebugEvent::SdsIgnored { message_id, reason })
+}
+
+/// `None` for an error `receive` never returns.
+pub(super) fn sds_ignored_for_error(
+    message_id: MessageId,
+    error: &sds::Error,
+) -> Option<Observation> {
+    let reason = match error {
+        sds::Error::WrongChannel { .. } => IgnoreReason::WrongChannel,
+        sds::Error::ContentTooLarge { .. } => IgnoreReason::TooLarge,
+        sds::Error::EmptyContent | sds::Error::InvalidConfig(_) | sds::Error::UnknownMessage(_) => {
+            return None;
+        }
+    };
+    Some(Observation::Debug(DebugEvent::SdsIgnored {
+        message_id,
+        reason,
+    }))
+}
+
 pub(super) fn sds_buffered(
     message_id: MessageId,
     missing: &[HistoryEntry],
@@ -24,8 +54,8 @@ pub(super) fn sds_buffered(
 ) -> Observation {
     Observation::Debug(DebugEvent::SdsBuffered {
         message_id,
-        missing_dependencies: message_ids(missing),
-        buffered_dependencies: message_ids(buffered),
+        missing_dependencies: dependencies(missing),
+        buffered_dependencies: dependencies(buffered),
     })
 }
 
@@ -48,6 +78,20 @@ pub(super) fn sds_lost(message_id: MessageId, reason: sds::LossReason) -> Observ
     Observation::Debug(DebugEvent::SdsLost { message_id, reason })
 }
 
+pub(super) fn sds_fetch_failed(delivery_msg_ids: Vec<DeliveryMsgId>) -> Observation {
+    Observation::Debug(DebugEvent::SdsFetchFailed { delivery_msg_ids })
+}
+
+pub(super) fn sds_resent(record: &SDSRecord) -> Observation {
+    Observation::Debug(DebugEvent::SdsResent {
+        message_id: record.header.message_id.clone(),
+    })
+}
+
+pub(super) fn sds_send_failed(message_id: MessageId) -> Observation {
+    Observation::Debug(DebugEvent::SdsSendFailed { message_id })
+}
+
 fn kind(message: &Result<Option<ProtocolMessage>, ChatError>) -> &'static str {
     match message {
         Ok(Some(message)) => match message.content_type() {
@@ -60,9 +104,12 @@ fn kind(message: &Result<Option<ProtocolMessage>, ChatError>) -> &'static str {
     }
 }
 
-fn message_ids(entries: &[HistoryEntry]) -> Vec<MessageId> {
+fn dependencies(entries: &[HistoryEntry]) -> Vec<SdsDependency> {
     entries
         .iter()
-        .map(|entry| entry.message_id.clone())
+        .map(|entry| SdsDependency {
+            message_id: entry.message_id.clone(),
+            delivery_msg_id: entry.retrieval_hint.clone().map(DeliveryMsgId::from),
+        })
         .collect()
 }

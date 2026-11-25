@@ -34,7 +34,7 @@ rand = "0.9"
 # sds's tick takes a rand 0.10 RNG.
 rand_0_10 = { package = "rand", version = "0.10" }
 rand_core = { version = "0.6" }
-sds = { git = "https://github.com/logos-messaging/sds-rs", rev = "7583161fe1dcfeb3df006f12378baba0fc391f44" }
+sds = { git = "https://github.com/logos-messaging/sds-rs", branch = "feat/buffered-and-lost-reason" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0.17"

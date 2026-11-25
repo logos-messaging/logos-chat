@@ -41,7 +41,7 @@ impl GroupV3Convo {
                     let message = GroupV3Packet::from_sds_content(&message_id, &content)
                         .and_then(|envelope| envelope.protocol_message());
 
-                    // Record event after decryption
+                    // Record event after mls_decode
                     observations.push(debug_events::sds_released(&message_id, &message));
 
                     match message
@@ -53,7 +53,13 @@ impl GroupV3Convo {
                         }
                     }
                 }
-                Event::Resend(record) | Event::Repair(record) => {
+                Event::Resend(record) => {
+                    observations.push(debug_events::sds_resent(&record));
+                    if let Err(e) = self.publish_record(cx, record) {
+                        warn!(convo = %self.convo_id, error = %e, "failed to publish sds record");
+                    }
+                }
+                Event::Repair(record) => {
                     if let Err(e) = self.publish_record(cx, record) {
                         warn!(convo = %self.convo_id, error = %e, "failed to publish sds record");
                     }
@@ -86,13 +92,18 @@ impl GroupV3Convo {
                             .map(DeliveryMsgId::from),
                     );
                 }
+                Event::MessageIgnored { message_id, reason } => {
+                    observations.push(debug_events::sds_ignored(message_id, reason))
+                }
                 Event::Lost { message_id, reason } => {
                     observations.push(debug_events::sds_lost(message_id, reason))
                 }
-                other => debug!(convo = %self.convo_id, ?other, "sds event"),
+                Event::SendFailed { message_id } => {
+                    observations.push(debug_events::sds_send_failed(message_id))
+                }
             }
         }
-        self.fetch_missing(cx, to_fetch);
+        observations.extend(self.fetch_missing(cx, to_fetch));
         observations
     }
 
@@ -102,16 +113,18 @@ impl GroupV3Convo {
         &self,
         cx: &mut ServiceContext<S>,
         delivery_msg_ids: Vec<DeliveryMsgId>,
-    ) {
+    ) -> Option<Observation> {
         if delivery_msg_ids.is_empty() {
-            return;
+            return None;
         }
         if let Err(e) = cx
             .ds
             .fetch_messages(&delivery_address_from_id(&self.convo_id), &delivery_msg_ids)
         {
             warn!(convo = %self.convo_id, error = %e, "failed to fetch missing messages");
+            return Some(debug_events::sds_fetch_failed(delivery_msg_ids));
         }
+        None
     }
 
     /// Handle a message SDS released.

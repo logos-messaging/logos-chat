@@ -64,7 +64,7 @@ pub enum Event {
         message_id: String,
         sender_hint: SignerKey,
     },
-    /// A step a GroupV3 message took on its way in, for debugging.
+    /// A step a GroupV3 message took through SDS, for debugging.
     #[cfg(feature = "debug-data")]
     Debug {
         convo_id: Arc<str>,
