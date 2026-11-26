@@ -26,7 +26,7 @@ impl DirectV2Convo {
     ) -> Result<Self, ChatError> {
         let mut inner_group = DelegateGroup::initialize_group(cx, "DM", "")?;
 
-        inner_group.add_signer(cx, signers)?;
+        inner_group.add_founding_signers(cx, signers)?;
         Ok(Self { inner_group })
     }
 }
