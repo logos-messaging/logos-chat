@@ -125,6 +125,23 @@ fn the_side_that_stays_clears_once_the_other_is_readded() {
     );
 }
 
+/// Saro removes Raya instead of re-adding her: nobody is left on Raya's
+/// branch, so Saro is no longer forked.
+#[test]
+fn removing_the_forked_member_ends_the_fork() {
+    let (mut h, convo) = group_of_saro_and_raya();
+    fork(&mut h, &convo, nothing);
+    let raya = [h.raya().account()];
+
+    h.saro().group_remove_participants(&convo, &raya).unwrap();
+    settle(&mut h);
+
+    assert!(!matches!(
+        h.saro().group_sync_state(&convo).unwrap(),
+        SyncState::Forked { .. }
+    ));
+}
+
 /// No beacons, so only Saro's next commit says something is wrong.
 #[test]
 fn a_commit_on_the_other_branch_is_only_a_suspicion() {

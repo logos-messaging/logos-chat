@@ -30,7 +30,7 @@ tracing = "0.1"
 [dev-dependencies]
 # Workspace dependencies (sorted)
 integration_tests_core = { workspace = true }
-libchat = { workspace = true, features = ["test-fast-commits"] }
+libchat = { workspace = true, features = ["test-fast-commits", "test-support"] }
 # The tests read debug data.
 logos-generic-chat = { workspace = true, features = ["debug-data"] }
 

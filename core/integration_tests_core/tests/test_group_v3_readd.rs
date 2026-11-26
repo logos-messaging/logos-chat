@@ -356,9 +356,9 @@ fn a_fork_whose_branches_drift_apart_is_repaired() {
 }
 
 /// After the fork Saro's branch adds Mira, and Raya's adds two members of its
-/// own. Each side knows only its own joiners: counting what it heard, each
-/// would think itself the stronger and both would repair. Counting what the
-/// asker shows, both see Saro and Pax against Raya, so only Raya moves.
+/// own. Each side knows only its own joiners: counting them, each would think
+/// itself the stronger. Counting members from before the fork, both see Saro
+/// and Pax against Raya, so only Raya asks and only Raya moves.
 #[test]
 fn branches_that_grow_after_the_fork_rank_alike() {
     const SARO: usize = 0;
@@ -382,7 +382,11 @@ fn branches_that_grow_after_the_fork_rank_alike() {
     settle(&mut h);
 
     let mut wire = watch(&mut h, &convo);
-    assert_eq!(h.client_mut(SARO).group_request_readd(&convo).unwrap(), 1);
+    assert_eq!(
+        h.client_mut(SARO).group_request_readd(&convo).unwrap(),
+        0,
+        "Saro's branch is the one the others move to"
+    );
     assert_eq!(h.client_mut(RAYA).group_request_readd(&convo).unwrap(), 1);
     h.process(Duration::from_secs(2));
 
