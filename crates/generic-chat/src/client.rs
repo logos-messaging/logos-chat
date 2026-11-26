@@ -252,8 +252,7 @@ where
 
     /// Remove every installation of the given accounts from a group
     /// conversation. Those with no seat are skipped, and the call fails if none
-    /// holds one. A GroupV3 conversation cannot remove members yet and fails
-    /// with [`ChatError::UnsupportedFunction`](libchat::ChatError::UnsupportedFunction).
+    /// holds one.
     pub fn remove_group_participants(
         &mut self,
         convo_id: &str,
