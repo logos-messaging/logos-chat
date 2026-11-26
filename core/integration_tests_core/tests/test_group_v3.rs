@@ -536,11 +536,11 @@ fn groupv3_removed_member() {
     assert!(!harness.pax().check(&convo_id, M));
 }
 
-/// Saro and Raya each add a member, and neither gets the other's commit in time. Saro finalizes
-/// his own alone. Raya gets Saro's add before her own timeout, sees from his header that he
-/// finalized it, and finalizes it too. Both end in the same state, and Raya's add is dropped.
+/// Saro adds a member and finalizes the add alone. Raya missed it and makes her own add. Then she
+/// gets Saro's add, sees from header that it was finalized, and finalizes it too. Both end in
+/// the same state, and Raya's add is dropped.
 ///
-/// Taking the lowest fingerprint here forks whenever Raya's is the lower one.
+/// Before, Raya took the lowest fingerprint, which forked whenever her own add was the lower one.
 #[test]
 fn groupv3_two_commits_do_not_fork_when_one_was_finalized_alone() {
     let mut harness = TestHarness::<4>::new(|_, _| {});
@@ -552,27 +552,25 @@ fn groupv3_two_commits_do_not_fork_when_one_was_finalized_alone() {
         .saro()
         .group_add_participants(&convo_id, &[pax])
         .expect("saro adds pax");
-    // Neither gets the other's commit while Saro waits out the timeout.
-    for second in 0..121 {
-        if second == 60 {
-            harness
-                .raya()
-                .group_add_participants(&convo_id, std::slice::from_ref(&mira))
-                .expect("raya adds mira");
-        }
-        harness.saro().drop_pending_payloads();
+    // Saro finalizes his add alone: Raya gets nothing from him meanwhile.
+    for _ in 0..121 {
         harness.raya().drop_pending_payloads();
         harness.process(Duration::from_secs(1));
     }
-    harness.saro().drop_pending_payloads();
     harness.raya().drop_pending_payloads();
     let saro_signers = harness.saro().group_signers(&convo_id);
     assert_eq!(saro_signers.map_or(0, |s| s.len()), 3);
+
+    // Raya, still behind, makes her own add. Saro never gets it.
+    harness
+        .raya()
+        .group_add_participants(&convo_id, std::slice::from_ref(&mira))
+        .expect("raya adds mira");
+    harness.saro().drop_pending_payloads();
     let raya_signers = harness.raya().group_signers(&convo_id);
     assert_eq!(raya_signers.map_or(0, |s| s.len()), 2);
 
-    // Saro's message makes Raya fetch his add, and reports his state. Raya's own add is not
-    // due for another minute.
+    // Saro's message makes Raya fetch his add, and reports his state.
     harness
         .saro()
         .send_content(&convo_id, b"m1")
