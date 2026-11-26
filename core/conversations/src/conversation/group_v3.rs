@@ -155,7 +155,7 @@ impl GroupV3Convo {
         trace::epoch(&convo);
 
         convo.init(cx)?;
-        convo.add_signer(cx, signers)?;
+        convo.add_founding_signers(cx, signers)?;
         Ok(convo)
     }
 
@@ -194,6 +194,71 @@ impl GroupV3Convo {
         }
         convo.enter_epoch(cx);
         Ok((convo, held.is_some()))
+    }
+
+    /// Adds `signers` to a group without deferring the commit.
+    /// This is used during startup to initialize the ratchet tree without waiting for consensus.
+    pub(crate) fn add_founding_signers<S: ExternalServices>(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        signers: &[SignerKey],
+    ) -> Result<(), ChatError> {
+        if self.mls_group.members().count() != 1 || self.mls_group.pending_commit().is_some() {
+            return Err(ChatError::generic("founding signers need a group of one"));
+        }
+        let Some(invites) = self.stage_add(cx, signers)? else {
+            return Ok(());
+        };
+        let fingerprint = self
+            .mls_group
+            .pending_commit()
+            .and_then(EpochFingerprint::from_staged_commit)
+            .ok_or_else(|| ChatError::generic("no pending commit"))?;
+
+        // Skip `defer_commit` and add the commit directly
+        // use the `finalize_deferred_commit` to maintain logging and extra handling.
+        self.deferred_commits
+            .insert(fingerprint.clone(), DeferredCommit::Pending(invites));
+        self.finalize_deferred_commit(cx, &fingerprint)?;
+        Ok(())
+    }
+
+    /// Stages an add of `signers` and sends its commit. Returns the invites to send once the
+    /// commit is merged, or `None` when no one is new.
+    fn stage_add<S: ExternalServices>(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        signers: &[SignerKey],
+    ) -> Result<Option<Vec<AddressedEnvelope>>, ChatError> {
+        // filter for duplicates and existing signers
+        let existing = self.signers()?.into_iter();
+        let signers = unique(member_diff(signers, existing));
+
+        let key_packages: Vec<KeyPackage> = fetch_key_packages(cx, signers)?;
+        if key_packages.is_empty() {
+            warn!("no members to add to mls::group, ignoring");
+            return Ok(None);
+        }
+
+        let (commit_msg, welcome, _) = self
+            .mls_group
+            .add_members(&cx.mls_provider, &cx.mls_identity, key_packages.as_slice())
+            .map_err(ChatError::generic)?;
+
+        // Commit sent prior to deferring, as the `StartPoint` must be known prior to creating invites
+        let commit = self.send_pending_commit(cx, commit_msg)?;
+
+        let invites = key_packages
+            .iter()
+            .map(|key_package| {
+                crate::inbox_v2::create_invite_v3(
+                    &SignerKey::from(key_package.leaf_node()),
+                    &welcome,
+                    &commit,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Some(invites))
     }
 
     fn from_group<S: ExternalServices>(
@@ -656,36 +721,9 @@ where
         cx: &mut ServiceContext<S>,
         signers: &[SignerKey],
     ) -> Result<(), ChatError> {
-        // filter for duplicates and existing signers
-        let existing = self.signers()?.into_iter();
-        let signers = unique(member_diff(signers, existing));
-
-        let key_packages: Vec<KeyPackage> = fetch_key_packages(cx, signers)?;
-        if key_packages.is_empty() {
-            warn!("no members to add to mls::group, ignoring");
+        let Some(invites) = self.stage_add(cx, signers)? else {
             return Ok(());
-        }
-
-        let (commit_msg, welcome, _) = self
-            .mls_group
-            .add_members(&cx.mls_provider, &cx.mls_identity, key_packages.as_slice())
-            .map_err(ChatError::generic)?;
-
-        // Commit sent prior to deferring, as the `StartPoint` must be known prior to creating invites
-        let commit = self.send_pending_commit(cx, commit_msg)?;
-
-        // Welcomes are sent once the commit is finalized.
-        let invites = key_packages
-            .iter()
-            .map(|key_package| {
-                crate::inbox_v2::create_invite_v3(
-                    &SignerKey::from(key_package.leaf_node()),
-                    &welcome,
-                    &commit,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
+        };
         self.defer_pending_commit(cx, invites)
     }
 
