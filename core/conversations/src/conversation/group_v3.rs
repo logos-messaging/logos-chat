@@ -148,13 +148,7 @@ impl GroupV3Convo {
         desc: &str,
         signers: &[SignerKey],
     ) -> Result<Self, ChatError> {
-        // Create MlsGroup
-        let mls_group = create_group(cx, name, desc)?;
-        let mut convo = Self::from_group(cx, mls_group, None)?;
-        Span::current().record("convo", display(ConvoId(&convo.convo_id)));
-        trace::epoch(&convo);
-
-        convo.init(cx)?;
+        let mut convo = Self::initialize_group(cx, name, desc)?;
         convo.add_founding_signers(cx, signers)?;
         Ok(convo)
     }
@@ -194,6 +188,21 @@ impl GroupV3Convo {
         }
         convo.enter_epoch(cx);
         Ok((convo, held.is_some()))
+    }
+
+    pub(super) fn initialize_group<S: ExternalServices>(
+        cx: &mut ServiceContext<S>,
+        name: &str,
+        desc: &str,
+    ) -> Result<Self, ChatError> {
+        // Create MlsGroup
+        let mls_group = create_group(cx, name, desc)?;
+        let convo = Self::from_group(cx, mls_group, None)?;
+        Span::current().record("convo", display(ConvoId(&convo.convo_id)));
+        trace::epoch(&convo);
+
+        convo.init(cx)?;
+        Ok(convo)
     }
 
     /// Adds `signers` to a group without deferring the commit.
