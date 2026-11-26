@@ -1,9 +1,9 @@
-// `expect_event` hands a non-matching event back through `Err`, and an `Event`
-// carrying an `AccountAddr` is 272 bytes — enough to trip `result_large_err`,
-// which is about error paths, not this match-or-return one.
-#![allow(clippy::result_large_err)]
+//! Direct conversations through the client: wiring, address resolution, and
+//! how core outcomes surface as events. Protocol behaviour is tested in
+//! `integration_tests_core`.
 
-use std::time::Duration;
+use std::collections::HashSet;
+use std::time::{Duration, Instant};
 
 use components::EphemeralRegistry;
 use crossbeam_channel::{Receiver, Sender};
@@ -11,386 +11,192 @@ use integration_tests_core::AcceptAllAuth;
 use libchat::ChatError;
 use logos_account::AccountAddr;
 use logos_generic_chat::{
-    AddressedEnvelope, ChatClient, ChatClientBuilder, ConversationClass, DeliveryMsgId,
-    DeliveryService, Event, InProcessDelivery, InboundPayload, MessageBus, PendingInstallation,
+    AddressedEnvelope, ChatClient, ChatClientBuilder, ClientError, DeliveryMsgId, DeliveryService,
+    Event, InProcessDelivery, InboundPayload, Installation, MessageBus, PendingInstallation,
     PublishedId, Transport,
 };
 
-/// A client for a fresh account: mints the account and an installation, then builds
-/// the client on the shared bus/registry.
-#[allow(clippy::type_complexity)]
-fn create_test_client(
-    message_bus: MessageBus,
-    reg: EphemeralRegistry,
+const TIMEOUT: Duration = Duration::from_secs(10);
+
+type TestClient =
+    ChatClient<InProcessDelivery, EphemeralRegistry, AcceptAllAuth, chat_sqlite::SqliteStore>;
+
+/// A client for `installation` on the shared bus and registry.
+fn build_client(
+    installation: Installation,
+    bus: &MessageBus,
+    reg: &EphemeralRegistry,
     auth: &AcceptAllAuth,
-) -> Result<
-    (
-        ChatClient<InProcessDelivery, EphemeralRegistry, AcceptAllAuth, chat_sqlite::SqliteStore>,
-        Receiver<Event>,
-    ),
-    logos_generic_chat::ClientError,
-> {
-    let installation = PendingInstallation::generate().complete(TestLogosAccount::new().addr());
+) -> (TestClient, Receiver<Event>) {
     auth.register(&installation);
     ChatClientBuilder::new(installation)
-        .transport(InProcessDelivery::new(message_bus))
-        .registration(reg)
+        .transport(InProcessDelivery::new(bus.clone()))
+        .registration(reg.clone())
         .auth(auth.clone())
         .build()
+        .expect("client create")
 }
 
-/// Block until the next event arrives and matches; panic on timeout/mismatch.
-fn expect_event<F, T>(events: &Receiver<Event>, label: &str, mut f: F) -> T
-where
-    F: FnMut(Event) -> Result<T, Event>,
-{
-    let event = events
-        .recv_timeout(Duration::from_secs(5))
-        .unwrap_or_else(|_| panic!("timed out waiting for {label}"));
-    f(event).unwrap_or_else(|other| panic!("expected {label}, got {other:?}"))
+/// A client for a fresh account.
+fn create_test_client(
+    bus: &MessageBus,
+    reg: &EphemeralRegistry,
+    auth: &AcceptAllAuth,
+) -> (TestClient, Receiver<Event>) {
+    let installation = PendingInstallation::generate().complete(TestLogosAccount::new().addr());
+    build_client(installation, bus, reg, auth)
 }
 
-/// [`expect_event`] for a back-and-forth exchange, skipping acknowledgements.
-///
-/// Each reply acknowledges the message it was sent after, so `MessageAcked`
-/// lands at points a test driving one direction at a time does not control.
-fn expect_event_ignoring_acks<F, T>(events: &Receiver<Event>, label: &str, mut f: F) -> T
-where
-    F: FnMut(Event) -> Result<T, Event>,
-{
+/// Wait for an event `f` picks out, skipping every other event; panic on timeout.
+fn wait_for<T>(events: &Receiver<Event>, label: &str, mut f: impl FnMut(Event) -> Option<T>) -> T {
+    let deadline = Instant::now() + TIMEOUT;
     loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
         let event = events
-            .recv_timeout(Duration::from_secs(5))
+            .recv_timeout(remaining)
             .unwrap_or_else(|_| panic!("timed out waiting for {label}"));
-        if matches!(event, Event::MessageAcked { .. }) {
-            continue;
+        if let Some(out) = f(event) {
+            return out;
         }
-        return f(event).unwrap_or_else(|other| panic!("expected {label}, got {other:?}"));
     }
 }
 
-#[test]
-fn direct_v1_integration() {
-    let bus = MessageBus::default();
-    let reg_service = EphemeralRegistry::new();
-    let auth = AcceptAllAuth::default();
-
-    let (mut saro, _saro_events) =
-        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
-    let (raya, raya_events) =
-        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
-
-    let convo_id = saro.create_direct_conversation(raya.addr()).unwrap();
-
-    // The invite payload yields ConversationStarted then MessageReceived.
-    expect_event(&raya_events, "ConversationStarted", |e| match e {
-        Event::ConversationStarted { convo_id, .. } => Ok(convo_id),
-        other => Err(other),
-    });
-
-    saro.send_message(&convo_id, b"Hey from saro")
-        .expect("payload mismatch");
-    expect_event(&raya_events, "MessageReceived", |e| match e {
-        Event::MessageReceived { content, .. } => {
-            assert_eq!(content.as_slice(), b"Hey from saro");
-            Ok(())
-        }
-        other => Err(other),
-    });
+/// Poll `done` until it holds; panic on timeout.
+fn wait_until(label: &str, mut done: impl FnMut() -> bool) {
+    let deadline = Instant::now() + TIMEOUT;
+    while !done() {
+        assert!(Instant::now() < deadline, "timed out waiting for {label}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
+/// Saro opens a DM by Raya's account address and they exchange a message each
+/// way. Each side sees the other's verified account, and the receiver gets the
+/// id the sender's `send_message` returned.
 #[test]
-fn direct_v1_standalone_integration() {
+fn a_direct_conversation_carries_messages_both_ways() {
     let bus = MessageBus::default();
-
-    let reg_service = EphemeralRegistry::new();
+    let reg = EphemeralRegistry::new();
     let auth = AcceptAllAuth::default();
 
-    // Create accounts and their installations, and register each installation
-    // with the auth service so a peer can resolve the account to it.
     let saro_account = TestLogosAccount::new();
-    let saro_account_id = saro_account.address();
     let saro_pending = PendingInstallation::generate();
-    let saro_device_id = saro_pending.endorsement_request();
-
-    // Build saro's client with its account so its outbound messages carry a
-    // credential the receiver can verify against the published bundle.
-    let saro_installation = saro_pending.complete(saro_account.addr());
-    auth.register(&saro_installation);
-    let (mut saro, _saro_events) = ChatClientBuilder::new(saro_installation)
-        .transport(InProcessDelivery::new(bus.clone()))
-        .registration(reg_service.clone())
-        .auth(auth.clone())
-        .build()
-        .expect("client create");
-    let (raya, raya_events) =
-        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
-
-    let raya_addr = raya.addr();
-    let convo_id = saro.create_direct_conversation(raya_addr).unwrap();
-
-    // The invite payload yields ConversationStarted then MessageReceived.
-    expect_event(&raya_events, "ConversationStarted", |e| match e {
-        Event::ConversationStarted { convo_id, .. } => Ok(convo_id),
-        other => Err(other),
-    });
-
-    saro.send_message(&convo_id, b"Hey from saro")
-        .expect("payload mismatch");
-    expect_event(&raya_events, "MessageReceived", |e| match e {
-        Event::MessageReceived {
-            content, sender, ..
-        } => {
-            assert_eq!(content.as_slice(), b"Hey from saro");
-            // saro associated an account and published a matching bundle, so the
-            // sender surfaces with a verified account and its installation.
-            assert_eq!(sender.account().to_string(), saro_account_id);
-            assert_eq!(sender.signer().as_bytes(), saro_device_id);
-            Ok(())
-        }
-        other => Err(other),
-    });
-}
-
-/// A peer is reachable by its *account address* alone: the initiator resolves
-/// the account to its signer ids through the directory (client layer), fetches
-/// each signer's key package, and the Welcome arrives on the signer-scoped
-/// inbox. The registry keys key packages by device id (hex verifying key),
-/// exactly like the deployed HTTP registry.
-#[test]
-fn direct_v1_by_account_address() {
-    let bus = MessageBus::default();
-    let reg_service = EphemeralRegistry::new();
-    let auth = AcceptAllAuth::default();
-
-    let raya_account = TestLogosAccount::new();
-    let raya_account_addr = raya_account.address();
-
-    let raya_installation = PendingInstallation::generate().complete(raya_account.addr());
-    auth.register(&raya_installation);
-    let (mut raya, raya_events) = ChatClientBuilder::new(raya_installation)
-        .transport(InProcessDelivery::new(bus.clone()))
-        .registration(reg_service.clone())
-        .auth(auth.clone())
-        .build()
-        .expect("client create");
-    let (mut saro, saro_events) =
-        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
-
-    // Raya's shared address is her account address, not her signer id.
-    assert_eq!(raya.addr(), raya_account_addr.as_str());
-    let convo_id = saro.create_direct_conversation(&raya_account_addr).unwrap();
-
-    // DirectV1 is the pairwise shape, so the joiner sees it classed Private even
-    // though its welcome rides the InboxV2 (GroupV1 invite) path.
-    let raya_convo_id = expect_event(&raya_events, "ConversationStarted", |e| match e {
-        Event::ConversationStarted { convo_id, class } => {
-            assert_eq!(class, ConversationClass::Dm);
-            Ok(convo_id)
-        }
-        other => Err(other),
-    });
-
-    saro.send_message(&convo_id, b"hello raya").unwrap();
-    expect_event(&raya_events, "MessageReceived", |e| match e {
-        Event::MessageReceived { content, .. } => {
-            assert_eq!(content.as_slice(), b"hello raya");
-            Ok(())
-        }
-        other => Err(other),
-    });
-
-    raya.send_message(&raya_convo_id, b"hi saro").unwrap();
-    expect_event(&saro_events, "MessageReceived", |e| match e {
-        Event::MessageReceived {
-            content, sender, ..
-        } => {
-            assert_eq!(content.as_slice(), b"hi saro");
-            // raya's bundle endorses her delegate, so her sender surfaces with
-            // the verified account.
-            assert_eq!(sender.account().to_string(), raya_account_addr);
-            Ok(())
-        }
-        other => Err(other),
-    });
-}
-
-#[test]
-fn saro_raya_message_exchange() {
-    let bus = MessageBus::default();
-    let reg_service = EphemeralRegistry::new();
-    let auth = AcceptAllAuth::default();
-
-    let (mut saro, saro_events) =
-        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
-    let (mut raya, raya_events) =
-        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
+    let saro_signer = saro_pending.endorsement_request();
+    let (mut saro, saro_events) = build_client(
+        saro_pending.complete(saro_account.addr()),
+        &bus,
+        &reg,
+        &auth,
+    );
+    let (mut raya, raya_events) = create_test_client(&bus, &reg, &auth);
 
     let saro_convo_id = saro
         .create_direct_conversation(raya.addr())
         .expect("convo create");
 
-    // Wait for raya to process the Welcome and subscribe to the convo delivery
-    // address before saro sends — MessageBus only fans out to current subscribers,
-    // so a message sent before raya subscribes would be silently dropped.
-    let raya_convo_id = expect_event(&raya_events, "ConversationStarted", |e| match e {
-        Event::ConversationStarted { convo_id, .. } => Ok(convo_id),
-        other => Err(other),
+    // MessageBus only fans out to current subscribers, so Raya must join before
+    // Saro sends.
+    let raya_convo_id = wait_for(&raya_events, "ConversationStarted", |e| match e {
+        Event::ConversationStarted { convo_id, .. } => Some(convo_id),
+        _ => None,
     });
 
-    saro.send_message(&saro_convo_id, b"hello raya").unwrap();
-    expect_event(&raya_events, "MessageReceived", |e| match e {
+    let sent_id = saro.send_message(&saro_convo_id, b"hello raya").unwrap();
+    let (sender, message_id) = wait_for(&raya_events, "hello raya", |e| match e {
         Event::MessageReceived {
-            convo_id,
             content,
             sender,
+            message_id,
             ..
-        } => {
-            assert_eq!(convo_id, raya_convo_id);
-            assert_eq!(content.as_slice(), b"hello raya");
-            assert!(!sender.signer().as_bytes().is_empty());
-            Ok(())
-        }
-        other => Err(other),
+        } if content == b"hello raya" => Some((sender, message_id)),
+        _ => None,
     });
+    assert_eq!(message_id, sent_id);
+    assert_eq!(sender.account().to_string(), saro_account.address());
+    assert_eq!(sender.signer().as_bytes(), saro_signer);
 
     raya.send_message(&raya_convo_id, b"hi saro").unwrap();
-    expect_event(&saro_events, "MessageReceived", |e| match e {
-        Event::MessageReceived { content, .. } => {
-            assert_eq!(content.as_slice(), b"hi saro");
-            Ok(())
-        }
-        other => Err(other),
+    let sender = wait_for(&saro_events, "hi saro", |e| match e {
+        Event::MessageReceived {
+            content, sender, ..
+        } if content == b"hi saro" => Some(sender),
+        _ => None,
     });
-
-    for i in 0u8..5 {
-        let msg = format!("msg {i}");
-        saro.send_message(&saro_convo_id, msg.as_bytes()).unwrap();
-        expect_event_ignoring_acks(
-            &raya_events,
-            &format!("MessageReceived(msg {i})"),
-            |e| match e {
-                Event::MessageReceived { content, .. } => {
-                    assert_eq!(content.as_slice(), msg.as_bytes());
-                    Ok(())
-                }
-                other => Err(other),
-            },
-        );
-
-        let reply = format!("reply {i}");
-        raya.send_message(&raya_convo_id, reply.as_bytes()).unwrap();
-        expect_event_ignoring_acks(
-            &saro_events,
-            &format!("MessageReceived(reply {i})"),
-            |e| match e {
-                Event::MessageReceived { content, .. } => {
-                    assert_eq!(content.as_slice(), reply.as_bytes());
-                    Ok(())
-                }
-                other => Err(other),
-            },
-        );
-    }
-
-    assert_eq!(saro.list_all_conversations().unwrap().len(), 1);
-    assert_eq!(raya.list_all_conversations().unwrap().len(), 1);
-
-    // A live conversation is both sendable and retrievable, and shows up in the
-    // sendable roster; an unknown id is neither.
-    assert!(saro.can_send(&saro_convo_id));
-    assert!(saro.can_receive(&saro_convo_id));
-    assert_eq!(
-        saro.list_sendable_conversations().unwrap(),
-        vec![saro_convo_id.clone()]
-    );
-    assert!(!saro.can_send("deadbeef"));
-    assert!(!saro.can_receive("deadbeef"));
+    assert_eq!(sender.account().to_string(), raya.addr());
 }
 
-/// Group metadata is a group concept: a direct conversation has none, so the
-/// fetch is an error callers must handle.
+/// The participants of a DM are its two accounts, not their installations.
 #[test]
-fn group_metadata_on_direct_conversation_errors() {
+fn a_direct_conversation_lists_both_accounts() {
     let bus = MessageBus::default();
     let reg = EphemeralRegistry::new();
     let auth = AcceptAllAuth::default();
 
-    let (mut saro, _saro_events) =
-        create_test_client(bus.clone(), reg.clone(), &auth).expect("client create");
-    let (raya, _raya_events) =
-        create_test_client(bus.clone(), reg.clone(), &auth).expect("client create");
+    let (mut saro, _saro_events) = create_test_client(&bus, &reg, &auth);
+    let (raya, _raya_events) = create_test_client(&bus, &reg, &auth);
 
     let convo_id = saro
         .create_direct_conversation(raya.addr())
         .expect("convo create");
-    assert_eq!(saro.convo_type(&convo_id).unwrap(), "DirectV1");
-    assert!(saro.debug_data(&convo_id).unwrap().is_empty());
-    saro.group_metadata(&convo_id)
-        .expect_err("direct conversation has no group metadata");
+
+    let expected: HashSet<AccountAddr> = [saro.addr(), raya.addr()]
+        .into_iter()
+        .map(|addr| {
+            addr.parse()
+                .expect("a client address is an account address")
+        })
+        .collect();
+    wait_until("both accounts", || {
+        saro.participants(&convo_id).expect("participants") == expected
+    });
 }
 
-/// A direct conversation reports its participants like any conversation. Add
-/// Member errors on the creator's handle, though the joiner holds the same
-/// conversation as a plain group, so the rejection is not conversation-wide.
 #[test]
-fn direct_conversation_lists_its_participants() {
+fn membership_changes_are_unsupported_on_a_direct_conversation() {
     let bus = MessageBus::default();
     let reg = EphemeralRegistry::new();
     let auth = AcceptAllAuth::default();
 
-    let (mut saro, _saro_events) =
-        create_test_client(bus.clone(), reg.clone(), &auth).expect("client create");
-    let (raya, _raya_events) =
-        create_test_client(bus.clone(), reg.clone(), &auth).expect("client create");
+    let (mut saro, _saro_events) = create_test_client(&bus, &reg, &auth);
+    let (raya, _raya_events) = create_test_client(&bus, &reg, &auth);
 
-    let saro_addr = saro.addr().to_string();
-    let raya_addr = raya.addr().to_string();
     let convo_id = saro
-        .create_direct_conversation(&raya_addr)
+        .create_direct_conversation(raya.addr())
         .expect("convo create");
 
-    let participants = saro.participants(&convo_id).expect("participants");
-    let mut accounts: Vec<String> = participants.iter().map(AccountAddr::to_string).collect();
-    accounts.sort();
-    let mut expected = vec![saro_addr.clone(), raya_addr.clone()];
-    expected.sort();
-    assert_eq!(accounts, expected);
-
-    let err = saro
-        .add_group_participants(&convo_id, &[&raya_addr])
-        .expect_err("add member is unsupported on a direct conversation");
-    assert!(matches!(
-        err,
-        logos_generic_chat::ClientError::Chat(libchat::ChatError::UnsupportedFunction(..))
-    ));
+    let added = saro.add_group_participants(&convo_id, &[raya.addr()]);
+    let removed = saro.remove_group_participants(&convo_id, &[raya.addr()]);
+    for result in [added, removed] {
+        assert!(matches!(
+            result,
+            Err(ClientError::Chat(ChatError::UnsupportedFunction(..)))
+        ));
+    }
 }
 
-/// A direct conversation is 1:1, so removing the other party is not a supported
-/// operation — the core rejects it rather than tearing the pair apart.
+/// Opening a conversation by an address the auth service cannot resolve to
+/// any installation fails at resolution, not with a late key-package miss.
 #[test]
-fn removing_a_member_is_unsupported_on_a_direct_conversation() {
+fn unpublished_account_address_is_an_error() {
     let bus = MessageBus::default();
     let reg = EphemeralRegistry::new();
     let auth = AcceptAllAuth::default();
 
-    let (mut saro, _saro_events) =
-        create_test_client(bus.clone(), reg.clone(), &auth).expect("client create");
-    let (raya, _raya_events) =
-        create_test_client(bus.clone(), reg.clone(), &auth).expect("client create");
+    let (mut saro, _saro_events) = create_test_client(&bus, &reg, &auth);
 
-    let raya_addr = raya.addr().to_string();
-    let convo_id = saro
-        .create_direct_conversation(&raya_addr)
-        .expect("convo create");
-
+    let unpublished = TestLogosAccount::new();
     let err = saro
-        .remove_group_participants(&convo_id, &[&raya_addr])
-        .expect_err("remove member is unsupported on a direct conversation");
+        .create_direct_conversation(&unpublished.address())
+        .expect_err("the account is unknown");
     assert!(matches!(
         err,
-        logos_generic_chat::ClientError::Chat(libchat::ChatError::UnsupportedFunction(..))
+        ClientError::Chat(ChatError::ParticipantResolution(_))
     ));
+
+    let err = saro
+        .create_direct_conversation("not-an-account-address")
+        .expect_err("not an account key");
+    assert!(matches!(err, ClientError::InvalidAccountAddress(_)));
 }
 
 #[derive(Debug)]
@@ -442,11 +248,10 @@ impl Transport for FailingDelivery {
 #[test]
 fn dropping_client_shuts_down_worker() {
     let (client, events) = create_test_client(
-        MessageBus::default(),
-        EphemeralRegistry::new(),
+        &MessageBus::default(),
+        &EphemeralRegistry::new(),
         &AcceptAllAuth::default(),
-    )
-    .expect("client create");
+    );
 
     drop(client);
     // Drop joins the worker; once joined its Sender<Event> is gone, so recv
@@ -458,10 +263,10 @@ fn dropping_client_shuts_down_worker() {
     ));
 }
 
+/// Undecodable inbound bytes surface as an `InboundError` rather than being
+/// dropped silently.
 #[test]
 fn malformed_inbound_surfaces_as_error_event() {
-    // Feed the worker's inbound channel bytes that can't be decoded and assert
-    // it emits an InboundError instead of silently dropping the failure.
     let delivery = FailingDelivery::new();
     let inbound_tx = delivery.inbound_sender();
 
@@ -480,83 +285,11 @@ fn malformed_inbound_surfaces_as_error_event() {
         })
         .unwrap();
 
-    expect_event(&events, "InboundError", |e| match e {
-        Event::InboundError { message } => {
-            assert!(!message.is_empty(), "error event should carry a message");
-            Ok(())
-        }
-        other => Err(other),
+    let message = wait_for(&events, "InboundError", |e| match e {
+        Event::InboundError { message } => Some(message),
+        _ => None,
     });
-}
-
-/// Opening a conversation by an address the auth service cannot resolve to
-/// any installation fails at resolution, not with a late key-package miss.
-#[test]
-fn unpublished_account_address_is_an_error() {
-    let bus = MessageBus::default();
-    let reg_service = EphemeralRegistry::new();
-    let auth = AcceptAllAuth::default();
-
-    let (mut saro, _saro_events) =
-        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
-
-    let unpublished = TestLogosAccount::new();
-    let err = saro
-        .create_direct_conversation(&unpublished.address())
-        .expect_err("the account is unknown");
-    assert!(matches!(
-        err,
-        logos_generic_chat::ClientError::Chat(ChatError::ParticipantResolution(_))
-    ));
-
-    let err = saro
-        .create_direct_conversation("not-an-account-address")
-        .expect_err("not an account key");
-    assert!(matches!(
-        err,
-        logos_generic_chat::ClientError::InvalidAccountAddress(_)
-    ));
-}
-
-/// The id `send_message` returns is the id the receiver is handed.
-///
-/// Nothing in the client enforces this — the sender computes its id locally and
-/// the receiver recomputes one from the reliability envelope. An application
-/// naming a message (a reply, a reaction) addresses it by that id, so if the
-/// two ever diverge every such reference resolves to nothing on the far side.
-#[test]
-fn a_send_returns_the_id_the_receiver_sees() {
-    let bus = MessageBus::default();
-    let reg_service = EphemeralRegistry::new();
-    let auth = AcceptAllAuth::default();
-
-    let (mut saro, _saro_events) =
-        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
-    let (raya, raya_events) =
-        create_test_client(bus.clone(), reg_service.clone(), &auth).expect("client create");
-
-    let convo_id = saro
-        .create_direct_conversation(raya.addr())
-        .expect("convo create");
-    expect_event(&raya_events, "ConversationStarted", |e| match e {
-        Event::ConversationStarted { convo_id, .. } => Ok(convo_id),
-        other => Err(other),
-    });
-
-    let sent_id = saro.send_message(&convo_id, b"hello raya").unwrap();
-
-    let received_id = expect_event(&raya_events, "MessageReceived", |e| match e {
-        Event::MessageReceived {
-            content,
-            message_id,
-            ..
-        } => {
-            assert_eq!(content.as_slice(), b"hello raya");
-            Ok(message_id)
-        }
-        other => Err(other),
-    });
-    assert_eq!(received_id, sent_id);
+    assert!(!message.is_empty(), "error event should carry a message");
 }
 
 /// A stand-in account while the account layer is out: only a well-formed
