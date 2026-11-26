@@ -606,6 +606,16 @@ fn observation_event(convo_id: &Arc<str>, observation: Observation) -> Option<Ev
             convo_id: Arc::clone(convo_id),
             message_id,
         }),
+        // `Event::Debug` exists only with `debug-data`, so an app without it can't name the
+        // variant: a stray arm for it fails to compile rather than never firing. The core always
+        // reports debug observations, hence the arm that drops them.
+        #[cfg(feature = "debug-data")]
+        Observation::Debug(event) => Some(Event::Debug {
+            convo_id: Arc::clone(convo_id),
+            event,
+        }),
+        #[cfg(not(feature = "debug-data"))]
+        Observation::Debug(_) => None,
     }
 }
 

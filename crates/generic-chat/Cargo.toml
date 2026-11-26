@@ -8,7 +8,8 @@ license.workspace = true
 crate-type = ["rlib"]
 
 [features]
-# What a conversation reports about itself for debugging (`Client::debug_data`).
+# What a conversation reports about itself for debugging (`Client::debug_data`,
+# `Event::Debug`).
 debug-data = []
 
 [dependencies]

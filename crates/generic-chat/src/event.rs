@@ -64,6 +64,12 @@ pub enum Event {
         message_id: String,
         sender_hint: SignerKey,
     },
+    /// A step a GroupV3 message took through SDS, for debugging.
+    #[cfg(feature = "debug-data")]
+    Debug {
+        convo_id: Arc<str>,
+        event: libchat::DebugEvent,
+    },
     /// A commit changed a conversation's membership.
     ConversationMembersChanged {
         convo_id: Arc<str>,
