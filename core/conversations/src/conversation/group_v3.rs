@@ -122,6 +122,8 @@ pub struct GroupV3Convo {
     /// Our last re-add request's attempt; it picks the answerer.
     readd_attempt: u32,
     sync: SyncTracker,
+    /// The sync state last reported to the app.
+    reported_sync: SyncState,
     epoch_data: EpochData,
     later_epoch_msgs: Vec<(super::MessageId, ProtocolMessage)>,
     debug_data: DebugState,
@@ -212,6 +214,7 @@ impl GroupV3Convo {
             readds: VecDeque::new(),
             readd_attempt: 0,
             sync: SyncTracker::default(),
+            reported_sync: SyncState::Unknown,
             later_epoch_msgs: Vec::with_capacity(MAX_LATER_EPOCH_MSGS),
             debug_data: DebugState::default(),
         })
@@ -549,6 +552,16 @@ impl GroupV3Convo {
     fn default_outcome(&self) -> ConvoOutcome {
         ConvoOutcome::empty(self.convo_id.clone())
     }
+
+    /// Reports the sync state once it differs from what the app last heard.
+    fn report_sync(&mut self, outcome: &mut ConvoOutcome) {
+        if self.sync.state() != &self.reported_sync {
+            self.reported_sync = self.sync.state().clone();
+            outcome
+                .observations
+                .push(Observation::SyncChanged(self.reported_sync.clone()));
+        }
+    }
 }
 
 impl GroupV3Convo {
@@ -557,6 +570,8 @@ impl GroupV3Convo {
         self.sync.enter_epoch();
         self.beacons
             .enter_epoch(cx, &self.mls_group, &self.convo_id);
+        let roster: Vec<_> = self.mls_group.members().map(|m| m.signature_key).collect();
+        self.sync.forget_departed(&self.beacons, &roster);
         // Peers who got here first signed this epoch while it was ahead of us.
         let epoch = self.mls_group.epoch().as_u64();
         for peer in self.beacons.peers_at(epoch) {
@@ -752,31 +767,35 @@ where
         let mut observations = vec![];
 
         let message = EncryptedSdsMessage::decode(payload)?;
-        if let Some(packet) = message.packet_outside_sds() {
-            return self.receive_external(cx, &packet?.into_external()?);
-        }
-        let record = message.try_into_record()?;
-        // A sync carries no message, so it has no steps to report.
-        let message_id = record
-            .content
-            .is_some()
-            .then(|| record.header.message_id.clone());
-        observations.extend(debug_events::sds_received(&record, delivery_info));
-        self.debug_data.record_epoch_data(&record, &self.mls_group);
-        let retrieval_hint = delivery_info.map(|info| info.delivery_msg_id.as_bytes().to_vec());
-        match self.channel.receive(record, retrieval_hint, now_ms(cx)) {
-            Ok(events) => observations.extend(self.handle_sds_events(cx, events)),
-            // A peer's record SDS refuses is dropped, like a released message that fails.
-            Err(e) => {
-                warn!(convo = %self.convo_id, error = %e, "sds refused a record");
-                observations
-                    .extend(message_id.and_then(|id| debug_events::sds_ignored_for_error(id, &e)));
+        let mut outcome = if let Some(packet) = message.packet_outside_sds() {
+            self.receive_external(cx, &packet?.into_external()?)?
+        } else {
+            let record = message.try_into_record()?;
+            // A sync carries no message, so it has no steps to report.
+            let message_id = record
+                .content
+                .is_some()
+                .then(|| record.header.message_id.clone());
+            observations.extend(debug_events::sds_received(&record, delivery_info));
+            self.debug_data.record_epoch_data(&record, &self.mls_group);
+            let retrieval_hint = delivery_info.map(|info| info.delivery_msg_id.as_bytes().to_vec());
+            match self.channel.receive(record, retrieval_hint, now_ms(cx)) {
+                Ok(events) => observations.extend(self.handle_sds_events(cx, events)),
+                // A peer's record SDS refuses is dropped, like a released message that fails.
+                Err(e) => {
+                    warn!(convo = %self.convo_id, error = %e, "sds refused a record");
+                    observations.extend(
+                        message_id.and_then(|id| debug_events::sds_ignored_for_error(id, &e)),
+                    );
+                }
             }
-        }
-        Ok(ConvoOutcome {
-            observations,
-            ..self.default_outcome()
-        })
+            ConvoOutcome {
+                observations,
+                ..self.default_outcome()
+            }
+        };
+        self.report_sync(&mut outcome);
+        Ok(outcome)
     }
 
     #[instrument(name = "groupv3.wakeup", skip_all, fields(user_id = %cx.mls_identity.display_name(), signer = %Short(cx.mls_identity.signer_key().as_bytes()), convo = %ConvoId(&self.convo_id), epoch = self.mls_group.epoch().as_u64()))]
@@ -803,10 +822,12 @@ where
         }
 
         self.send_beacon(cx);
-        Ok(ConvoOutcome {
+        let mut outcome = ConvoOutcome {
             observations,
             ..self.default_outcome()
-        })
+        };
+        self.report_sync(&mut outcome);
+        Ok(outcome)
     }
 
     fn handle_delivery_report(

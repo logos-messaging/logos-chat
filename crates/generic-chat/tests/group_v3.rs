@@ -12,11 +12,13 @@ use chat_sqlite::SqliteStore;
 use components::EphemeralRegistry;
 use crossbeam_channel::{Receiver, Sender};
 use integration_tests_core::AcceptAllAuth;
+use libchat::test_support::group_v3_wire;
 use logos_account::AccountAddr;
 use logos_generic_chat::{
     AddressedEnvelope, ChatClient, ChatClientBuilder, ConversationClass, DeliveryInfo,
     DeliveryMsgId, DeliveryReport, DeliveryService, Event, GroupMetadata, InProcessDelivery,
-    InboundPayload, MessageBus, PendingInstallation, PublishReceipt, PublishedId, Transport,
+    InboundPayload, MessageBus, PendingInstallation, PublishReceipt, PublishedId, SyncState,
+    Transport,
 };
 
 type TestClient<T = InProcessDelivery> =
@@ -421,5 +423,203 @@ impl TestLogosAccount {
     fn addr(&self) -> AccountAddr {
         AccountAddr::try_from(self.0.verifying_key().as_ref())
             .expect("a generated key is an address")
+    }
+}
+
+/// Saro and Raya each add Pax while their commits are lost, so the group
+/// forks. The member left on the branch Pax did not join hears of the fork,
+/// asks to be re-added, rejoins, and everyone hears each other again.
+#[test]
+fn a_forked_member_hears_of_the_fork_and_rejoins() {
+    let bus = MessageBus::default();
+    let reg = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
+
+    let saro_transport = CommitDropDelivery::new(InProcessDelivery::new(bus.clone()));
+    let saro_drops = saro_transport.drop_commits.clone();
+    let (saro, saro_events, saro_addr) = create_test_client_on(saro_transport, reg.clone(), &auth);
+    let raya_transport = CommitDropDelivery::new(InProcessDelivery::new(bus.clone()));
+    let raya_drops = raya_transport.drop_commits.clone();
+    let (raya, raya_events, raya_addr) = create_test_client_on(raya_transport, reg.clone(), &auth);
+    let (mut pax, pax_events, pax_addr) = create_test_client_on(
+        CommitDropDelivery::new(InProcessDelivery::new(bus)),
+        reg,
+        &auth,
+    );
+    let mut members = [(saro, saro_events), (raya, raya_events)];
+
+    let convo_id = members[0]
+        .0
+        .create_group_conversation(&[&raya_addr], GroupMetadata::new("", ""))
+        .expect("saro create group");
+    wait_for_group_started(&members[1].1, "raya ConversationStarted");
+    wait_for_participants(&mut members[0].0, &convo_id, &[&saro_addr, &raya_addr]);
+    wait_for_participants(&mut members[1].0, &convo_id, &[&saro_addr, &raya_addr]);
+
+    saro_drops.store(true, Ordering::SeqCst);
+    raya_drops.store(true, Ordering::SeqCst);
+    for (client, _) in &mut members {
+        client
+            .add_group_participants(&convo_id, &[&pax_addr])
+            .expect("add pax");
+    }
+    let all = [saro_addr.as_str(), raya_addr.as_str(), pax_addr.as_str()];
+    for (client, _) in &mut members {
+        wait_for_participants(client, &convo_id, &all);
+    }
+    wait_for_group_started(&pax_events, "pax ConversationStarted");
+    saro_drops.store(false, Ordering::SeqCst);
+    raya_drops.store(false, Ordering::SeqCst);
+
+    // Pax joined one branch; the member on the other is the one to move.
+    let fingerprint = |c: &TestClient<CommitDropDelivery>| {
+        c.debug_data(&convo_id).unwrap()["epoch_fingerprint"].clone()
+    };
+    let pax_branch = fingerprint(&pax);
+    assert_ne!(
+        fingerprint(&members[0].0),
+        fingerprint(&members[1].0),
+        "the group should be forked"
+    );
+    let stray = if fingerprint(&members[0].0) == pax_branch {
+        1
+    } else {
+        0
+    };
+    let [(saro, saro_events), (raya, raya_events)] = &mut members;
+    let ((stray, stray_events), (stayer, stayer_events)) = if stray == 0 {
+        ((saro, saro_events), (raya, raya_events))
+    } else {
+        ((raya, raya_events), (saro, saro_events))
+    };
+
+    for events in [&*stray_events, &*stayer_events] {
+        wait_for_event(
+            events,
+            "GroupSyncChanged(Forked)",
+            Duration::from_secs(10),
+            |e| match e {
+                Event::GroupSyncChanged { convo_id: c, state }
+                    if **c == *convo_id && matches!(state, SyncState::Forked { .. }) =>
+                {
+                    Some(())
+                }
+                _ => None,
+            },
+        );
+    }
+    assert!(matches!(
+        stray.group_sync_state(&convo_id).unwrap(),
+        SyncState::Forked { .. }
+    ));
+
+    assert_eq!(
+        stray.request_readd(&convo_id).unwrap(),
+        1,
+        "the stray member heard the other branch's beacons, so has someone to ask"
+    );
+
+    wait_for_event(
+        stray_events,
+        "ConversationRejoined",
+        Duration::from_secs(10),
+        |e| {
+            matches!(e, Event::ConversationRejoined { convo_id: c } if **c == *convo_id)
+                .then_some(())
+        },
+    );
+    // Its fork clears for the member who stayed, once the stray signs its branch.
+    wait_for_event(
+        stayer_events,
+        "GroupSyncChanged(Synced)",
+        Duration::from_secs(10),
+        |e| match e {
+            Event::GroupSyncChanged { convo_id: c, state } if **c == *convo_id => {
+                (*state == SyncState::Synced).then_some(())
+            }
+            _ => None,
+        },
+    );
+
+    stayer.send_message(&convo_id, b"welcome back").unwrap();
+    wait_for_message(stray_events, b"welcome back");
+    stray.send_message(&convo_id, b"thanks").unwrap();
+    wait_for_message(stayer_events, b"thanks");
+    wait_for_message(&pax_events, b"thanks");
+    pax.send_message(&convo_id, b"all three").unwrap();
+    wait_for_message(stray_events, b"all three");
+    // The stray is on Pax's branch, one re-add commit later.
+    assert_eq!(fingerprint(stray), fingerprint(stayer));
+    assert_eq!(fingerprint(stray), fingerprint(&pax));
+}
+
+/// Without a fork there is nobody to ask.
+#[test]
+fn a_member_in_sync_is_not_readded() {
+    let bus = MessageBus::default();
+    let reg = EphemeralRegistry::new();
+    let auth = AcceptAllAuth::default();
+    let (mut saro, _saro_events, _) = create_test_client(bus.clone(), reg.clone(), &auth);
+    let (mut raya, raya_events, raya_addr) = create_test_client(bus, reg, &auth);
+
+    let convo_id = saro
+        .create_group_conversation(&[&raya_addr], GroupMetadata::new("", ""))
+        .expect("saro create group");
+    wait_for_group_started(&raya_events, "raya ConversationStarted");
+    saro.send_message(&convo_id, b"hello").unwrap();
+    wait_for_message(&raya_events, b"hello");
+
+    assert_eq!(raya.request_readd(&convo_id).unwrap(), 0);
+    assert!(!matches!(
+        raya.group_sync_state(&convo_id).unwrap(),
+        SyncState::Forked { .. }
+    ));
+}
+
+/// [`InProcessDelivery`] that loses every GroupV3 commit it publishes while
+/// `drop_commits` is set, as a partitioned node would.
+#[derive(Debug)]
+struct CommitDropDelivery {
+    inner: InProcessDelivery,
+    drop_commits: Arc<AtomicBool>,
+}
+
+impl CommitDropDelivery {
+    fn new(inner: InProcessDelivery) -> Self {
+        Self {
+            inner,
+            drop_commits: Arc::default(),
+        }
+    }
+}
+
+impl DeliveryService for CommitDropDelivery {
+    type Error = Infallible;
+
+    fn publish(&mut self, envelope: AddressedEnvelope) -> Result<PublishedId, Infallible> {
+        if self.drop_commits.load(Ordering::SeqCst) && group_v3_wire::is_commit(&envelope.data) {
+            let id = DeliveryMsgId::from(b"lost".to_vec());
+            return Ok(PublishedId::Known(id));
+        }
+        self.inner.publish(envelope)
+    }
+
+    fn subscribe(&mut self, delivery_address: &str) -> Result<(), Infallible> {
+        self.inner.subscribe(delivery_address)
+    }
+
+    fn fetch_messages(
+        &mut self,
+        delivery_address: &str,
+        delivery_msg_ids: &[DeliveryMsgId],
+    ) -> Result<(), Infallible> {
+        self.inner
+            .fetch_messages(delivery_address, delivery_msg_ids)
+    }
+}
+
+impl Transport for CommitDropDelivery {
+    fn inbound(&mut self) -> Receiver<InboundPayload> {
+        self.inner.inbound()
     }
 }

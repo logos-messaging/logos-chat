@@ -276,8 +276,10 @@ where
             .map_err(Into::into)
     }
 
-    /// Ask a forked group to re-add this member. Returns how many requests
-    /// went out: 0 when no other branch outranks ours.
+    /// Ask a forked group to re-add this member, typically on
+    /// [`Event::GroupSyncChanged`] with [`SyncState::Forked`]. Returns how many
+    /// requests went out: 0 when no other branch outranks ours.
+    /// [`Event::ConversationRejoined`] follows once the re-add lands.
     pub fn request_readd(&mut self, convo_id: &str) -> Result<usize, ClientError> {
         self.core
             .lock()
@@ -616,6 +618,13 @@ fn observation_event(convo_id: &Arc<str>, observation: Observation) -> Option<Ev
         }),
         #[cfg(not(feature = "debug-data"))]
         Observation::Debug(_) => None,
+        Observation::SyncChanged(state) => Some(Event::GroupSyncChanged {
+            convo_id: Arc::clone(convo_id),
+            state,
+        }),
+        Observation::Rejoined => Some(Event::ConversationRejoined {
+            convo_id: Arc::clone(convo_id),
+        }),
     }
 }
 

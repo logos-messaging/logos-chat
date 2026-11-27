@@ -46,6 +46,15 @@ impl SyncTracker {
         }
     }
 
+    /// Drop rivals none of whose signers is still a member, as after they were
+    /// removed rather than re-added. Call once the roster changes.
+    pub(crate) fn forget_departed<K: AsRef<[u8]>>(&mut self, beacons: &Beacons, roster: &[K]) {
+        self.rivals.retain(|rival| !beacons.departed(rival, roster));
+        if self.rivals.is_empty() && matches!(self.state, SyncState::Forked { .. }) {
+            self.state = SyncState::Unknown;
+        }
+    }
+
     /// A commit for our epoch would not apply.
     pub(crate) fn suspect(&mut self, epoch: u64) {
         if !matches!(self.state, SyncState::Forked { .. }) {
@@ -130,6 +139,22 @@ mod tests {
 
     fn forked(at_or_before: u64) -> SyncState {
         SyncState::Forked { at_or_before }
+    }
+
+    /// Raya forked at 2 and was removed instead of re-added: nobody is left on
+    /// her branch, so the fork is over.
+    #[test]
+    fn a_fork_clears_once_the_rivals_signers_are_removed() {
+        let beacons = vouched(held_through(3), 2, &[(7, &[5])]);
+        let mut tracker = SyncTracker::default();
+        tracker.observe(&beacons, 3, peer(2, 7));
+        assert_eq!(tracker.state(), &forked(2));
+
+        tracker.forget_departed(&beacons, &[[5u8]]);
+        assert_eq!(tracker.state(), &forked(2), "Raya is still a member");
+
+        tracker.forget_departed(&beacons, &[[1u8], [2u8]]);
+        assert_eq!(tracker.state(), &SyncState::Unknown);
     }
 
     #[test]

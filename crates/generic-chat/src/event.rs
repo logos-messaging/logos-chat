@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use libchat::{ConversationClass, SignerKey};
+use libchat::{ConversationClass, SignerKey, SyncState};
 
 use crate::AuthenticatedSigner;
 
@@ -72,6 +72,19 @@ pub enum Event {
     },
     /// A commit changed a conversation's membership.
     ConversationMembersChanged {
+        convo_id: Arc<str>,
+    },
+    /// A group's [`SyncState`] changed. On [`SyncState::Forked`] this member
+    /// can no longer read part of the group; ask to be re-added with
+    /// [`ChatClient::request_readd`](crate::ChatClient::request_readd).
+    GroupSyncChanged {
+        convo_id: Arc<str>,
+        state: SyncState,
+    },
+    /// A re-add this member asked for landed: the group is readable again,
+    /// from the commit that re-added it on. Messages sent on the other branch
+    /// meanwhile are not recovered.
+    ConversationRejoined {
         convo_id: Arc<str>,
     },
     InboundError {

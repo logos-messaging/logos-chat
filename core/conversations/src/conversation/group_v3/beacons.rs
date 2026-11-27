@@ -42,6 +42,15 @@ const BRANCHES_PER_EPOCH: usize = 8;
 const FIRST_RETRY: Duration = Duration::from_secs(1);
 const LAST_RETRY: Duration = Duration::from_secs(60);
 
+/// Why there is no branch to seal a re-add request to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoTarget {
+    /// No branch we were never in has a head: we are not forked.
+    NoRival,
+    /// Two or more branches are signed by as many members.
+    Tied,
+}
+
 #[derive(Debug, Default)]
 pub struct Beacons {
     store: BeaconStore,
@@ -169,19 +178,31 @@ impl Beacons {
     /// signers vouched for, and those signers. A state stops being a head once
     /// one of its signers vouches at a later epoch. A tie is no target: the
     /// committer that made a state can grind its id, so an id must not steer
-    /// where askers go.
-    pub fn seal_target(&self) -> Option<(EpochBeacon, Vec<Vec<u8>>)> {
+    /// where askers go. A branch ours outranks is no target either: we are the
+    /// side the others move to.
+    pub fn seal_target(&self) -> Result<(EpochBeacon, Vec<Vec<u8>>), NoTarget> {
         let mut best: Option<Candidate> = None;
         let mut tied = false;
-        for &epoch in self.store.signers.keys() {
+        // Before what we remember a state can't be told from ours: a member
+        // who left there and never signed again would pose as a rival.
+        let oldest = self.states.iter().map(|(e, _)| *e).min().unwrap_or(0);
+        for &epoch in self.store.signers.range(oldest..).map(|(e, _)| e) {
             let tally = Tally::of(self.heard(epoch));
+            let ours = self
+                .our_epoch_id(epoch)
+                .map(|own| (own, self.known_to_both(&tally, epoch, own)));
             for &id in tally.0.keys() {
-                if self.our_epoch_id(epoch) == Some(id) || self.superseded(epoch, id) {
+                if ours.is_some_and(|(own, _)| own == id) || self.superseded(epoch, id) {
                     continue;
                 }
                 let Some((key, by)) = tally.key(id) else {
                     continue;
                 };
+                if let Some((own, m)) = ours
+                    && (by.len() < m || (by.len() == m && id > own))
+                {
+                    continue;
+                }
                 let top = best.as_ref().map_or(0, |(.., v)| v.len());
                 if by.len() > top {
                     let vouchers = by.iter().map(|s| s.to_vec()).collect();
@@ -192,14 +213,18 @@ impl Beacons {
                 }
             }
         }
-        let (epoch, id, key, vouchers) = best.filter(|_| !tied)?;
+        let (epoch, id, key, vouchers) = match best {
+            None => return Err(NoTarget::NoRival),
+            Some(_) if tied => return Err(NoTarget::Tied),
+            Some(best) => best,
+        };
         let beacon = EpochBeacon {
             epoch,
             epoch_id: id.to_string(),
             external_hpke_pub: Bytes::copy_from_slice(key),
             ..Default::default()
         };
-        Some((beacon, vouchers))
+        Ok((beacon, vouchers))
     }
 
     /// Whether every key that signed `branch` has since vouched for a state we
@@ -218,6 +243,14 @@ impl Beacons {
                         .any(|(id, _, s)| s == signer && self.our_epoch_id(later) == Some(id))
                 })
         })
+    }
+
+    /// Whether no key that signed `branch` is in `roster`: nobody on it is left
+    /// to rejoin. True once its signers are forgotten.
+    pub fn departed<K: AsRef<[u8]>>(&self, branch: &Branch, roster: &[K]) -> bool {
+        self.heard(branch.epoch)
+            .filter(|(id, ..)| *id == branch.epoch_id)
+            .all(|(.., signer)| !roster.iter().any(|k| k.as_ref() == signer))
     }
 
     /// The branches peers signed at `epoch` that we verified.
@@ -403,6 +436,19 @@ impl Beacons {
     }
 
     /// Whether `signer` vouched for a state we held before `epoch`.
+    /// Signers of our `id` at `epoch` who vouched for a state of ours before
+    /// it. Others may have joined after the fork, so the other branch would
+    /// not count them; leaving them out errs towards asking.
+    fn known_to_both(&self, tally: &Tally, epoch: u64, id: &str) -> usize {
+        tally.0.get(id).map_or(0, |by_key| {
+            by_key
+                .values()
+                .map(|by| by.iter().filter(|s| self.vouched_before(s, epoch)).count())
+                .max()
+                .unwrap_or(0)
+        })
+    }
+
     fn vouched_before(&self, signer: &[u8], epoch: u64) -> bool {
         self.store.signers.range(..epoch).any(|(&at, records)| {
             records.iter().any(|((id, _), by)| {
@@ -809,7 +855,7 @@ mod tests {
     }
 
     fn target(beacons: &Beacons) -> Option<(u64, String)> {
-        let (to, _) = beacons.seal_target()?;
+        let (to, _) = beacons.seal_target().ok()?;
         Some((to.epoch, to.epoch_id.clone()))
     }
 
@@ -846,6 +892,60 @@ mod tests {
         assert_eq!(target(&beacons), None);
     }
 
+    /// Member 7 left at epoch 5 and never signed again. We remember nothing
+    /// that old, so its beacon must not tie with the real rival.
+    #[test]
+    fn a_branch_older_than_what_we_remember_is_not_a_target() {
+        let beacons = on_branch_9(&[(5, 3, 7), (41, 1, 1)]);
+
+        assert_eq!(target(&beacons), Some((41, id(1))));
+    }
+
+    /// We were on branch 5 at 40 and branch 9 at 41. Each `(key, n)` vouched
+    /// for 9 at 41; `before` also vouched for 5 at 40.
+    fn on_branch_9_since_5(ours: &[u8], before: &[u8], rival: &[(u64, u8)]) -> Beacons {
+        let mut beacons = Beacons::default();
+        beacons.states.push_back((40, id(5)));
+        beacons.states.push_back((41, id(9)));
+        for &key in before {
+            beacons.store.vouch(admitted(40, 5).beacon(), vec![key]);
+        }
+        for &key in ours {
+            beacons.store.vouch(admitted(41, 9).beacon(), vec![key]);
+        }
+        for &(n, key) in rival {
+            beacons.store.vouch(admitted(41, n).beacon(), vec![key]);
+        }
+        beacons
+    }
+
+    /// Two of us against one: the other side moves, not us.
+    #[test]
+    fn a_branch_ours_outranks_is_no_target() {
+        let beacons = on_branch_9_since_5(&[7, 8], &[7, 8], &[(1, 1)]);
+
+        assert!(matches!(beacons.seal_target(), Err(NoTarget::NoRival)));
+    }
+
+    /// As many signers each: the smaller id wins, as the answerer judges it.
+    #[test]
+    fn a_tie_with_ours_goes_to_the_smaller_id() {
+        let ours_smaller = on_branch_9_since_5(&[7], &[7], &[(12, 1)]);
+        let theirs_smaller = on_branch_9_since_5(&[7], &[7], &[(1, 1)]);
+
+        assert_eq!(target(&ours_smaller), None);
+        assert_eq!(target(&theirs_smaller), Some((41, id(1))));
+    }
+
+    /// Member 8 joined our branch after the fork, so the other branch never
+    /// counts it: one against one, and their smaller id wins.
+    #[test]
+    fn a_member_who_joined_after_the_fork_counts_only_for_them() {
+        let beacons = on_branch_9_since_5(&[7, 8], &[7], &[(1, 1)]);
+
+        assert_eq!(target(&beacons), Some((41, id(1))));
+    }
+
     /// Member 1 signed branch 1 at 41 and then a state at 43, so 41's state is
     /// behind its own branch and no longer opens.
     #[test]
@@ -863,7 +963,7 @@ mod tests {
     }
 
     fn sealed_key(beacons: &Beacons) -> Option<u8> {
-        Some(beacons.seal_target()?.0.external_hpke_pub[0])
+        Some(beacons.seal_target().ok()?.0.external_hpke_pub[0])
     }
 
     /// A member signs branch 1 with key 7. An outsider copies its epoch and id
@@ -904,7 +1004,7 @@ mod tests {
         beacons.store.vouch(keyed(41, 1, 6).beacon(), vec![1]);
         beacons.store.vouch(keyed(41, 1, 7).beacon(), vec![2]);
 
-        assert!(beacons.seal_target().is_none());
+        assert!(beacons.seal_target().is_err());
     }
 
     /// Member 9 vouches for many far-future epochs; member 1's count at 41

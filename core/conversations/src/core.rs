@@ -545,7 +545,12 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
                 self.cached_convos.insert(convo_id.clone(), convo);
                 return Ok(PayloadOutcome::Convo(ConvoOutcome {
                     convo_id,
-                    observations: vec![Observation::SignersChanged],
+                    observations: vec![
+                        Observation::Rejoined,
+                        Observation::SignersChanged,
+                        // The rejoined group reports its own state from here.
+                        Observation::SyncChanged(SyncState::Unknown),
+                    ],
                 }));
             }
             self.register_convo(convo)?;
