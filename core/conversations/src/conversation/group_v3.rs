@@ -806,7 +806,10 @@ where
         let mut observations = self.handle_sds_events(cx, events);
 
         let epoch = self.mls_group.epoch().as_u64();
-        if let Some(fingerprint) = self.finality.finalized(cx.clock.now(), epoch) {
+        if let Some(fingerprint) = self
+            .finality
+            .finalized(cx.clock.now(), epoch, &self.debug_data)
+        {
             match self.finalize_deferred_commit(cx, &fingerprint) {
                 Ok(outcome) => {
                     observations.extend(outcome.observations);

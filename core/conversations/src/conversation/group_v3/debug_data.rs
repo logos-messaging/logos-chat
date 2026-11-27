@@ -131,6 +131,14 @@ impl DebugState {
         }
     }
 
+    /// Whether another member reported `state` as its own at `epoch`.
+    pub(crate) fn reported(&self, epoch: u64, state: &EpochFingerprint) -> bool {
+        let state = state.to_string();
+        self.epoch_histories
+            .values()
+            .any(|epochs| epochs.get(&epoch) == Some(&state))
+    }
+
     fn epoch_history(&self, signer: &SignerKey) -> EpochHistory<'_> {
         let headers = self.epoch_histories.get(signer).into_iter().flatten();
         headers

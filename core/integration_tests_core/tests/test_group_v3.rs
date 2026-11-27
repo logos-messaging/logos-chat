@@ -535,3 +535,57 @@ fn groupv3_removed_member() {
     assert!(!harness.pax().can_send(&convo_id));
     assert!(!harness.pax().check(&convo_id, M));
 }
+
+/// Saro adds a member and finalizes the add alone. Raya missed it and makes her own add. Then she
+/// gets Saro's add, sees from header that it was finalized, and finalizes it too. Both end in
+/// the same state, and Raya's add is dropped.
+///
+/// Before, Raya took the lowest fingerprint, which forked whenever her own add was the lower one.
+#[test]
+fn groupv3_two_commits_do_not_fork_when_one_was_finalized_alone() {
+    let mut harness = TestHarness::<4>::new(|_, _| {});
+    let convo_id = create_group_for_adds(&mut harness);
+
+    let pax = harness.pax().account();
+    let mira = harness.mira().account();
+    harness
+        .saro()
+        .group_add_participants(&convo_id, &[pax])
+        .expect("saro adds pax");
+    // Saro finalizes his add alone: Raya gets nothing from him meanwhile.
+    for _ in 0..121 {
+        harness.raya().drop_pending_payloads();
+        harness.process(Duration::from_secs(1));
+    }
+    harness.raya().drop_pending_payloads();
+    let saro_signers = harness.saro().group_signers(&convo_id);
+    assert_eq!(saro_signers.map_or(0, |s| s.len()), 3);
+
+    // Raya, still behind, makes her own add. Saro never gets it.
+    harness
+        .raya()
+        .group_add_participants(&convo_id, std::slice::from_ref(&mira))
+        .expect("raya adds mira");
+    harness.saro().drop_pending_payloads();
+    let raya_signers = harness.raya().group_signers(&convo_id);
+    assert_eq!(raya_signers.map_or(0, |s| s.len()), 2);
+
+    // Saro's message makes Raya fetch his add, and reports his state.
+    harness
+        .saro()
+        .send_content(&convo_id, b"m1")
+        .expect("saro send");
+    harness.process_until_within("Raya follows Saro", Duration::from_secs(10), |h| {
+        h.raya().check(&convo_id, b"m1")
+    });
+    assert_eq!(
+        harness
+            .saro()
+            .group_signers(&convo_id)
+            .expect("saro signers"),
+        harness
+            .raya()
+            .group_signers(&convo_id)
+            .expect("raya signers"),
+    );
+}

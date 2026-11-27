@@ -157,8 +157,6 @@ impl GroupV3Convo {
         }
         if protocol_message.epoch() > self.mls_group.epoch() {
             // TODO: The epoch is not verified here. Limit how far ahead it can be.
-            self.finality
-                .later_epoch_seen(protocol_message.epoch().as_u64());
             if self.later_epoch_msgs.len() < MAX_LATER_EPOCH_MSGS {
                 self.later_epoch_msgs.push((message_id, protocol_message));
             } else {
