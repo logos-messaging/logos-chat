@@ -1,13 +1,14 @@
 //! An [`AuthService`] over any [`AccountProvider`] that holds each account's
-//! verified log for a TTL.
+//! verified log for a TTL, to answer `validate_signer`.
 //!
-//! - One fetch answers both methods, `Revoked` included.
+//! - `signers_for_participant` always fetches: it picks whom an invite goes
+//!   to, and a held log can still list an installation its account has
+//!   replaced. What it fetches updates the held log.
 //! - A refetched log replaces the held one only if it extends it
 //!   ([`AccountResolver`]), so a stale replica cannot undo a revocation.
 //! - Only a positive answer is served from the held log: a signer it does not
-//!   endorse, or an account with no endorsed signers, is fetched again, so a
-//!   fresh endorsement is seen at once. The cost is that a revocation goes
-//!   unseen until the TTL expires.
+//!   endorse is fetched again, so a fresh endorsement is seen at once. The
+//!   cost is that a revocation goes unseen until the TTL expires.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -122,13 +123,6 @@ impl<P: AccountProvider> AuthService for CachedAuth<P> {
         participant_id: &ParticipantId,
     ) -> Result<Vec<SignerKey>, Self::Error> {
         let addr = AccountAddr::try_from(participant_id.as_bytes())?;
-
-        if let Some(signers) = self
-            .get_cached(&addr, chat_signer_keys)
-            .filter(|signers| !signers.is_empty())
-        {
-            return Ok(signers);
-        }
         let signers = self
             .refetch(&addr, |record| record.map(chat_signer_keys))?
             .ok_or_else(|| CachedAuthError::AccountNotFound(addr.clone()))?;
@@ -221,12 +215,10 @@ mod tests {
         let auth = CachedAuth::new(&provider, Duration::from_secs(60));
 
         let first = auth.validate_signer(SignerKey::from(&signer), id.clone());
-        let second = auth.validate_signer(SignerKey::from(&signer), id.clone());
-        let signers = auth.signers_for_participant(&id);
+        let second = auth.validate_signer(SignerKey::from(&signer), id);
 
         assert!(matches!(first, Ok(AuthResult::Valid)), "{first:?}");
         assert!(matches!(second, Ok(AuthResult::Valid)), "{second:?}");
-        assert_eq!(signers.unwrap(), vec![SignerKey::from(&signer)]);
         assert_eq!(provider.fetches.get(), 1);
     }
 
@@ -269,9 +261,42 @@ mod tests {
         let (provider, id) = serving(&signer);
         let auth = CachedAuth::new(&provider, Duration::ZERO);
 
-        auth.signers_for_participant(&id).unwrap();
-        auth.signers_for_participant(&id).unwrap();
+        auth.validate_signer(SignerKey::from(&signer), id.clone())
+            .unwrap();
+        auth.validate_signer(SignerKey::from(&signer), id).unwrap();
 
+        assert_eq!(provider.fetches.get(), 2);
+    }
+
+    #[test]
+    fn signers_list_the_installation_that_replaced_the_held_one() {
+        let old = Ed25519SigningKey::generate().verifying_key();
+        let new = Ed25519SigningKey::generate().verifying_key();
+        let (mut account, endorsed) = endorsing(&old);
+        let id = participant(&account);
+        let provider = Counting::default();
+        provider.serve(&account, &endorsed);
+        let auth = CachedAuth::new(&provider, Duration::from_secs(60));
+        auth.validate_signer(SignerKey::from(&old), id.clone())
+            .unwrap();
+
+        // A restart: the account endorses the new installation in place of the old.
+        let replaced = account
+            .update()
+            .endorse_chat_signer(&new)
+            .revoke(0)
+            .publish()
+            .unwrap();
+        provider.serve(&account, &replaced);
+        let signers = auth.signers_for_participant(&id);
+        let new_signer = auth.validate_signer(SignerKey::from(&new), id);
+
+        assert_eq!(signers.unwrap(), vec![SignerKey::from(&new)]);
+        assert!(
+            matches!(new_signer, Ok(AuthResult::Valid)),
+            "{new_signer:?}"
+        );
+        // The fetched log updated the held one, which answered for the new signer.
         assert_eq!(provider.fetches.get(), 2);
     }
 }
