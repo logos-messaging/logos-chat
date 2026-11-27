@@ -123,12 +123,6 @@ impl<P: AccountProvider> AuthService for CachedAuth<P> {
     ) -> Result<Vec<SignerKey>, Self::Error> {
         let addr = AccountAddr::try_from(participant_id.as_bytes())?;
 
-        if let Some(signers) = self
-            .get_cached(&addr, chat_signer_keys)
-            .filter(|signers| !signers.is_empty())
-        {
-            return Ok(signers);
-        }
         let signers = self
             .refetch(&addr, |record| record.map(chat_signer_keys))?
             .ok_or_else(|| CachedAuthError::AccountNotFound(addr.clone()))?;
