@@ -83,6 +83,8 @@ impl AccountLogDraft {
         entries.push(entry);
         let log = AccountLog::from_entries(entries)?;
         ensure_single_use_keys(&log)?;
+        // A log that does not encode cannot be published either.
+        log.encode()?;
         // Assigned only on success, so a rejected push needs no undo.
         self.0 = log;
         Ok(())
@@ -170,6 +172,33 @@ mod tests {
 
         assert_eq!(draft.entries().len(), 1);
         assert_eq!(*draft.log(), before);
+    }
+
+    /// An entry the log could not encode would leave a draft that can never
+    /// be published, so it is refused and the draft stays publishable.
+    #[test]
+    fn an_entry_the_log_cannot_encode_is_not_kept() {
+        let mut draft = AccountLogDraft::new();
+        draft.push(key()).unwrap();
+        let before = draft.log().clone();
+
+        let too_long = EntryData::Text("x".repeat(u16::MAX as usize));
+        assert!(matches!(
+            draft.add(CONTEXT, too_long),
+            Err(AccountLogError::EntryTooLarge(_))
+        ));
+
+        let filler = || EntryData::Text("x".repeat(60_000));
+        draft.add(CONTEXT, filler()).unwrap();
+        draft.add(CONTEXT, filler()).unwrap();
+        assert!(matches!(
+            draft.add(CONTEXT, filler()),
+            Err(AccountLogError::TooLarge(_))
+        ));
+
+        assert_eq!(draft.entries().len(), 3);
+        assert!(draft.log().encode().is_ok());
+        assert!(draft.log().entries().starts_with(before.entries()));
     }
 
     #[test]
