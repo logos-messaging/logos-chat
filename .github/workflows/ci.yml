@@ -78,7 +78,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ hashFiles('flake.lock') }}
-          save-if: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build logos-delivery
         run: nix build .#logos-delivery --print-build-logs
       # Build and run chat-cli through the dev shell so it links against the
