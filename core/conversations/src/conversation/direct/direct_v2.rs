@@ -4,8 +4,7 @@ use crate::identity::SignerKey;
 use crate::{
     ChatError, ConvoMetadata, DebugData, DeliveryInfo, ExternalServices, MessageId, Signer,
     conversation::{
-        ConversationIdRef, Convo, ConvoBase, Debuggable, GroupConvo, GroupV3Convo, Identified,
-        Typed,
+        ConversationIdRef, Convo, ConvoBase, Debuggable, GroupV3Convo, Identified, Typed,
     },
     service_context::ServiceContext,
 };
