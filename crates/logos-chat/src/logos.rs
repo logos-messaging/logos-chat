@@ -36,8 +36,8 @@ use logos_generic_chat::{
 /// The endpoint for the account and keypackage registration service.
 pub const REGISTRY_ENDPOINT: &str = "https://devnet.chat-kc.logos.co";
 
-/// How long a peer's endorsed signers are trusted before re-fetching, and so
-/// how long a revoked signer can still pass.
+/// How long a held account log confirms a peer's signer before re-fetching,
+/// and so how long a revoked signer can still pass.
 const AUTH_CACHE_TTL: Duration = Duration::from_mins(30);
 
 /// Configuration for opening a Logos client.
