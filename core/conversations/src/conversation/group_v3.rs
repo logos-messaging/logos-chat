@@ -7,6 +7,7 @@
 //
 
 mod beacons;
+mod commits;
 mod debug_data;
 mod debug_events;
 mod external;
@@ -17,6 +18,7 @@ pub mod inspect;
 mod payloads;
 mod readd;
 mod sealed;
+mod send;
 mod sync_state;
 mod trace;
 
@@ -26,40 +28,37 @@ use std::fmt;
 use std::time::Duration;
 
 use openmls::ciphersuite::hash_ref::ProposalRef;
-use openmls::framing::{MlsMessageOut, ProtocolMessage};
-use openmls::group::{MlsGroup, StagedCommit, StagedWelcome};
+use openmls::framing::ProtocolMessage;
+use openmls::group::{MlsGroup, StagedWelcome};
 use openmls::key_packages::KeyPackage;
 use openmls::messages::Welcome;
 use openmls::prelude::GroupId;
 use openmls_traits::OpenMlsProvider;
 use openmls_traits::storage::StorageProvider as _;
 use prost::Message;
-use sds::{Channel, Config, SDSRecord, StartPoint};
+use sds::{Channel, Config, StartPoint};
 use tracing::field::{Empty, display};
 use tracing::{Span, debug, info, instrument, warn};
 
-use crate::conversation::group_v3::payloads::GroupV3Header;
 use crate::conversation::mls_groups::{HasMlsConvo, create_group, group_join_config};
 use crate::conversation::mls_trace::record::{ConvoId, Short};
 use crate::conversation::mls_utils::EpochFingerprint;
 use crate::conversation::{
     ConversationIdRef, Convo, ConvoBase, Debuggable, GroupConvo, Identified, Typed,
 };
-use crate::errors::SendError;
 use crate::service_context::ServiceContext;
 use crate::utils::{blake2b_hex, hash_size};
 use crate::{
-    AddressedEnvelope, ChatError, ConvoOutcome, DebugData, DeliveryInfo, DeliveryService,
-    ExternalServices, IdentityProvider, Observation, SignerKey, WakeupService,
+    ChatError, ConvoOutcome, DebugData, DeliveryInfo, DeliveryService, ExternalServices,
+    IdentityProvider, Observation, SignerKey, WakeupService,
 };
 
 use super::mls_utils::{fetch_key_packages, member_diff, unique};
 
 use self::beacons::Beacons;
+use self::commits::DeferredCommit;
 use self::debug_data::DebugState;
-use self::payloads::{
-    EncryptedSdsMessage, EpochData, GroupV3External, GroupV3FrameType, GroupV3Packet,
-};
+use self::payloads::{EncryptedSdsMessage, EpochData};
 pub use self::sync_state::SyncState;
 use self::sync_state::SyncTracker;
 
@@ -99,14 +98,6 @@ fn create_sds_channel<S: ExternalServices>(
 
 fn now_ms<S: ExternalServices>(cx: &ServiceContext<S>) -> u64 {
     cx.clock.now().as_millis() as u64
-}
-
-/// A commit that has been generated, but not applied. Commits are either `Pending` created by this member, or `Staged`.
-/// PendingCommits are grouped with the outbound payloads, so that welcomes are not sent until the commit is finalized.
-/// openmls holds a `Pending` commit itself, as the group's pending commit.
-enum DeferredCommit {
-    Pending(Vec<AddressedEnvelope>),
-    Staged(StagedCommit),
 }
 
 pub struct GroupV3Convo {
@@ -327,228 +318,6 @@ impl GroupV3Convo {
         Ok(())
     }
 
-    /// Primary entry point to putting a Frame into the conversation.
-    ///
-    /// EncodeFrame -> MlsEncrypt -> SDS -> Wrap in Envelope
-    fn send_frame<S: ExternalServices>(
-        &mut self,
-        cx: &mut ServiceContext<S>,
-        frame: Frame,
-    ) -> Result<super::MessageId, SendError> {
-        let is_post = matches!(frame.payload, Some(GroupV3FrameType::Content(_)));
-        let mls_message = self.mls_group.create_message(
-            &cx.mls_provider,
-            &cx.mls_identity,
-            frame.encode().as_slice(),
-        )?;
-
-        let header = GroupV3Header::with_epoch_data(&self.epoch_data);
-        let message = GroupV3Packet::from_mls_message(header, mls_message)?.into_outgoing_message();
-        let message_id = message.message_id.clone();
-
-        let record = self.channel.send(message, now_ms(cx))?;
-        // SDS resends a logged message, so it counts as sent even if the publish fails.
-        if is_post {
-            trace::sent(self, &message_id);
-        }
-        self.publish_record(cx, record)?;
-
-        Ok(message_id)
-    }
-
-    /// Sends the pending commit through SDS. Returns the commit's place in the SDS channel, where a
-    /// member it adds starts. The commit stays pending until `defer_pending_commit`.
-    fn send_pending_commit<S: ExternalServices>(
-        &mut self,
-        cx: &mut ServiceContext<S>,
-        commit_msg: MlsMessageOut,
-    ) -> Result<StartPoint, ChatError> {
-        let header = GroupV3Header::with_epoch_data(&self.epoch_data);
-        // Send Commit
-        let sent = GroupV3Packet::from_mls_message(header, commit_msg).and_then(|envelope| {
-            Ok(self
-                .channel
-                .send(envelope.into_outgoing_message(), now_ms(cx))?)
-        });
-        let record = match sent {
-            Ok(record) => record,
-            Err(e) => {
-                // Discard the staged commit so the group isn't left wedged
-                if let Err(clear_err) = self
-                    .mls_group
-                    .clear_pending_commit(cx.mls_provider.storage())
-                {
-                    warn!(convo = %self.convo_id, error = %clear_err, "failed to clear pending commit");
-                }
-                return Err(e.into());
-            }
-        };
-
-        let start = StartPoint {
-            message_id: record.header.message_id.clone(),
-            lamport_timestamp: record
-                .header
-                .lamport_timestamp
-                .ok_or_else(|| ChatError::generic("sds sent the commit without a timestamp"))?,
-        };
-        // SDS keeps the commit and resends it, so a failed publish heals as a lost one does.
-        if let Err(e) = self.publish_record(cx, record) {
-            warn!(convo = %self.convo_id, error = %e, "failed to publish commit");
-        }
-        Ok(start)
-    }
-
-    /// Holds the pending commit, and `dependent_msgs` with it, until the commit is finalized.
-    fn defer_pending_commit<S: ExternalServices>(
-        &mut self,
-        cx: &ServiceContext<S>,
-        dependent_msgs: Vec<AddressedEnvelope>,
-    ) -> Result<(), ChatError> {
-        let fingerprint = self
-            .mls_group
-            .pending_commit()
-            .and_then(EpochFingerprint::from_staged_commit)
-            .ok_or_else(|| ChatError::generic("no pending commit"))?;
-
-        // openmls keeps the commit pending until it is finalized.
-        self.defer_commit(cx, fingerprint, DeferredCommit::Pending(dependent_msgs));
-        Ok(())
-    }
-
-    fn defer_commit<S: ExternalServices>(
-        &mut self,
-        cx: &ServiceContext<S>,
-        fingerprint: EpochFingerprint,
-        commit: DeferredCommit,
-    ) {
-        self.finality.defer(fingerprint.clone(), cx.clock.now());
-        self.deferred_commits.insert(fingerprint, commit);
-    }
-
-    /// Incorporate the commit into the group state, and send out any payloads if necessary.
-    ///
-    /// Call after there is confidence that all group members will apply the same commit.
-    fn finalize_deferred_commit<S: ExternalServices>(
-        &mut self,
-        cx: &mut ServiceContext<S>,
-        fingerprint: &EpochFingerprint,
-    ) -> Result<ConvoOutcome, ChatError> {
-        let deferred = self
-            .deferred_commits
-            .remove(fingerprint)
-            .ok_or_else(|| ChatError::generic("cannot finalize commit that does not exist"))?;
-        let starting_epoch = self.mls_group.epoch().as_u64();
-
-        let payloads = match deferred {
-            DeferredCommit::Pending(payloads) => {
-                // `merge_pending_commit` silently does nothing once the pending commit is gone.
-                let pending = self
-                    .mls_group
-                    .pending_commit()
-                    .and_then(EpochFingerprint::from_staged_commit);
-                if pending.as_ref() != Some(fingerprint) {
-                    return Err(ChatError::generic("pending commit no longer exists"));
-                }
-                let readded = self
-                    .mls_group
-                    .pending_commit()
-                    .map(|commit| readd::readded_signers(&self.mls_group, commit))
-                    .unwrap_or_default();
-                self.mls_group.merge_pending_commit(&cx.mls_provider)?;
-                self.note_readds(readded);
-                payloads
-            }
-            DeferredCommit::Staged(commit) => {
-                if commit.epoch().as_u64() != starting_epoch + 1 {
-                    return Err(ChatError::generic("commit is not for the next epoch"));
-                }
-                let readded = readd::readded_signers(&self.mls_group, &commit);
-                self.mls_group
-                    .merge_staged_commit(&cx.mls_provider, commit)
-                    .map_err(ChatError::generic)?;
-                self.note_readds(readded);
-                vec![]
-            }
-        };
-        // Recorded before the sends below, so a failed send cannot skip it.
-        trace::epoch(self);
-
-        // Notify Epoch history that we've updated the group state.
-        // Record the fingerprint of the final state, to catch any state bugs
-        self.epoch_data.advance_to(
-            self.mls_group.epoch().as_u64(),
-            EpochFingerprint::from_group(self.mls_group()),
-        );
-
-        self.drop_expired_deferred_commits();
-        self.enter_epoch(cx);
-        info!(
-            convo = %self.convo_id,
-            epoch = starting_epoch,
-            new_epoch = self.mls_group.epoch().as_u64(),
-            epochfingerprint = %fingerprint,
-            "commit merged"
-        );
-
-        for env in payloads {
-            Self::publish_envelope(cx, env)?;
-        }
-
-        Ok(ConvoOutcome {
-            observations: vec![Observation::SignersChanged],
-            ..self.default_outcome()
-        })
-    }
-
-    fn drop_expired_deferred_commits(&mut self) {
-        let epoch = self.mls_group.epoch();
-        self.deferred_commits.retain(|_, v| match v {
-            DeferredCommit::Staged(commit) => commit.epoch() > epoch,
-            DeferredCommit::Pending(_) => false,
-        })
-    }
-
-    /// Publishes a record SDS logged, and gives its message the id the delivery service returned
-    /// as its retrieval hint, which later histories name it by. An id the service reports later
-    /// comes through `handle_delivery_report`.
-    fn publish_record<S: ExternalServices>(
-        &mut self,
-        cx: &mut ServiceContext<S>,
-        record: SDSRecord,
-    ) -> Result<(), SendError> {
-        let message_id = record.header.message_id.clone();
-        let env = EncryptedSdsMessage::from_record(record).into_envelope(self.id().to_owned());
-        if let Some(delivery_msg_id) = cx
-            .ds
-            .publish_tracked(env, &self.convo_id, &message_id)
-            .map_err(|e| SendError::Delivery(e.to_string()))?
-            && let Err(e) = self
-                .channel
-                .set_retrieval_hint(&message_id, delivery_msg_id.as_bytes().to_vec())
-        {
-            warn!(convo = %self.convo_id, error = %e, "failed to keep the retrieval hint");
-        }
-        Ok(())
-    }
-
-    fn publish_payload<S: ExternalServices>(
-        &self,
-        cx: &mut ServiceContext<S>,
-        message: EncryptedSdsMessage,
-    ) -> Result<(), SendError> {
-        Self::publish_envelope(cx, message.into_envelope(self.convo_id.to_string()))
-    }
-
-    fn publish_envelope<S: ExternalServices>(
-        cx: &mut ServiceContext<S>,
-        env: AddressedEnvelope,
-    ) -> Result<(), SendError> {
-        cx.ds
-            .publish(env)
-            .map_err(|e| SendError::Delivery(e.to_string()))
-            .map(drop)
-    }
-
     fn default_outcome(&self) -> ConvoOutcome {
         ConvoOutcome::empty(self.convo_id.clone())
     }
@@ -578,34 +347,6 @@ impl GroupV3Convo {
             self.observe_beacon(peer);
         }
         self.send_beacon(cx);
-    }
-
-    /// Send our beacon once it is due. A failure is retried on a later tick
-    /// rather than failing the operation that changed the epoch.
-    fn send_beacon<S: ExternalServices>(&mut self, cx: &mut ServiceContext<S>) {
-        let now = cx.clock.now();
-        let Some(beacon) = self.beacons.due(now) else {
-            return;
-        };
-        match self.publish_external(cx, GroupV3External::beacon(beacon.clone())) {
-            Ok(()) => self.beacons.sent(),
-            Err(e) => {
-                warn!(convo = %self.convo_id, error = %e, "beacon not sent");
-                self.beacons.failed(now);
-            }
-        }
-    }
-
-    /// Sends a frame outside SDS: nothing orders or resends it, and a forked
-    /// member must still be able to read it.
-    fn publish_external<S: ExternalServices>(
-        &self,
-        cx: &mut ServiceContext<S>,
-        frame: GroupV3External,
-    ) -> Result<(), SendError> {
-        let packet = GroupV3Packet::external(frame);
-        self.publish_payload(cx, EncryptedSdsMessage::outside_sds(&packet))
-            .map(|_| ())
     }
 
     fn receive_external<S: ExternalServices>(
