@@ -5,8 +5,6 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 
 use openmls::group::MlsGroup;
-use prost::Message;
-use sds::SDSRecord;
 use tracing::warn;
 
 use crate::conversation::group_v3::beacons::Beacons;
@@ -56,14 +54,7 @@ pub(crate) struct DebugState {
 impl DebugState {
     /// Reads the sender's epoch data from a packet header. Read on arrival, because SDS never
     /// releases a forked member's packets.
-    pub(crate) fn record_epoch_data(&mut self, record: &SDSRecord, group: &MlsGroup) {
-        let Some(packet) = record
-            .content
-            .as_deref()
-            .and_then(|content| GroupV3Packet::decode(content).ok())
-        else {
-            return;
-        };
+    pub(crate) fn record_epoch_data(&mut self, packet: &GroupV3Packet, group: &MlsGroup) {
         let data = match packet.epoch_data() {
             Ok(data) => data,
             Err(e) => {
@@ -71,7 +62,7 @@ impl DebugState {
                 return;
             }
         };
-        let Ok(signer) = SignerKey::try_from(record.header.sender_id.as_str()) else {
+        let Ok(signer) = packet.sender() else {
             return;
         };
         let is_member = group
