@@ -23,6 +23,11 @@ pub use group_v3::{GroupV3Convo, SyncState};
 pub type ConversationId = String;
 pub type ConversationIdRef<'a> = &'a str;
 
+/// Tells apart the payloads a conversation receives under its additional convo ids. Each
+/// conversation type picks its own; opaque to `Core`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PayloadTag(pub u8);
+
 /// Identifies one message within a conversation, as carried by the
 /// causal-history envelope. Handed back by a send so a caller can match later
 /// observations — acknowledgements, gaps — to the message that produced them.
@@ -70,6 +75,27 @@ pub(crate) trait Convo<S: ExternalServices>:
         message_id: &str,
         info: &DeliveryInfo,
     ) -> Result<(), ChatError>;
+
+    // Defaults below: a conversation overrides only what it uses.
+
+    /// Ids this conversation also receives payloads under, each with the tag its payloads are
+    /// handed back with. Not conversations of their own.
+    fn additional_convo_ids(&self) -> Vec<(ConversationId, PayloadTag)> {
+        Vec::new()
+    }
+
+    /// Handles a payload sent under one of [`Self::additional_convo_ids`].
+    fn handle_additional_payload(
+        &mut self,
+        _cx: &mut ServiceContext<S>,
+        _tag: PayloadTag,
+        _payload: &[u8],
+    ) -> Result<ConvoOutcome, ChatError> {
+        Err(ChatError::UnsupportedFunction(
+            self.id().into(),
+            "Additional payload".into(),
+        ))
+    }
 }
 
 /// Base functionality for every conversation kind.
