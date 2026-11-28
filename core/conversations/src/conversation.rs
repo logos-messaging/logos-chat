@@ -1,4 +1,4 @@
-mod direct_v1;
+mod direct;
 pub mod group_v1;
 mod group_v2;
 mod group_v3;
@@ -13,7 +13,7 @@ use crate::outcomes::ConvoOutcome;
 use crate::service_context::{ExternalServices, ServiceContext};
 use crate::types::{ConvoMetadata, DebugData, DeliveryInfo};
 use crate::utils::{blake2b_hex, hash_size};
-pub use direct_v1::DirectV1Convo;
+pub use direct::convo_types::*;
 pub use group_v1::GroupV1Convo;
 pub use group_v2::{GroupV2Convo, GroupV2Frame, GroupV2Payload};
 #[cfg(any(test, feature = "test-support"))]

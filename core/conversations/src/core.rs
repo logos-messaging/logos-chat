@@ -1,7 +1,7 @@
 use crate::causal_history::{CausalHistoryStore, DeliveryAck, MissingMessage};
 use crate::conversation::{
-    ConversationIdRef, DirectV1Convo, GroupV1Convo, GroupV2Convo, GroupV3Convo, Identified,
-    MessageId, SyncState,
+    ConversationIdRef, DirectV1Convo, DirectV2Convo, GroupV1Convo, GroupV2Convo, GroupV3Convo,
+    Identified, MessageId, SyncState,
 };
 use crate::identity::{AuthenticatedSigner, ParticipantId, Signer, SignerKey, SignerRef};
 use crate::service_context::{ExternalServices, ServiceContext};
@@ -159,6 +159,22 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         participants: ParticipantId,
     ) -> Result<ConversationId, ChatError> {
         self.create_direct_convo_v1(participants)
+    }
+
+    pub fn create_direct_convo_v2(
+        &mut self,
+        participant: ParticipantId,
+    ) -> Result<ConversationId, ChatError> {
+        if participant == self.services.mls_identity.participant_id() {
+            return Err(ChatError::CannotMessageSelf);
+        }
+        let signers = self.get_signers_for_participants(&[participant])?;
+
+        let convo = DirectV2Convo::create(&mut self.services, &signers)?;
+        let convo_id = convo.id().to_string();
+        self.register_convo(ConvoTypeOwned::Direct(Box::new(convo)))?;
+
+        Ok(convo_id)
     }
 
     pub fn create_direct_convo_v1(
