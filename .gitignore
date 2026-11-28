@@ -27,3 +27,11 @@ result
 /justfile.local
 
 **/.DS_Store
+
+# Personal agent instructions
+/CLAUDE.local.md
+
+# Personal agent state
+/.claude/settings.local.json
+/.claude/worktrees/
+/.claude/stack/
