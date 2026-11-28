@@ -9,13 +9,14 @@ use prost::Message as _;
 use super::external::{EpochBeacon, verify_beacon};
 use super::payloads::{EncryptedSdsMessage, GroupV3External, GroupV3ExternalKind, GroupV3Packet};
 use super::sealed::{self, ReAddRequest, SealedKind, SealedPayload};
+use super::{delivery_address_from_id, recovery_convo_id};
 use crate::inbox_v2::MlsEphemeralPqProvider;
 use crate::proto::EnvelopeV1;
 use crate::{AddressedEnvelope, SignerKey};
 
 /// The address a GroupV3 conversation listens on.
 pub fn delivery_address(convo_id: &str) -> String {
-    super::delivery_address_from_id(convo_id)
+    delivery_address_from_id(convo_id)
 }
 
 fn message(data: &[u8]) -> Option<EncryptedSdsMessage> {
@@ -24,12 +25,10 @@ fn message(data: &[u8]) -> Option<EncryptedSdsMessage> {
 }
 
 fn external_kind(data: &[u8]) -> Option<GroupV3ExternalKind> {
-    let external = message(data)?
-        .packet_outside_sds()?
+    let envelope = EnvelopeV1::decode(data).ok()?;
+    GroupV3External::decode(envelope.payload.as_ref())
         .ok()?
-        .into_external()
-        .ok()?;
-    GroupV3External::decode(external.as_ref()).ok()?.kind
+        .kind
 }
 
 fn beacon_frame(data: &[u8]) -> Option<EpochBeacon> {
@@ -98,6 +97,9 @@ pub fn unsigned_readd(
         &payload,
     )
     .ok()?;
-    let packet = GroupV3Packet::external(GroupV3External::sealed(msg));
-    Some(EncryptedSdsMessage::outside_sds(&packet).into_envelope(convo_id.to_string()))
+    Some(AddressedEnvelope::new(
+        delivery_address_from_id(convo_id),
+        recovery_convo_id(convo_id),
+        GroupV3External::sealed(msg).encode(),
+    ))
 }
