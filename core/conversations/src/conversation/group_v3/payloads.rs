@@ -130,13 +130,19 @@ impl GroupV3Packet {
     }
 
     /// Rejects `content` that does not hash to `message_id`, or whose header does not decode.
-    pub fn from_sds_content(message_id: &str, content: &[u8]) -> Result<Self, ChatError> {
+    pub fn from_sds_content(
+        message_id: &str,
+        content: &[u8],
+    ) -> Result<ReceivedGroupV3Packet, ChatError> {
         if message_id_for(content) != message_id {
             return Err(ChatError::generic("message id does not match its content"));
         }
-        let envelope = Self::decode(content)?;
-        GroupV3Header::decode(envelope.encrypted_header.as_ref())?;
-        Ok(envelope)
+        let packet = Self::decode(content)?;
+        GroupV3Header::decode(packet.encrypted_header.as_ref())?;
+        Ok(ReceivedGroupV3Packet {
+            message_id: message_id.to_owned(),
+            packet,
+        })
     }
 
     /// The sender's epoch data, from the header.
@@ -167,6 +173,23 @@ impl GroupV3Packet {
             .try_into_protocol_message()
             .map(Some)
             .map_err(ChatError::generic)
+    }
+}
+
+/// A packet as it arrived, with the message id its bytes hash to.
+#[derive(Debug, PartialEq)]
+pub struct ReceivedGroupV3Packet {
+    message_id: MessageId,
+    packet: GroupV3Packet,
+}
+
+impl ReceivedGroupV3Packet {
+    pub fn message_id(&self) -> &MessageId {
+        &self.message_id
+    }
+
+    pub fn packet(&self) -> &GroupV3Packet {
+        &self.packet
     }
 }
 
@@ -240,10 +263,10 @@ mod tests {
     fn sds_content_decodes_back_to_the_envelope() {
         let envelope = mls_envelope();
         let message = envelope.clone().into_outgoing_message();
-        assert_eq!(
-            GroupV3Packet::from_sds_content(&message.message_id, &message.content).unwrap(),
-            envelope
-        );
+        let received =
+            GroupV3Packet::from_sds_content(&message.message_id, &message.content).unwrap();
+        assert_eq!(received.packet(), &envelope);
+        assert_eq!(received.message_id(), &message.message_id);
     }
 
     #[test]
