@@ -11,7 +11,7 @@ use crate::{AddressedEnvelope, ChatError, DeliveryService as _, ExternalServices
 use super::payloads::{
     EncryptedSdsMessage, GroupV3External, GroupV3FrameType, GroupV3Header, GroupV3Packet,
 };
-use super::{Frame, GroupV3Convo, now_ms, trace};
+use super::{Frame, GroupV3Convo, delivery_address_from_id, now_ms, recovery_convo_id, trace};
 
 impl GroupV3Convo {
     /// Primary entry point to putting a Frame into the conversation.
@@ -124,16 +124,19 @@ impl GroupV3Convo {
         }
     }
 
-    /// Sends a frame outside SDS: nothing orders or resends it, and a forked
-    /// member must still be able to read it.
+    /// Sends a frame outside SDS, under the recovery convo id: nothing orders or resends it, and a
+    /// forked member must still be able to read it.
     pub(super) fn publish_external<S: ExternalServices>(
         &self,
         cx: &mut ServiceContext<S>,
         frame: GroupV3External,
     ) -> Result<(), SendError> {
-        let packet = GroupV3Packet::external(frame);
-        self.publish_payload(cx, EncryptedSdsMessage::outside_sds(&packet))
-            .map(|_| ())
+        let env = AddressedEnvelope::new(
+            delivery_address_from_id(&self.convo_id),
+            recovery_convo_id(&self.convo_id),
+            frame.encode(),
+        );
+        Self::publish_envelope(cx, env)
     }
 
     pub(super) fn publish_payload<S: ExternalServices>(

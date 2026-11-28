@@ -44,7 +44,8 @@ use crate::conversation::mls_groups::{HasMlsConvo, create_group, group_join_conf
 use crate::conversation::mls_trace::record::{ConvoId, Short};
 use crate::conversation::mls_utils::EpochFingerprint;
 use crate::conversation::{
-    ConversationIdRef, Convo, ConvoBase, Debuggable, GroupConvo, Identified, Typed,
+    ConversationId, ConversationIdRef, Convo, ConvoBase, Debuggable, GroupConvo, Identified,
+    PayloadTag, Typed,
 };
 use crate::service_context::ServiceContext;
 use crate::utils::{blake2b_hex, hash_size};
@@ -81,6 +82,14 @@ const MAX_LATER_EPOCH_MSGS: usize = 500;
 
 fn delivery_address_from_id(convo_id: &str) -> String {
     blake2b_hex::<hash_size::DeliveryAddr>(&["delivery_addr|", convo_id])
+}
+
+/// Payloads sent under the recovery convo id.
+const RECOVERY: PayloadTag = PayloadTag(1);
+
+/// Derived from the convo id alone: a forked member holds no epoch secrets.
+fn recovery_convo_id(convo_id: &str) -> String {
+    blake2b_hex::<hash_size::ConvoId>(&["recovery_convo_id|", convo_id])
 }
 
 fn create_sds_channel<S: ExternalServices>(
@@ -507,33 +516,27 @@ where
     ) -> Result<ConvoOutcome, ChatError> {
         let mut observations = vec![];
 
-        let message = EncryptedSdsMessage::decode(payload)?;
-        let mut outcome = if let Some(packet) = message.packet_outside_sds() {
-            self.receive_external(cx, &packet?.into_external()?)?
-        } else {
-            let record = message.try_into_record()?;
-            // A sync carries no message, so it has no steps to report.
-            let message_id = record
-                .content
-                .is_some()
-                .then(|| record.header.message_id.clone());
-            observations.extend(debug_events::sds_received(&record, delivery_info));
-            self.debug_data.record_epoch_data(&record, &self.mls_group);
-            let retrieval_hint = delivery_info.map(|info| info.delivery_msg_id.as_bytes().to_vec());
-            match self.channel.receive(record, retrieval_hint, now_ms(cx)) {
-                Ok(events) => observations.extend(self.handle_sds_events(cx, events)),
-                // A peer's record SDS refuses is dropped, like a released message that fails.
-                Err(e) => {
-                    warn!(convo = %self.convo_id, error = %e, "sds refused a record");
-                    observations.extend(
-                        message_id.and_then(|id| debug_events::sds_ignored_for_error(id, &e)),
-                    );
-                }
+        let record = EncryptedSdsMessage::decode(payload)?.try_into_record()?;
+        // A sync carries no message, so it has no steps to report.
+        let message_id = record
+            .content
+            .is_some()
+            .then(|| record.header.message_id.clone());
+        observations.extend(debug_events::sds_received(&record, delivery_info));
+        self.debug_data.record_epoch_data(&record, &self.mls_group);
+        let retrieval_hint = delivery_info.map(|info| info.delivery_msg_id.as_bytes().to_vec());
+        match self.channel.receive(record, retrieval_hint, now_ms(cx)) {
+            Ok(events) => observations.extend(self.handle_sds_events(cx, events)),
+            // A peer's record SDS refuses is dropped, like a released message that fails.
+            Err(e) => {
+                warn!(convo = %self.convo_id, error = %e, "sds refused a record");
+                observations
+                    .extend(message_id.and_then(|id| debug_events::sds_ignored_for_error(id, &e)));
             }
-            ConvoOutcome {
-                observations,
-                ..self.default_outcome()
-            }
+        }
+        let mut outcome = ConvoOutcome {
+            observations,
+            ..self.default_outcome()
         };
         self.report_sync(&mut outcome);
         Ok(outcome)
@@ -579,6 +582,27 @@ where
         self.channel
             .set_retrieval_hint(message_id, info.delivery_msg_id.as_bytes().to_vec())
             .map_err(ChatError::generic)
+    }
+
+    fn additional_convo_ids(&self) -> Vec<(ConversationId, PayloadTag)> {
+        vec![(recovery_convo_id(&self.convo_id), RECOVERY)]
+    }
+
+    /// Unwrap Envelope -> GroupV3External
+    fn handle_additional_payload(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        tag: PayloadTag,
+        payload: &[u8],
+    ) -> Result<ConvoOutcome, ChatError> {
+        match tag {
+            RECOVERY => {
+                let mut outcome = self.receive_external(cx, payload)?;
+                self.report_sync(&mut outcome);
+                Ok(outcome)
+            }
+            _ => Err(ChatError::generic("unknown payload tag")),
+        }
     }
 }
 

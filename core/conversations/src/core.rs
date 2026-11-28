@@ -1,7 +1,7 @@
 use crate::causal_history::{CausalHistoryStore, DeliveryAck, MissingMessage};
 use crate::conversation::{
     ConversationIdRef, DirectV1Convo, GroupV1Convo, GroupV2Convo, GroupV3Convo, Identified,
-    MessageId, SyncState,
+    MessageId, PayloadTag, SyncState,
 };
 use crate::identity::{AuthenticatedSigner, ParticipantId, Signer, SignerKey, SignerRef};
 use crate::service_context::{ExternalServices, ServiceContext};
@@ -21,7 +21,7 @@ use crate::{
     proto::{EnvelopeV1, Message},
 };
 use openmls::group::GroupId;
-use std::collections::{HashMap, hash_map::Entry};
+use std::collections::HashMap;
 use std::fmt::Debug;
 use tracing::{instrument, trace};
 
@@ -38,6 +38,8 @@ pub struct Core<S: ExternalServices> {
     pq_inbox: InboxV2,
     // Cache of loaded conversations
     cached_convos: HashMap<String, ConvoTypeOwned<S>>,
+    /// Additional convo ids a convo registered for.
+    additional_convo_ids: HashMap<ConversationId, (ConversationId, PayloadTag)>,
 }
 
 // Constructors live on the `(DS, RS, CS)` form: `S` can't be inferred backwards
@@ -125,6 +127,7 @@ where
             },
             pq_inbox,
             cached_convos: HashMap::new(),
+            additional_convo_ids: HashMap::new(),
         })
     }
 }
@@ -522,6 +525,9 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
             c if self.cached_convos.contains_key(&c) => self
                 .dispatch_to_convo(&c, &env.payload, delivery_info)
                 .map(Into::into),
+            c if self.additional_convo_ids.contains_key(&c) => {
+                self.dispatch_additional(&c, &env.payload).map(Into::into)
+            }
             c if self.services.store.has_conversation(&c)? => self
                 .dispatch_to_convo(&c, &env.payload, delivery_info)
                 .map(Into::into),
@@ -584,6 +590,22 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
         }
     }
 
+    // Dispatch a payload sent under an additional convo id to the conversation that declared it.
+    fn dispatch_additional(
+        &mut self,
+        additional_id: &str,
+        payload: &[u8],
+    ) -> Result<ConvoOutcome, ChatError> {
+        let (convo_id, tag) = self
+            .additional_convo_ids
+            .get(additional_id)
+            .ok_or_else(|| ChatError::NoConvo(additional_id.to_string()))?;
+        self.cached_convos
+            .get_mut(convo_id)
+            .ok_or_else(|| ChatError::NoConvo(convo_id.clone()))?
+            .handle_additional_payload(&mut self.services, *tag, payload)
+    }
+
     /// Hands what the delivery service reported under the `receipt` its `publish` returned to the
     /// conversation that published the payload: the payload's id, or `None` once the service gave
     /// up on it. A receipt no conversation waits on is ignored, so a service can report every
@@ -637,13 +659,34 @@ impl<'a, S: ExternalServices + 'static> Core<S> {
     }
 
     fn register_convo(&mut self, convo: ConvoTypeOwned<S>) -> Result<(), ChatError> {
-        match self.cached_convos.entry(convo.id().to_string()) {
-            Entry::Occupied(_) => Err(ChatError::generic("Convo already exists. Cannot save")),
-            Entry::Vacant(slot) => {
-                slot.insert(convo);
-                Ok(())
-            }
+        let convo_id = convo.id().to_string();
+        if self.cached_convos.contains_key(&convo_id) {
+            return Err(ChatError::generic("Convo already exists. Cannot save"));
         }
+        self.register_additional_ids(&convo_id, convo.additional_convo_ids())?;
+        self.cached_convos.insert(convo_id, convo);
+        Ok(())
+    }
+
+    /// Routes each of `additional` to `convo_id`. Routes none if any is taken.
+    fn register_additional_ids(
+        &mut self,
+        convo_id: &str,
+        additional: Vec<(ConversationId, PayloadTag)>,
+    ) -> Result<(), ChatError> {
+        if additional
+            .iter()
+            .any(|(id, _)| self.additional_convo_ids.contains_key(id))
+        {
+            return Err(ChatError::generic(
+                "Additional convo id already taken. Cannot save",
+            ));
+        }
+        for (id, tag) in additional {
+            self.additional_convo_ids
+                .insert(id, (convo_id.to_string(), tag));
+        }
+        Ok(())
     }
 
     /// Rebuilds a conversation from storage — the one site that branches on
@@ -799,6 +842,27 @@ impl<S: ExternalServices> Convo<S> for ConvoTypeOwned<S> {
                 group_convo.handle_delivery_report(message_id, info)
             }
             ConvoTypeOwned::Direct(convo) => convo.handle_delivery_report(message_id, info),
+        }
+    }
+
+    fn additional_convo_ids(&self) -> Vec<(ConversationId, PayloadTag)> {
+        match self {
+            ConvoTypeOwned::Group(group_convo) => group_convo.additional_convo_ids(),
+            ConvoTypeOwned::Direct(convo) => convo.additional_convo_ids(),
+        }
+    }
+
+    fn handle_additional_payload(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        tag: PayloadTag,
+        payload: &[u8],
+    ) -> Result<ConvoOutcome, ChatError> {
+        match self {
+            ConvoTypeOwned::Group(group_convo) => {
+                group_convo.handle_additional_payload(cx, tag, payload)
+            }
+            ConvoTypeOwned::Direct(convo) => convo.handle_additional_payload(cx, tag, payload),
         }
     }
 }
