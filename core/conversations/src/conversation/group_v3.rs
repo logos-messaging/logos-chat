@@ -17,6 +17,7 @@ mod handlers;
 pub mod inspect;
 mod payloads;
 mod readd;
+mod sds_channel;
 mod sealed;
 mod send;
 mod sync_state;
@@ -36,7 +37,7 @@ use openmls::prelude::GroupId;
 use openmls_traits::OpenMlsProvider;
 use openmls_traits::storage::StorageProvider as _;
 use prost::Message;
-use sds::{Channel, Config, StartPoint};
+use sds::{Channel, StartPoint};
 use tracing::field::{Empty, display};
 use tracing::{Span, debug, info, instrument, warn};
 
@@ -60,15 +61,13 @@ use self::beacons::Beacons;
 use self::commits::DeferredCommit;
 use self::debug_data::DebugState;
 use self::payloads::{EncryptedSdsMessage, EpochData, GroupV3Packet};
+use self::sds_channel::{SDS_TICK_INTERVAL, create_sds_channel, now_ms};
 pub use self::sync_state::SyncState;
 use self::sync_state::SyncTracker;
 
 // Type Aliases
 type Frame = payloads::GroupV3Frame;
 
-// Fires SDS's resend and sync deadlines within a second. `wakeup_in` adds a timer rather than
-// replacing one, so only `init` and `wakeup` arm it.
-const SDS_TICK_INTERVAL: Duration = Duration::from_secs(1);
 // How long this member waits, from the first commit it defers, sent or received, before it
 // finalizes one. The `test-fast-commits` feature puts it under one SDS tick, so a commit lands
 // on the next tick.
@@ -90,23 +89,6 @@ const RECOVERY: PayloadTag = PayloadTag(1);
 /// Derived from the convo id alone: a forked member holds no epoch secrets.
 fn recovery_convo_id(convo_id: &str) -> String {
     blake2b_hex::<hash_size::ConvoId>(&["recovery_convo_id|", convo_id])
-}
-
-fn create_sds_channel<S: ExternalServices>(
-    cx: &ServiceContext<S>,
-    convo_id: &str,
-    start: Option<StartPoint>,
-) -> Result<Channel, ChatError> {
-    // The signer, not the account: two installations of one account would drop each other's
-    // messages as their own.
-    let mut config = Config::new(cx.mls_identity.signer_key().to_string(), convo_id);
-    config.repair = None;
-    config.start = start;
-    Channel::new(config).map_err(ChatError::generic)
-}
-
-fn now_ms<S: ExternalServices>(cx: &ServiceContext<S>) -> u64 {
-    cx.clock.now().as_millis() as u64
 }
 
 pub struct GroupV3Convo {

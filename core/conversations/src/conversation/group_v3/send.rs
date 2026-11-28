@@ -1,9 +1,8 @@
 use openmls::framing::MlsMessageOut;
 use openmls_traits::OpenMlsProvider as _;
-use sds::{SDSRecord, StartPoint};
+use sds::StartPoint;
 use tracing::warn;
 
-use crate::conversation::Identified as _;
 use crate::errors::SendError;
 use crate::service_context::ServiceContext;
 use crate::{
@@ -11,9 +10,7 @@ use crate::{
     MessageId,
 };
 
-use super::payloads::{
-    EncryptedSdsMessage, GroupV3External, GroupV3FrameType, GroupV3Header, GroupV3Packet,
-};
+use super::payloads::{GroupV3External, GroupV3FrameType, GroupV3Header, GroupV3Packet};
 use super::{Frame, GroupV3Convo, delivery_address_from_id, now_ms, recovery_convo_id, trace};
 
 impl GroupV3Convo {
@@ -88,29 +85,6 @@ impl GroupV3Convo {
         Ok(start)
     }
 
-    /// Publishes a record SDS logged, and gives its message the id the delivery service returned
-    /// as its retrieval hint, which later histories name it by. An id the service reports later
-    /// comes through `handle_delivery_report`.
-    pub(super) fn publish_record<S: ExternalServices>(
-        &mut self,
-        cx: &mut ServiceContext<S>,
-        record: SDSRecord,
-    ) -> Result<(), SendError> {
-        let message_id = record.header.message_id.clone();
-        let env = EncryptedSdsMessage::from_record(record).into_envelope(self.id().to_owned());
-        if let Some(delivery_msg_id) = cx
-            .ds
-            .publish_tracked(env, &self.convo_id, &message_id)
-            .map_err(|e| SendError::Delivery(e.to_string()))?
-            && let Err(e) = self
-                .channel
-                .set_retrieval_hint(&message_id, delivery_msg_id.as_bytes().to_vec())
-        {
-            warn!(convo = %self.convo_id, error = %e, "failed to keep the retrieval hint");
-        }
-        Ok(())
-    }
-
     /// Send our beacon once it is due. A failure is retried on a later tick
     /// rather than failing the operation that changed the epoch.
     pub(super) fn send_beacon<S: ExternalServices>(&mut self, cx: &mut ServiceContext<S>) {
@@ -140,14 +114,6 @@ impl GroupV3Convo {
             frame.encode(),
         );
         Self::publish_envelope(cx, env)
-    }
-
-    pub(super) fn publish_payload<S: ExternalServices>(
-        &self,
-        cx: &mut ServiceContext<S>,
-        message: EncryptedSdsMessage,
-    ) -> Result<(), SendError> {
-        Self::publish_envelope(cx, message.into_envelope(self.convo_id.to_string()))
     }
 
     pub(super) fn publish_envelope<S: ExternalServices>(
