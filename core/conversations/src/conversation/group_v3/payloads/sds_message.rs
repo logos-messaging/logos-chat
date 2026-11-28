@@ -1,7 +1,7 @@
 //! SDS layer of the GroupV3 wire framing; see the parent module.
 
 use prost::{Message, bytes::Bytes};
-use sds::SDSRecord;
+use sds::{Header, SDSRecord};
 
 use crate::AddressedEnvelope;
 
@@ -20,6 +20,14 @@ impl EncryptedSdsMessage {
         Self {
             encrypted_sds_header: SdsHeader::from(record.header).encode_to_vec().into(),
             payload: record.content.unwrap_or_default().into(),
+        }
+    }
+
+    /// A sync: header only.
+    pub fn from_sync(header: Header) -> Self {
+        Self {
+            encrypted_sds_header: SdsHeader::from(header).encode_to_vec().into(),
+            payload: Bytes::new(),
         }
     }
 

@@ -65,9 +65,8 @@ impl GroupV3Convo {
                     }
                 }
                 // SDS logs no sync message, so it has no hint to keep.
-                Event::Sync(record) => {
-                    if let Err(e) =
-                        self.publish_payload(cx, EncryptedSdsMessage::from_record(record))
+                Event::Sync(header) => {
+                    if let Err(e) = self.publish_payload(cx, EncryptedSdsMessage::from_sync(header))
                     {
                         warn!(convo = %self.convo_id, error = %e, "failed to publish sds record");
                     }
