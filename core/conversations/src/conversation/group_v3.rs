@@ -59,7 +59,7 @@ use super::mls_utils::{fetch_key_packages, member_diff, unique};
 use self::beacons::Beacons;
 use self::commits::DeferredCommit;
 use self::debug_data::DebugState;
-use self::payloads::{EncryptedSdsMessage, EpochData};
+use self::payloads::{EncryptedSdsMessage, EpochData, GroupV3Packet};
 pub use self::sync_state::SyncState;
 use self::sync_state::SyncTracker;
 
@@ -523,7 +523,13 @@ where
             .is_some()
             .then(|| record.header.message_id.clone());
         observations.extend(debug_events::sds_received(&record, delivery_info));
-        self.debug_data.record_epoch_data(&record, &self.mls_group);
+        if let Some(packet) = record
+            .content
+            .as_deref()
+            .and_then(|content| GroupV3Packet::decode(content).ok())
+        {
+            self.debug_data.record_epoch_data(&packet, &self.mls_group);
+        }
         let retrieval_hint = delivery_info.map(|info| info.delivery_msg_id.as_bytes().to_vec());
         match self.channel.receive(record, retrieval_hint, now_ms(cx)) {
             Ok(events) => observations.extend(self.handle_sds_events(cx, events)),

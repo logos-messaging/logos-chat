@@ -9,7 +9,8 @@
 //!         └── GroupV3Packet                       protobuf
 //!             ├── encrypted_header                  bytes
 //!             │   └── GroupV3Header                 protobuf; one field per item
-//!             │       └── epoch_data                the sender's epoch
+//!             │       ├── epoch_data                the sender's epoch
+//!             │       └── sender                    the sender's signer key
 //!             └── encoded_frame                     oneof
 //!                 └── mls_message                   bytes; TLS-serialized
 //!                     └── MlsMessage                Commit | ApplicationMessage
@@ -32,7 +33,7 @@ use sds::OutgoingMessage;
 use super::external::EpochBeacon;
 
 use crate::{
-    ChatError, MessageId,
+    ChatError, MessageId, SignerKey, SignerRef,
     errors::SendError,
     utils::{blake2b_hex, hash_size},
 };
@@ -75,17 +76,20 @@ impl GroupV3Frame {
     }
 }
 
-/// Outgoing headers leave `epoch_data` unset for now.
+/// The sender and its epoch, as the sender claims them: the header is unsigned.
 #[derive(Clone, PartialEq, Message)]
 pub struct GroupV3Header {
     #[prost(message, optional, tag = "1")]
     epoch_data: Option<EpochDataProto>,
+    #[prost(bytes = "vec", optional, tag = "2")]
+    sender: Option<Vec<u8>>,
 }
 
 impl GroupV3Header {
-    pub fn with_epoch_data(epoch_data: &EpochData) -> Self {
+    pub fn new(sender: SignerRef, epoch_data: &EpochData) -> Self {
         Self {
             epoch_data: Some(epoch_data.into()),
+            sender: Some(sender.as_bytes().to_vec()),
         }
     }
 }
@@ -142,6 +146,15 @@ impl GroupV3Packet {
             .epoch_data
             .ok_or(ChatError::BadParsing("packet header without epoch data"))?
             .try_into()
+    }
+
+    /// The sender's signer key, from the header.
+    pub fn sender(&self) -> Result<SignerKey, ChatError> {
+        let header = GroupV3Header::decode(self.encrypted_header.as_ref())?;
+        header
+            .sender
+            .map(|sender| SignerKey::from(sender.as_slice()))
+            .ok_or(ChatError::BadParsing("packet header without a sender"))
     }
 
     /// `None` for a frame that is not an MLS message.

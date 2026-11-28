@@ -6,7 +6,10 @@ use tracing::warn;
 use crate::conversation::Identified as _;
 use crate::errors::SendError;
 use crate::service_context::ServiceContext;
-use crate::{AddressedEnvelope, ChatError, DeliveryService as _, ExternalServices, MessageId};
+use crate::{
+    AddressedEnvelope, ChatError, DeliveryService as _, ExternalServices, IdentityProvider as _,
+    MessageId,
+};
 
 use super::payloads::{
     EncryptedSdsMessage, GroupV3External, GroupV3FrameType, GroupV3Header, GroupV3Packet,
@@ -29,7 +32,7 @@ impl GroupV3Convo {
             frame.encode().as_slice(),
         )?;
 
-        let header = GroupV3Header::with_epoch_data(&self.epoch_data);
+        let header = GroupV3Header::new(cx.mls_identity.signer_key(), &self.epoch_data);
         let message = GroupV3Packet::from_mls_message(header, mls_message)?.into_outgoing_message();
         let message_id = message.message_id.clone();
 
@@ -50,7 +53,7 @@ impl GroupV3Convo {
         cx: &mut ServiceContext<S>,
         commit_msg: MlsMessageOut,
     ) -> Result<StartPoint, ChatError> {
-        let header = GroupV3Header::with_epoch_data(&self.epoch_data);
+        let header = GroupV3Header::new(cx.mls_identity.signer_key(), &self.epoch_data);
         // Send Commit
         let sent = GroupV3Packet::from_mls_message(header, commit_msg).and_then(|envelope| {
             Ok(self
