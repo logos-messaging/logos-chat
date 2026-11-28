@@ -11,7 +11,7 @@ use crate::{
 };
 
 use super::payloads::{GroupV3External, GroupV3FrameType, GroupV3Header, GroupV3Packet};
-use super::{Frame, GroupV3Convo, delivery_address_from_id, now_ms, recovery_convo_id, trace};
+use super::{Frame, GroupV3Convo, delivery_address_from_id, recovery_convo_id, trace};
 
 impl GroupV3Convo {
     /// Primary entry point to putting a Frame into the conversation.
@@ -30,16 +30,11 @@ impl GroupV3Convo {
         )?;
 
         let header = GroupV3Header::new(cx.mls_identity.signer_key(), &self.epoch_data);
-        let message = GroupV3Packet::from_mls_message(header, mls_message)?.into_outgoing_message();
-        let message_id = message.message_id.clone();
-
-        let record = self.channel.send(message, now_ms(cx))?;
-        // SDS resends a logged message, so it counts as sent even if the publish fails.
+        let packet = GroupV3Packet::from_mls_message(header, mls_message)?;
+        let message_id = self.channel.send(cx, packet)?.message_id;
         if is_post {
             trace::sent(self, &message_id);
         }
-        self.publish_record(cx, record)?;
-
         Ok(message_id)
     }
 
@@ -52,13 +47,10 @@ impl GroupV3Convo {
     ) -> Result<StartPoint, ChatError> {
         let header = GroupV3Header::new(cx.mls_identity.signer_key(), &self.epoch_data);
         // Send Commit
-        let sent = GroupV3Packet::from_mls_message(header, commit_msg).and_then(|envelope| {
-            Ok(self
-                .channel
-                .send(envelope.into_outgoing_message(), now_ms(cx))?)
-        });
-        let record = match sent {
-            Ok(record) => record,
+        let sent = GroupV3Packet::from_mls_message(header, commit_msg)
+            .and_then(|packet| self.channel.send(cx, packet));
+        let start = match sent {
+            Ok(start) => start,
             Err(e) => {
                 // Discard the staged commit so the group isn't left wedged
                 if let Err(clear_err) = self
@@ -71,17 +63,6 @@ impl GroupV3Convo {
             }
         };
 
-        let start = StartPoint {
-            message_id: record.header.message_id.clone(),
-            lamport_timestamp: record
-                .header
-                .lamport_timestamp
-                .ok_or_else(|| ChatError::generic("sds sent the commit without a timestamp"))?,
-        };
-        // SDS keeps the commit and resends it, so a failed publish heals as a lost one does.
-        if let Err(e) = self.publish_record(cx, record) {
-            warn!(convo = %self.convo_id, error = %e, "failed to publish commit");
-        }
         Ok(start)
     }
 

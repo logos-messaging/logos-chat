@@ -37,7 +37,7 @@ use openmls::prelude::GroupId;
 use openmls_traits::OpenMlsProvider;
 use openmls_traits::storage::StorageProvider as _;
 use prost::Message;
-use sds::{Channel, StartPoint};
+use sds::StartPoint;
 use tracing::field::{Empty, display};
 use tracing::{Span, debug, info, instrument, warn};
 
@@ -60,8 +60,8 @@ use super::mls_utils::{fetch_key_packages, member_diff, unique};
 use self::beacons::Beacons;
 use self::commits::DeferredCommit;
 use self::debug_data::DebugState;
-use self::payloads::{EncryptedSdsMessage, EpochData, GroupV3Packet};
-use self::sds_channel::{SDS_TICK_INTERVAL, create_sds_channel, now_ms};
+use self::payloads::{EncryptedSdsMessage, EpochData};
+use self::sds_channel::{SDS_TICK_INTERVAL, SdsChannel};
 pub use self::sync_state::SyncState;
 use self::sync_state::SyncTracker;
 
@@ -94,7 +94,7 @@ fn recovery_convo_id(convo_id: &str) -> String {
 pub struct GroupV3Convo {
     convo_id: String,
     mls_group: MlsGroup,
-    channel: Channel,
+    channel: SdsChannel,
     deferred_commits: HashMap<EpochFingerprint, DeferredCommit>,
     finality: finality::Timeout,
     beacons: Beacons,
@@ -184,7 +184,7 @@ impl GroupV3Convo {
         start: Option<StartPoint>,
     ) -> Result<Self, ChatError> {
         let convo_id = hex::encode(mls_group.group_id().as_slice());
-        let channel = create_sds_channel(cx, &convo_id, start)?;
+        let channel = SdsChannel::new(cx, &convo_id, start)?;
         Ok(Self {
             epoch_data: EpochData::from_group(&mls_group),
             convo_id,
@@ -496,32 +496,9 @@ where
         payload: &[u8],
         delivery_info: Option<&DeliveryInfo>,
     ) -> Result<ConvoOutcome, ChatError> {
-        let mut observations = vec![];
-
-        let record = EncryptedSdsMessage::decode(payload)?.try_into_record()?;
-        // A sync carries no message, so it has no steps to report.
-        let message_id = record
-            .content
-            .is_some()
-            .then(|| record.header.message_id.clone());
-        observations.extend(debug_events::sds_received(&record, delivery_info));
-        if let Some(packet) = record
-            .content
-            .as_deref()
-            .and_then(|content| GroupV3Packet::decode(content).ok())
-        {
-            self.debug_data.record_epoch_data(&packet, &self.mls_group);
-        }
-        let retrieval_hint = delivery_info.map(|info| info.delivery_msg_id.as_bytes().to_vec());
-        match self.channel.receive(record, retrieval_hint, now_ms(cx)) {
-            Ok(events) => observations.extend(self.handle_sds_events(cx, events)),
-            // A peer's record SDS refuses is dropped, like a released message that fails.
-            Err(e) => {
-                warn!(convo = %self.convo_id, error = %e, "sds refused a record");
-                observations
-                    .extend(message_id.and_then(|id| debug_events::sds_ignored_for_error(id, &e)));
-            }
-        }
+        let message = EncryptedSdsMessage::decode(payload)?;
+        let output = self.channel.receive(cx, message, delivery_info)?;
+        let observations = self.handle_sds_output(cx, output);
         let mut outcome = ConvoOutcome {
             observations,
             ..self.default_outcome()
@@ -534,8 +511,8 @@ where
     fn wakeup(&mut self, cx: &mut ServiceContext<S>) -> Result<ConvoOutcome, ChatError> {
         cx.wakeup_service
             .wakeup_in(SDS_TICK_INTERVAL, self.convo_id.clone());
-        let events = self.channel.tick(now_ms(cx), &mut rand_0_10::rng());
-        let mut observations = self.handle_sds_events(cx, events);
+        let output = self.channel.tick(cx);
+        let mut observations = self.handle_sds_output(cx, output);
 
         let epoch = self.mls_group.epoch().as_u64();
         if let Some(fingerprint) = self
@@ -567,9 +544,7 @@ where
         message_id: &str,
         info: &DeliveryInfo,
     ) -> Result<(), ChatError> {
-        self.channel
-            .set_retrieval_hint(message_id, info.delivery_msg_id.as_bytes().to_vec())
-            .map_err(ChatError::generic)
+        self.channel.handle_delivery_report(message_id, info)
     }
 
     fn additional_convo_ids(&self) -> Vec<(ConversationId, PayloadTag)> {

@@ -11,11 +11,44 @@ use crate::service_context::ServiceContext;
 use crate::{ChatError, Content, ConvoOutcome, ExternalServices, MessageId, Observation, Signer};
 
 use super::payloads::GroupV3FrameType;
-use super::{DeferredCommit, Frame, GroupV3Convo, MAX_LATER_EPOCH_MSGS, trace};
+use super::sds_channel::SdsOutput;
+use super::{DeferredCommit, Frame, GroupV3Convo, MAX_LATER_EPOCH_MSGS, debug_events, trace};
 
 impl GroupV3Convo {
+    /// Reads each new message's epoch data, then puts each released message through MLS, in
+    /// order. A failure warns and moves on to the next message.
+    pub(super) fn handle_sds_output<S: ExternalServices>(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        output: SdsOutput,
+    ) -> Vec<Observation> {
+        for received in &output.buffered {
+            self.debug_data
+                .record_epoch_data(received.packet(), &self.mls_group);
+        }
+        let mut observations = output.observations;
+        for received in output.released {
+            self.debug_data
+                .record_epoch_data(received.packet(), &self.mls_group);
+            let message_id = received.message_id().clone();
+            let message = received.packet().protocol_message();
+
+            // Record event after mls_decode
+            observations.push(debug_events::sds_released(&message_id, &message));
+
+            match message.and_then(|message| self.handle_sds_message_ready(cx, message_id, message))
+            {
+                Ok(outcome) => observations.extend(outcome.observations),
+                Err(e) => {
+                    warn!(convo = %self.convo_id, error = %e, "dropping released message")
+                }
+            }
+        }
+        observations
+    }
+
     /// Handle a message SDS released.
-    pub(super) fn handle_sds_message_ready<S: ExternalServices>(
+    fn handle_sds_message_ready<S: ExternalServices>(
         &mut self,
         cx: &mut ServiceContext<S>,
         message_id: MessageId,
