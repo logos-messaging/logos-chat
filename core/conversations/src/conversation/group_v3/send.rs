@@ -1,13 +1,11 @@
 use openmls::framing::MlsMessageOut;
-use openmls_traits::OpenMlsProvider as _;
 use sds::StartPoint;
 use tracing::warn;
 
 use crate::errors::SendError;
 use crate::service_context::ServiceContext;
 use crate::{
-    AddressedEnvelope, ChatError, DeliveryService as _, ExternalServices, IdentityProvider as _,
-    MessageId,
+    AddressedEnvelope, DeliveryService as _, ExternalServices, IdentityProvider as _, MessageId,
 };
 
 use super::payloads::{GroupV3External, GroupV3FrameType, GroupV3Header, GroupV3Packet};
@@ -23,47 +21,50 @@ impl GroupV3Convo {
         frame: Frame,
     ) -> Result<MessageId, SendError> {
         let is_post = matches!(frame.payload, Some(GroupV3FrameType::Content(_)));
-        let mls_message = self.mls_group.create_message(
-            &cx.mls_provider,
-            &cx.mls_identity,
-            frame.encode().as_slice(),
-        )?;
+        let message_id = self.encrypt_and_send(cx, frame)?;
 
-        let header = GroupV3Header::new(cx.mls_identity.signer_key(), &self.epoch_data);
-        let packet = GroupV3Packet::from_mls_message(header, mls_message)?;
-        let message_id = self.channel.send(cx, packet)?.message_id;
         if is_post {
             trace::sent(self, &message_id);
         }
         Ok(message_id)
     }
 
+    fn encrypt_and_send<S: ExternalServices>(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        frame: Frame,
+    ) -> Result<MessageId, SendError> {
+        let mls_message = self.mls_group.create_message(
+            &cx.mls_provider,
+            &cx.mls_identity,
+            frame.encode().as_slice(),
+        )?;
+
+        self.send_mls_msg(cx, mls_message)
+            .map(|start_point| start_point.message_id)
+    }
+
     /// Sends the pending commit through SDS. Returns the commit's place in the SDS channel, where a
-    /// member it adds starts. The commit stays pending until `defer_pending_commit`.
+    /// member it adds starts. The commit stays pending until `defer_pending_commit`; on failure it
+    /// is discarded.
     pub(super) fn send_pending_commit<S: ExternalServices>(
         &mut self,
         cx: &mut ServiceContext<S>,
         commit_msg: MlsMessageOut,
-    ) -> Result<StartPoint, ChatError> {
-        let header = GroupV3Header::new(cx.mls_identity.signer_key(), &self.epoch_data);
-        // Send Commit
-        let sent = GroupV3Packet::from_mls_message(header, commit_msg)
-            .and_then(|packet| self.channel.send(cx, packet));
-        let start = match sent {
-            Ok(start) => start,
-            Err(e) => {
-                // Discard the staged commit so the group isn't left wedged
-                if let Err(clear_err) = self
-                    .mls_group
-                    .clear_pending_commit(cx.mls_provider.storage())
-                {
-                    warn!(convo = %self.convo_id, error = %clear_err, "failed to clear pending commit");
-                }
-                return Err(e.into());
-            }
-        };
+    ) -> Result<StartPoint, SendError> {
+        self.send_mls_msg(cx, commit_msg)
+            .inspect_err(|_| self.discard_pending_commit(cx))
+    }
 
-        Ok(start)
+    fn send_mls_msg<S: ExternalServices>(
+        &mut self,
+        cx: &mut ServiceContext<S>,
+        mls_msg: MlsMessageOut,
+    ) -> Result<StartPoint, SendError> {
+        let header = GroupV3Header::new(cx.mls_identity.signer_key(), &self.epoch_data);
+        let packet = GroupV3Packet::from_mls_message(header, mls_msg)?;
+
+        self.channel.send(cx, packet)
     }
 
     /// Send our beacon once it is due. A failure is retried on a later tick

@@ -1,5 +1,6 @@
 use openmls::group::StagedCommit;
-use tracing::info;
+use openmls_traits::OpenMlsProvider as _;
+use tracing::{info, warn};
 
 use crate::conversation::mls_groups::HasMlsConvo as _;
 use crate::conversation::mls_utils::EpochFingerprint;
@@ -32,6 +33,16 @@ impl GroupV3Convo {
         // openmls keeps the commit pending until it is finalized.
         self.defer_commit(cx, fingerprint, DeferredCommit::Pending(dependent_msgs));
         Ok(())
+    }
+
+    /// Discards the pending commit, so one that never went out does not wedge the group.
+    pub(super) fn discard_pending_commit<S: ExternalServices>(&mut self, cx: &ServiceContext<S>) {
+        if let Err(e) = self
+            .mls_group
+            .clear_pending_commit(cx.mls_provider.storage())
+        {
+            warn!(convo = %self.convo_id, error = %e, "failed to clear pending commit");
+        }
     }
 
     pub(super) fn defer_commit<S: ExternalServices>(

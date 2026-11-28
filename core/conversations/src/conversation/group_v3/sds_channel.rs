@@ -93,7 +93,7 @@ impl SdsChannel {
         let arriving = record
             .content
             .as_ref()
-            .and_then(|c| GroupV3Packet::from_sds_content(&record.header.message_id, &c).ok());
+            .and_then(|c| GroupV3Packet::from_sds_content(&record.header.message_id, c).ok());
 
         let retrieval_hint = delivery_info.map(|info| info.delivery_msg_id.as_bytes().to_vec());
         match self.channel.receive(record, retrieval_hint, now_ms(cx)) {
